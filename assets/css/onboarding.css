@@ -1,0 +1,209 @@
+/* =============================================================
+   S.P.O.T.-IT — Onboarding Tour System (onboarding.css)
+   First-login guided tour with spotlight + tooltip popups.
+   ============================================================= */
+@import url('variables.css');
+
+/* ── Dark overlay with cutout "spotlight" hole ── */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  background: rgba(8,14,11,.72);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s ease;
+}
+.tour-overlay.active {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* Spotlight ring drawn around the highlighted element */
+.tour-spotlight {
+  position: fixed;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 6px rgba(0, 200, 120, .15),
+    0 0 0 2000px rgba(8, 14, 11, .72);
+  border: 2px solid var(--green-main);
+  z-index: 8001;
+  pointer-events: none;
+  transition: all .35s cubic-bezier(.4,0,.2,1);
+}
+[data-theme="dark"] .tour-spotlight {
+  border-color: var(--green-mid);
+  box-shadow:
+    0 0 0 6px rgba(0, 200, 120, .18),
+    0 0 0 2000px rgba(5, 9, 7, .82);
+}
+.tour-spotlight::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid var(--green-main);
+  animation: tourPulse 1.8s ease-in-out infinite;
+}
+@keyframes tourPulse {
+  0%,100% { opacity: .9; transform: scale(1); }
+  50%     { opacity: .3; transform: scale(1.04); }
+}
+
+/* ── Tooltip card ── */
+.tour-tooltip {
+  position: fixed;
+  z-index: 8002;
+  width: 320px;
+  max-width: 90vw;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0;
+  opacity: 0;
+  transform: translateY(6px) scale(.97);
+  transition: opacity .25s ease, transform .25s ease;
+  pointer-events: none;
+}
+.tour-tooltip.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: all;
+}
+
+/* Arrow pointing to spotlight */
+.tour-arrow {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+.tour-arrow.pos-top    { bottom: -8px; border-top: none; border-left: none; }
+.tour-arrow.pos-bottom { top: -8px; border-bottom: none; border-right: none; }
+.tour-arrow.pos-left   { right: -8px; border-bottom: none; border-left: none; }
+.tour-arrow.pos-right  { left: -8px; border-top: none; border-right: none; }
+
+/* Header */
+.tour-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 0;
+}
+.tour-icon {
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--green-pale); color: var(--green-main);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem; flex-shrink: 0;
+}
+.tour-step-badge {
+  font-family: var(--font-display); font-size: .6rem; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim);
+}
+.tour-close {
+  margin-left: auto;
+  width: 26px; height: 26px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--bg-base);
+  color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: .7rem; transition: var(--transition); flex-shrink: 0;
+}
+.tour-close:hover { background: var(--alert-bg); color: var(--alert); border-color: var(--alert); }
+
+/* Body */
+.tour-body { padding: 12px 18px 16px; }
+.tour-title {
+  font-family: var(--font-display); font-size: .98rem; font-weight: 800;
+  color: var(--text-primary); margin-bottom: 6px;
+}
+.tour-desc {
+  font-size: .82rem; color: var(--text-muted); line-height: 1.65; font-weight: 300;
+}
+
+/* Progress dots */
+.tour-progress {
+  display: flex; gap: 5px; padding: 0 18px 14px;
+}
+.tour-dot {
+  height: 5px; flex: 1; border-radius: 100px;
+  background: var(--border); transition: background .3s;
+}
+.tour-dot.done   { background: var(--green-main); }
+.tour-dot.active { background: var(--green-mid); }
+
+/* Footer / controls */
+.tour-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 18px; border-top: 1px solid var(--border);
+}
+.tour-skip {
+  font-family: var(--font-display); font-size: .72rem; font-weight: 600;
+  color: var(--text-dim); background: none; border: none; cursor: pointer;
+  transition: color var(--transition);
+}
+.tour-skip:hover { color: var(--alert); }
+.tour-nav-btns { display: flex; gap: 8px; }
+.tour-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 9px;
+  font-family: var(--font-display); font-size: .76rem; font-weight: 700;
+  cursor: pointer; transition: var(--transition); border: 1px solid var(--border);
+  background: var(--bg-base); color: var(--text-muted);
+}
+.tour-btn:hover { border-color: var(--green-main); color: var(--green-main); }
+.tour-btn-primary {
+  background: var(--green-main); color: #fff; border-color: var(--green-main);
+}
+.tour-btn-primary:hover { background: var(--green-mid); color: #fff; }
+[data-theme="dark"] .tour-btn-primary { color: #0b1310; }
+.tour-btn:disabled { opacity: .35; pointer-events: none; }
+
+/* ── Welcome modal (shown before the tour starts) ── */
+.tour-welcome-overlay {
+  position: fixed; inset: 0; z-index: 8500;
+  background: rgba(8,14,11,.78);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease;
+}
+.tour-welcome-overlay.active { opacity: 1; pointer-events: all; }
+.tour-welcome-box {
+  width: 420px; max-width: 92vw;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-lg);
+  padding: 36px 32px; text-align: center;
+  transform: scale(.92); transition: transform .3s ease;
+}
+.tour-welcome-overlay.active .tour-welcome-box { transform: scale(1); }
+.tour-welcome-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--green-pale); color: var(--green-main);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.6rem; margin: 0 auto 18px;
+  animation: spotit-popIn .4s ease;
+}
+.tour-welcome-title {
+  font-family: var(--font-display); font-size: 1.25rem; font-weight: 800;
+  color: var(--text-primary); margin-bottom: 10px;
+}
+.tour-welcome-desc {
+  font-size: .85rem; color: var(--text-muted); line-height: 1.75;
+  font-weight: 300; margin-bottom: 26px;
+}
+.tour-welcome-actions { display: flex; gap: 10px; }
+.tour-welcome-actions .tour-btn { flex: 1; justify-content: center; padding: 11px; }
+
+/* ── "Replay tour" trigger button (sits in sidebar / topbar) ── */
+.tour-replay-btn {
+  display: flex; align-items: center; gap: 7px;
+  font-size: .78rem; color: var(--text-muted); cursor: pointer;
+}
+
+/* Body lock while tour active */
+body.tour-locked { overflow: hidden; }
+
+/* Responsive tooltip repositioning on small screens */
+@media (max-width: 560px) {
+  .tour-tooltip { width: 280px; }
+}

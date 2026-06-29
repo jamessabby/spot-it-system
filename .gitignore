@@ -1,0 +1,5 @@
+uploads/snapshots/ 
+photos/snapshots/ 
+config/env.php 
+__pycache__/ 
+*.pyc 

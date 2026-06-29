@@ -1,0 +1,64 @@
+/* signup.css — S.P.O.T.-IT Sign Up Page additions */
+
+/* Left panel perks list */
+.signup-perks { display: flex; flex-direction: column; gap: 12px; }
+.perk {
+  display: flex; align-items: center; gap: 10px;
+  font-size: .82rem; color: rgba(255,255,255,.7); font-weight: 300;
+}
+.perk i { width: 20px; text-align: center; color: rgba(100,255,160,.8); flex-shrink: 0; }
+
+/* Form section labels */
+.form-section-label {
+  font-family: var(--font-display); font-size: .65rem; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim);
+  margin-bottom: .6rem; margin-top: .2rem;
+  padding-bottom: .4rem; border-bottom: 1px solid var(--border);
+}
+
+/* Role selector */
+.role-selector { display: flex; flex-direction: column; gap: 8px; margin-bottom: .8rem; }
+.role-option {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border); background: var(--bg-input);
+  cursor: pointer; transition: var(--transition);
+}
+.role-option i { font-size: 1rem; color: var(--text-dim); width: 22px; text-align: center; flex-shrink: 0; }
+.role-option:hover { border-color: rgba(0,86,49,.35); background: var(--green-pale); }
+.role-option.active { border-color: var(--green-main); background: var(--green-pale); }
+.role-option.active i { color: var(--green-main); }
+.role-name { font-family: var(--font-display); font-size: .82rem; font-weight: 700; color: var(--text-primary); }
+.role-desc { font-size: .72rem; color: var(--text-dim); margin-top: 2px; }
+
+/* Password strength */
+.pw-strength-bar {
+  height: 3px; border-radius: 10px; background: var(--border);
+  margin-top: .4rem; overflow: hidden;
+}
+.pw-strength-fill {
+  height: 100%; border-radius: 10px; width: 0;
+  transition: width .3s, background .3s;
+}
+.pw-strength-fill.weak   { background: var(--alert); }
+.pw-strength-fill.fair   { background: var(--warn); }
+.pw-strength-fill.good   { background: #88cc00; }
+.pw-strength-fill.strong { background: var(--ok); }
+.pw-strength-label {
+  font-size: .66rem; font-weight: 600; font-family: var(--font-display);
+  letter-spacing: .06em; margin-top: .25rem;
+}
+.pw-strength-label.weak   { color: var(--alert); }
+.pw-strength-label.fair   { color: var(--warn); }
+.pw-strength-label.good   { color: #88cc00; }
+.pw-strength-label.strong { color: var(--ok); }
+
+/* Terms checkbox */
+.terms-label {
+  display: flex; align-items: flex-start; gap: 9px;
+  font-size: .76rem; color: var(--text-muted); line-height: 1.55;
+  cursor: pointer; margin-bottom: 1.2rem;
+}
+.terms-label input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--green-main); cursor: pointer; flex-shrink: 0; margin-top: 2px; }
+.terms-label a { color: var(--green-main); font-weight: 500; }
+.terms-label a:hover { text-decoration: underline; }

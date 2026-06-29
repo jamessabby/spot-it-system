@@ -1,0 +1,69 @@
+/* room-monitor.css — S.P.O.T.-IT Room Monitor Page */
+
+/* CCTV panel */
+.cctv-panel {
+  aspect-ratio: 4/3; background: #0a1710;
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 200px;
+}
+.cctv-label {
+  position: absolute; top: 10px; left: 12px;
+  font-family: var(--font-mono); font-size: .58rem;
+  color: rgba(100,255,160,.7); z-index: 2;
+}
+.cctv-ts {
+  position: absolute; bottom: 10px; right: 12px;
+  font-family: var(--font-mono); font-size: .56rem;
+  color: rgba(255,255,255,.4); z-index: 2;
+}
+.cctv-motion {
+  position: absolute; top: 10px; right: 12px;
+  font-family: var(--font-display); font-size: .56rem; font-weight: 700;
+  letter-spacing: .1em; padding: 3px 8px; border-radius: 100px;
+  background: rgba(208,2,27,.2); color: #ff8080;
+  border: 1px solid rgba(255,80,80,.2); z-index: 2;
+  display: flex; align-items: center; gap: 4px;
+}
+.cctv-rec {
+  width: 5px; height: 5px; border-radius: 50%; background: #ff4d4d;
+  animation: spotit-blink 1s infinite;
+}
+.cctv-scanline {
+  position: absolute; left: 0; right: 0; height: 1px; z-index: 3;
+  background: linear-gradient(90deg, transparent, rgba(100,255,160,.25), transparent);
+  animation: scanMove 4s linear infinite;
+}
+@keyframes scanMove { from{top:0%} to{top:100%} }
+.cctv-status-alert {
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+  font-family: var(--font-display); font-size: .6rem; font-weight: 700;
+  letter-spacing: .08em; color: #ff8080; background: rgba(208,2,27,.25);
+  border: 1px solid rgba(255,80,80,.3); padding: 4px 12px; border-radius: 100px; z-index: 2;
+  animation: spotit-blink 1.5s ease-in-out infinite; white-space: nowrap;
+}
+
+/* Stage rows */
+.stage-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 4px 0;
+}
+.stage-r-dot {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  background: var(--border); border: 2px solid var(--border-mid); margin-top: 3px;
+  transition: var(--transition);
+}
+.stage-r-dot.warn   { background: var(--warn); border-color: var(--warn); }
+.stage-r-dot.alert  { background: var(--alert); border-color: var(--alert); }
+.stage-r-dot.inactive { background: var(--bg-base); border-color: var(--border); }
+.stage-r-dot.pulse  { animation: pulseDot 1s ease-in-out infinite; }
+@keyframes pulseDot { 0%,100%{box-shadow:0 0 0 0 rgba(208,2,27,.4)} 50%{box-shadow:0 0 0 6px rgba(208,2,27,0)} }
+.stage-row.done .stage-r-dot { background: var(--ok); border-color: var(--ok); }
+.stage-row.done.warn .stage-r-dot { background: var(--warn); border-color: var(--warn); }
+.stage-row.active .stage-r-label { font-weight: 700; color: var(--alert); }
+.stage-row.inactive .stage-r-label { color: var(--text-dim); }
+.stage-r-label { font-size: .8rem; font-weight: 500; color: var(--text-primary); line-height: 1.4; }
+.stage-r-ts    { font-family: var(--font-mono); font-size: .63rem; color: var(--text-dim); margin-top: 2px; }
+.stage-connector {
+  width: 1px; height: 18px; background: var(--border); margin-left: 6px;
+}
+.stage-connector.done { background: var(--ok); }

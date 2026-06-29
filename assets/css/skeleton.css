@@ -1,0 +1,169 @@
+/* =============================================================
+   S.P.O.T.-IT — Skeleton Loading System (skeleton.css)
+   Shared across ALL pages. Mimics final layout shapes per page type.
+   ============================================================= */
+@import url('variables.css');
+
+/* ── Base shimmer ── */
+@keyframes skeletonShimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.sk {
+  background: linear-gradient(
+    90deg,
+    var(--sk-base) 0%,
+    var(--sk-shine) 50%,
+    var(--sk-base) 100%
+  );
+  background-size: 800px 100%;
+  animation: skeletonShimmer 1.6s linear infinite;
+  border-radius: 6px;
+}
+
+:root {
+  --sk-base:  rgba(0,0,0,.06);
+  --sk-shine: rgba(0,0,0,.11);
+}
+[data-theme="dark"] {
+  --sk-base:  rgba(255,255,255,.06);
+  --sk-shine: rgba(255,255,255,.13);
+}
+
+/* ── Skeleton overlay shell — covers the page-body while loading ── */
+.skeleton-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-base);
+  z-index: 9000;
+  overflow: hidden;
+  display: flex;
+  opacity: 1;
+  transition: opacity .35s ease;
+}
+.skeleton-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+.skeleton-overlay.hidden { display: none; }
+
+/* Skeleton occupies the same shell shape as the real dashboard */
+.sk-shell { display: flex; width: 100%; height: 100%; }
+
+/* Sidebar skeleton */
+.sk-sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.sk-sidebar-brand { display: flex; align-items: center; gap: 10px; }
+.sk-sidebar .sk-circle-32 { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; }
+.sk-sidebar-brand-text { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.sk-nav-group { display: flex; flex-direction: column; gap: 10px; }
+.sk-nav-label { width: 70px; height: 8px; margin-bottom: 4px; }
+.sk-nav-item { height: 30px; border-radius: 9px; width: 100%; }
+
+/* Main content skeleton */
+.sk-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.sk-topbar {
+  height: var(--topbar-h);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 22px; gap: 14px;
+  flex-shrink: 0;
+}
+.sk-topbar-title { width: 180px; height: 14px; }
+.sk-topbar-right { margin-left: auto; display: flex; gap: 10px; }
+.sk-pill-sm { width: 70px; height: 24px; border-radius: 100px; }
+.sk-circle-34 { width: 34px; height: 34px; border-radius: 8px; }
+
+.sk-page-body { flex: 1; overflow: hidden; padding: 22px; }
+
+/* Stat cards row */
+.sk-stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 22px; }
+.sk-stat-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 18px; display: flex; gap: 14px;
+}
+.sk-stat-icon { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; }
+.sk-stat-text { flex: 1; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.sk-stat-num  { width: 50px; height: 20px; }
+.sk-stat-label{ width: 90px; height: 9px; }
+
+/* Two-column grid (table + side panel) */
+.sk-content-grid { display: grid; grid-template-columns: 1fr 340px; gap: 18px; }
+.sk-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.sk-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 15px 18px; border-bottom: 1px solid var(--border);
+}
+.sk-card-title { width: 160px; height: 13px; }
+.sk-card-action { width: 70px; height: 22px; border-radius: 7px; }
+
+/* Table rows skeleton */
+.sk-row { display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+.sk-row:last-child { border-bottom: none; }
+.sk-row-thumb { width: 40px; height: 40px; border-radius: 9px; flex-shrink: 0; }
+.sk-row-lines { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.sk-line-w70 { width: 70%; height: 11px; }
+.sk-line-w40 { width: 40%; height: 9px; }
+.sk-row-badge { width: 60px; height: 20px; border-radius: 100px; flex-shrink: 0; }
+
+/* List items (alert feed style) */
+.sk-list-item { display: flex; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.sk-list-item:last-child { border-bottom: none; }
+.sk-list-icon { width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0; }
+.sk-list-text { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+
+/* Form skeleton (login/signup) */
+.sk-form-wrap { max-width: 420px; margin: 4rem auto; padding: 2rem; }
+.sk-form-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 2rem; }
+.sk-form-title { width: 60%; height: 24px; margin-bottom: 10px; }
+.sk-form-sub   { width: 85%; height: 12px; margin-bottom: 24px; }
+.sk-form-btn   { width: 100%; height: 46px; border-radius: 12px; margin-bottom: 14px; }
+.sk-form-field { width: 100%; height: 44px; border-radius: 9px; margin-bottom: 16px; }
+
+/* Avatar / profile skeleton */
+.sk-avatar-circle { width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 12px; }
+
+/* Card grid (thread items) */
+.sk-thread-card { display: flex; gap: 16px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; background: var(--bg-card); }
+.sk-thread-icon { width: 64px; height: 64px; border-radius: 14px; flex-shrink: 0; }
+.sk-thread-body { flex: 1; display: flex; flex-direction: column; gap: 9px; }
+
+/* Loading label (subtle, bottom center) */
+.sk-loading-label {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-display); font-size: .68rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim);
+}
+.sk-loading-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--green-main);
+  animation: spotit-blink 1s ease-in-out infinite;
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .sk-sidebar { display: none; }
+  .sk-content-grid { grid-template-columns: 1fr; }
+  .sk-stat-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Inline skeleton (for partial/AJAX content swaps within a page) ── */
+.sk-inline-block { display: block; width: 100%; }
+.sk-fade-in {
+  animation: skFadeIn .35s ease forwards;
+}
+@keyframes skFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

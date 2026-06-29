@@ -1,0 +1,71 @@
+# ============================================================
+# S.P.O.T.-IT — Root .htaccess
+# Security rules for the entire project
+# ============================================================
+
+Options -Indexes
+ServerSignature Off
+
+# ── Deny direct access to sensitive directories ───────────────────────────────
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Block direct access to config, services, and vendor folders
+  RewriteRule ^config/           - [F,L]
+  RewriteRule ^services/         - [F,L]
+  RewriteRule ^vendor/           - [F,L]
+
+  # Allow auth/ endpoints only via POST/GET from legitimate referrers
+  # (auth/ PHP files are the API — they handle their own auth checks)
+
+  # Redirect root to landing page
+  RewriteCond %{REQUEST_URI} ^/$
+  RewriteRule ^ pages/index.php [L,R=301]
+
+  # Clean URL: /login → pages/login.php
+  RewriteRule ^login/?$    pages/login.php    [L]
+  RewriteRule ^signup/?$   pages/signup.php   [L]
+  RewriteRule ^dashboard/? pages/dashboard-admin.php [L]
+</IfModule>
+
+# ── Block .sql files from web access ──────────────────────────────────────────
+<FilesMatch "\.(sql|env|md|log|sh|py)$">
+  Order Allow,Deny
+  Deny from all
+</FilesMatch>
+
+# ── Protect .htaccess itself ──────────────────────────────────────────────────
+<Files .htaccess>
+  Order Allow,Deny
+  Deny from all
+</Files>
+
+# ── Security headers ──────────────────────────────────────────────────────────
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-XSS-Protection "1; mode=block"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(self), microphone=()"
+  # CSP — adjust domains as needed for your CDN setup
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com;"
+</IfModule>
+
+# ── PHP settings ──────────────────────────────────────────────────────────────
+<IfModule mod_php.c>
+  php_flag display_errors Off
+  php_flag log_errors On
+  php_value session.cookie_httponly 1
+  php_value session.cookie_samesite "Lax"
+  php_value session.use_strict_mode 1
+</IfModule>
+
+# ── File caching for assets ───────────────────────────────────────────────────
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css             "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType image/jpeg           "access plus 30 days"
+  ExpiresByType image/png            "access plus 30 days"
+  ExpiresByType image/webp           "access plus 30 days"
+</IfModule>

@@ -1,0 +1,48 @@
+/* profile.css — S.P.O.T.-IT Profile Page */
+
+.profile-avatar-card { overflow: visible; }
+.avatar-bg {
+  height: 80px;
+  background: linear-gradient(135deg, var(--green-dark) 0%, var(--green-main) 100%);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  position: relative;
+}
+.avatar-content {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 0 20px 20px; text-align: center;
+}
+.profile-avatar-wrap {
+  position: relative; margin-top: -36px; margin-bottom: 12px;
+}
+.profile-avatar-circle {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: var(--green-main); color: #fff;
+  font-family: var(--font-display); font-size: 1.4rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  border: 4px solid var(--bg-card); box-shadow: var(--shadow-md);
+  position: relative; overflow: hidden;
+}
+.avatar-edit-btn {
+  position: absolute; bottom: 0; right: -4px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--green-main); color: #fff; border: 2px solid var(--bg-card);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .6rem; cursor: pointer; transition: var(--transition);
+}
+.avatar-edit-btn:hover { background: var(--green-mid); }
+.profile-name {
+  font-family: var(--font-display); font-size: 1rem; font-weight: 800;
+  color: var(--text-primary); margin-bottom: 3px;
+}
+.profile-email {
+  font-family: var(--font-mono); font-size: .7rem; color: var(--text-dim);
+}
+
+/* Microsoft link status */
+.ms-link-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.ms-link-status.linked { border-color: rgba(0,120,212,.2); background: rgba(0,120,212,.05); }
+.ms-link-icon { font-size: .9rem; flex-shrink: 0; color: #0078d4; }
