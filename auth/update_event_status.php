@@ -73,9 +73,10 @@ if ($new_status === 'recovered') {
 // ── Log in monitoring_logs ────────────────────────────────────────────────────
 try {
     $monitorPdo->prepare(
-        "INSERT INTO monitoring_logs (event_type, event_message, logged_at)
-         VALUES ('status_update', ?, NOW())"
+        "INSERT INTO monitoring_logs (room_id, event_type, event_message, logged_at)
+         VALUES (?, 'status_update', ?, NOW())"
     )->execute([
+        $det['room_id'],
         "Detection #{$detection_id} marked as {$new_status} by {$_SESSION['user_name']} ({$_SESSION['user_role']})"
     ]);
 } catch (Throwable $e) { /* non-critical */ }

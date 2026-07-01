@@ -145,14 +145,17 @@ function ms_json(array $data, int $status = 200): void {
 }
 
 // ── Detection timer stage helper ──────────────────────────────────────────────
-
-function ms_detection_stage(string $detectedAt): array {
-    $mins = (time() - strtotime($detectedAt)) / 60;
-    if ($mins >= TIMER_CONFIRMED_MIN) {
-        return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
+// Also declared in services/monitoring/db.php for the Python-facing ingest
+// endpoint. Guard prevents a fatal redeclaration if both files are loaded.
+if (!function_exists('ms_detection_stage')) {
+    function ms_detection_stage(string $detectedAt): array {
+        $mins = (time() - strtotime($detectedAt)) / 60;
+        if ($mins >= TIMER_CONFIRMED_MIN) {
+            return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
+        }
+        if ($mins >= TIMER_POTENTIAL_MIN) {
+            return ['stage' => 'potential', 'label' => 'Potentially Lost',  'mins' => (int)$mins];
+        }
+        return ['stage' => 'detected',  'label' => 'Detected',            'mins' => (int)$mins];
     }
-    if ($mins >= TIMER_POTENTIAL_MIN) {
-        return ['stage' => 'potential', 'label' => 'Potentially Lost',  'mins' => (int)$mins];
-    }
-    return ['stage' => 'detected',  'label' => 'Detected',            'mins' => (int)$mins];
 }

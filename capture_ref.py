@@ -1,6 +1,6 @@
 import cv2
 
-cap = cv2.VideoCapture('rtsp://192.168.1.163/stream')
+cap = cv2.VideoCapture('rtsp://192.168.0.89/stream')
 ret, frame = cap.read()
 
 def rescaleFrame(frame, scale=0.50):

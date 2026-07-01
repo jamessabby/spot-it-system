@@ -2,48 +2,43 @@ import cv2
 import json
 import os
 
-TARGET_SIZE = (640, 480)
 ROI_FILE = 'rois.json'
 
-roi_list = []               # will hold all the boxes successfully drawn
-drawing = False         # true when mouse was held down
-start_x, start_y = -1, -1   # starting point where mouse was first clicked
-temp_frame = None   # hold temporary copies of images while drawing
+roi_list = []
+drawing = False
+start_x, start_y = -1, -1
+temp_frame = None
 
-# function that listens to mouse inside the image window
 def draw_roi(event, x, y, flags, param):
     global drawing, start_x, start_y, temp_frame
 
-    if event == cv2.EVENT_LBUTTONDOWN:  # left mouse
+    if event == cv2.EVENT_LBUTTONDOWN:
         drawing = True
-        start_x, start_y = x, y         # cursor's current position
+        start_x, start_y = x, y
 
-    elif event == cv2.EVENT_MOUSEMOVE:  # mouse actively moving
+    elif event == cv2.EVENT_MOUSEMOVE:
         if drawing:
             temp_frame = ref_display.copy()
-            # Draw all saved ROIs
-            for roi in roi_list:    # loops through finished boxes
+            for roi in roi_list:
                 cv2.rectangle(temp_frame,
                     (roi['x'], roi['y']),
                     (roi['x'] + roi['w'], roi['y'] + roi['h']),
-                    (255, 0, 0), 2)                         
-                cv2.putText(temp_frame, roi['label'],                   #  blue text label of object 
+                    (255, 0, 0), 2)
+                cv2.putText(temp_frame, roi['label'],
                     (roi['x'], roi['y'] - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-            # Draw current rectangle being drawn
             cv2.rectangle(temp_frame, (start_x, start_y), (x, y), (0, 255, 255), 2)
             cv2.imshow("ROI Registration", temp_frame)
 
-    elif event == cv2.EVENT_LBUTTONUP: #trigger the moment finger was lifted
+    elif event == cv2.EVENT_LBUTTONUP:
         drawing = False
-        x2, y2 = x, y           # final release coordinate
-        w = abs(x2 - start_x)   # end points - start points
+        x2, y2 = x, y
+        w = abs(x2 - start_x)
         h = abs(y2 - start_y)
-        x_roi = min(start_x, x2)    # find the topmost, leftmost pixel corner 
+        x_roi = min(start_x, x2)
         y_roi = min(start_y, y2)
 
-        if w > 10 and h > 10:   # ensures box is greater than 10x10 pixels
-            # Ask for label in terminal
+        if w > 10 and h > 10:
             label = input(f"Enter label for this ROI (e.g. 'mouse', 'phone'): ")
             roi_list.append({
                 'label': label,
@@ -54,15 +49,18 @@ def draw_roi(event, x, y, flags, param):
             })
             print(f"ROI saved: {label} at ({x_roi},{y_roi}) size {w}x{h}")
 
-# Load reference image
+# ── Load reference image AT ITS NATIVE SIZE ──────────────────────────────
+# IMPORTANT: do NOT resize here. main.py uses ref_image.jpg's native
+# dimensions as TARGET_SIZE, so ROI coordinates must be drawn at that
+# same native size or boxes will misalign.
 ref = cv2.imread('photos/ref_image.jpg')
 if ref is None:
     print("ERROR: Cannot find photos/ref_image.jpg")
     exit()
 
-ref = cv2.resize(ref, TARGET_SIZE)
-# duplicate back-up versions of the image canvas so drawing on one layer doesn't break the raw image underneath
-ref_display = ref.copy()    
+print(f"[INFO] Reference image native size: {ref.shape[1]}x{ref.shape[0]}")
+
+ref_display = ref.copy()
 temp_frame = ref_display.copy()
 
 print("=== ROI REGISTRATION TOOL ===")
@@ -74,20 +72,20 @@ print("  Z = undo last ROI")
 print("  Q = quit without saving")
 
 cv2.imshow("ROI Registration", ref_display)
-cv2.setMouseCallback("ROI Registration", draw_roi)  # connects mouse function directly to that active window
+cv2.setMouseCallback("ROI Registration", draw_roi)
 
-while True:               # true until save or quit was pressed
-    key = cv2.waitKey(1) & 0xFF     # listen for 1 mS for any keypress 
-    
-    if key == ord('s'):     # save
-        with open(ROI_FILE, 'w') as f:  # opens rois.json in write mode
-            json.dump(roi_list, f, indent=2)    # converts drawn coordinates into aligned text entries inside that file
+while True:
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord('s'):
+        with open(ROI_FILE, 'w') as f:
+            json.dump(roi_list, f, indent=2)
         print(f"\nSaved {len(roi_list)} ROIs to {ROI_FILE}")
         for r in roi_list:
             print(f"  - {r['label']}: ({r['x']},{r['y']}) {r['w']}x{r['h']}")
         break
 
-    elif key == ord('z'):   # undo drawn boxes
+    elif key == ord('z'):
         if roi_list:
             removed = roi_list.pop()
             print(f"Removed ROI: {removed['label']}")
@@ -102,7 +100,7 @@ while True:               # true until save or quit was pressed
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
             cv2.imshow("ROI Registration", temp_frame)
 
-    elif key == ord('q'):               # skips saving & terminates loop
+    elif key == ord('q'):
         print("Quit without saving")
         break
 

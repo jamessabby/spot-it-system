@@ -4,21 +4,30 @@ import numpy as np
 import os
 import time
 import requests
-from datetime import     datetime
+from datetime import datetime
 
 # ── CONFIG ───────────────────────────────────────────────────────────────
-TARGET_SIZE         = (640, 480)
-ROI_FILE            = 'rois.json'
-REF_IMAGE           = 'photos/ref_image.jpg'
-SNAPSHOT_DIR        = 'photos/snapshots'    # save photos where item goes missing
-THRESHOLD           = 25    # If a pixel shifts in brightness by more than 25 units, it counts as a real visual change.
-MIN_CHANGE_PERCENT  = 0.08   # 8% of ROI pixels = significant change
-SCENE_MOTION_LIMIT  = 0.40   # 40% of full frame moving = scene unstable
-CONSISTENCY_FRAMES  = 3      # change must persist this many frames to trigger
-RTSP_URL            = 'rtsp://192.168.1.163/stream'
-ROOM_ID             = 1      # matches rooms.room_id in your DB
-API_URL             = 'http://localhost:3000/detections'
+STREAM_SCALE        = 0.50
+ROI_FILE             = 'rois.json'
+REF_IMAGE            = 'photos/ref_image.jpg'
+SNAPSHOT_DIR         = 'C:/xampp/htdocs/spotit/uploads/snapshots'
+THRESHOLD            = 10
+MIN_CHANGE_PERCENT   = 0.08
+SCENE_MOTION_LIMIT   = 0.15
+CONSISTENCY_FRAMES   = 3
+RTSP_URL             = 'rtsp://10.169.96.20/stream'
+
+# ── ROOM / API CONFIG ───────────────────────────────────────────────────────
+ROOM_ID           = 'TESTROOM'          # your personal desk test setup
+API_URL           = 'http://localhost/spotit/auth/ingest_detection.php'
+API_KEY           = 'CHANGE_ME_DETECTION_KEY'   # must match env.php / DETECTION_API_KEY
+BASELINE_COUNT    = None                # set below from number of ROIs
 # ─────────────────────────────────────────────────────────────────────────
+
+def rescaleFrame(frame, scale=STREAM_SCALE):
+    width  = int(frame.shape[1] * scale)
+    height = int(frame.shape[0] * scale)
+    return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
 
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
@@ -27,15 +36,19 @@ with open(ROI_FILE, 'r') as f:
     roi_list = json.load(f)
 print(f"[SPOT-IT] Loaded {len(roi_list)} ROIs: {[r['label'] for r in roi_list]}")
 
+BASELINE_COUNT = len(roi_list)  # all items present = baseline
+
 # ── LOAD REFERENCE FRAME ──────────────────────────────────────────────────
 ref_bgr = cv2.imread(REF_IMAGE)
 if ref_bgr is None:
     print(f"[ERROR] Cannot load reference image: {REF_IMAGE}")
     exit()
-ref_bgr   = cv2.resize(ref_bgr, TARGET_SIZE)
-ref_gray  = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-ref_blur  = cv2.GaussianBlur(ref_gray, (21, 21), 0)
-print(f"[SPOT-IT] Reference frame loaded from {REF_IMAGE}")
+ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
+TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
+print(f"[SPOT-IT] Reference frame loaded — size: {TARGET_SIZE}")
+
+print(f"[DEBUG] Reference size: {ref_bgr.shape}")
 
 # ── CONNECT TO RTSP STREAM ────────────────────────────────────────────────
 print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
@@ -51,14 +64,14 @@ if not cap.isOpened():
 print("[SPOT-IT] Stream connected. Starting detection loop...")
 print("[SPOT-IT] Press Q to quit.\n")
 
-# ── PER-ROI CONSISTENCY COUNTERS ──────────────────────────────────────────
+# ── PER-ROI STATE ─────────────────────────────────────────────────────────
 consistency_count = {roi['label']: 0 for roi in roi_list}
 active_events     = {roi['label']: False for roi in roi_list}
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
 def is_scene_stable(frame_blur):
-    full_diff   = cv2.absdiff(ref_blur, frame_blur) # Subtracts your clean baseline reference image from the current live video frame.
-    _, full_thr = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)   # Turns everything black except for areas where movement occurred, which turn bright white.
+    full_diff   = cv2.absdiff(ref_blur, frame_blur)
+    _, full_thr = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)
     total_px    = TARGET_SIZE[0] * TARGET_SIZE[1]
     changed_px  = cv2.countNonZero(full_thr)
     motion_pct  = changed_px / total_px
@@ -79,33 +92,44 @@ def save_snapshot(frame, label):
     cv2.imwrite(filepath, frame)
     return filepath
 
-def build_candidate_event(label, roi, snapshot_path, change_pct):
-    return {
-        "room_id":       ROOM_ID,
-        "object_type":   "missing_item",
-        "object_zone":   label,
-        "detected_at":   datetime.now().isoformat(),
-        "snapshot_path": snapshot_path,
-        "status":        "pending",
-        "notes":         f"ROI change: {change_pct:.1%} over {CONSISTENCY_FRAMES} consecutive frames"
+def count_missing_items():
+    """Count how many ROIs are currently confirmed missing (consistency met)."""
+    return sum(1 for label in consistency_count if consistency_count[label] >= CONSISTENCY_FRAMES)
+
+def post_to_api(label, snapshot_path, change_pct):
+    """
+    POST detection event to ingest_detection.php
+    Matches the exact fields the PHP endpoint expects.
+    """
+    live_count = BASELINE_COUNT - count_missing_items()
+
+    payload = {
+        'api_key':        API_KEY,
+        'room_id':        ROOM_ID,
+        'object_type':    label,             # e.g. "tumbler", "mouse"
+        'object_zone':    label,             # using ROI label as zone name too
+        'baseline_count': BASELINE_COUNT,
+        'live_count':     live_count,
+        'roi_change_pct': round(change_pct * 100, 1),  # PHP expects percentage e.g. 71.4
     }
 
-def post_to_api(event):
-    """
-    POST the candidate event to the Node.js backend.
-    Fails silently so a network error never crashes the detection loop.
-    """
     try:
-        response = requests.post(API_URL, json=event, timeout=3)
-        if response.status_code == 201:
-            data = response.json()
-            print(f"  → API accepted. Detection ID: {data['detection']['id']}")
+        with open(snapshot_path, 'rb') as img_file:
+            files = {'snapshot': (os.path.basename(snapshot_path), img_file, 'image/jpeg')}
+            response = requests.post(API_URL, data=payload, files=files, timeout=5)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('success'):
+                print(f"  → API SUCCESS: detection_id={result.get('detection_id')}, "
+                      f"deviation={result.get('deviation')}, stage={result.get('stage')}")
+            else:
+                print(f"  → API ERROR: {result.get('message')}")
         else:
-            print(f"  → API returned {response.status_code}: {response.text}")
-    except requests.exceptions.ConnectionError:
-        print(f"  → API offline (server.js not running). Event logged locally only.")
-    except Exception as e:
-        print(f"  → API error: {e}")
+            print(f"  → API HTTP ERROR: {response.status_code} — {response.text[:200]}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"  → API CONNECTION FAILED: {e}")
 
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 while True:
@@ -118,14 +142,15 @@ while True:
         cap = cv2.VideoCapture(RTSP_URL)
         continue
 
-    frame     = cv2.resize(frame, TARGET_SIZE)
-    frame     = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    frame     = cv2.resize(frame, TARGET_SIZE)  # re-resize after rotate to lock to 640x480
-    gray      = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur      = cv2.GaussianBlur(gray, (21, 21), 0)
+    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    frame = rescaleFrame(frame)
+    print(f"[DEBUG] Live frame size: {frame.shape}")
 
-    full_diff  = cv2.absdiff(ref_blur, blur)    # core pixel subtraction
-    _, thresh  = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)    # applies threshold filter
+    gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur  = cv2.GaussianBlur(gray, (21, 21), 0)
+
+    full_diff = cv2.absdiff(ref_blur, blur)
+    _, thresh = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)
 
     output = frame.copy()
 
@@ -136,7 +161,7 @@ while True:
         for roi in roi_list:
             consistency_count[roi['label']] = 0
 
-        cv2.putText(output, f"SCENE UNSTABLE — monitoring paused ({motion_pct:.1%} motion)",
+        cv2.putText(output, f"SCENE UNSTABLE — paused ({motion_pct:.1%} motion)",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
 
         for roi in roi_list:
@@ -172,20 +197,17 @@ while True:
 
         if confirmed_missing:
             active_events[label] = True
-
             snapshot_path = save_snapshot(frame, label)
-            event = build_candidate_event(label, roi, snapshot_path, change_pct)
 
             print(f"\n[CANDIDATE EVENT DETECTED]")
-            print(f"  ROI Label    : {event['object_zone']}")
-            print(f"  Room ID      : {event['room_id']}")
-            print(f"  Detected At  : {event['detected_at']}")
-            print(f"  Snapshot     : {event['snapshot_path']}")
-            print(f"  Change       : {event['notes']}")
-            print(f"  Status       : {event['status']}")
+            print(f"  ROI Label    : {label}")
+            print(f"  Room ID      : {ROOM_ID}")
+            print(f"  Detected At  : {datetime.now().isoformat()}")
+            print(f"  Snapshot     : {snapshot_path}")
+            print(f"  Change       : {change_pct:.1%} over {CONSISTENCY_FRAMES} consecutive frames")
 
-            # ── POST to Node.js API ──────────────────────────────────────
-            post_to_api(event)
+            post_to_api(label, snapshot_path, change_pct)
+            print()
 
         # ── DRAW ROI BOXES ────────────────────────────────────────────────
         if consistency_count[label] >= CONSISTENCY_FRAMES:
@@ -193,7 +215,6 @@ while True:
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 0, 255), 2)
             cv2.putText(output, f"MISSING: {label}", (x, y - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
         elif consistency_count[label] > 0:
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 255, 255), 2)
             cv2.putText(output, f"CHECKING: {label} ({consistency_count[label]}/{CONSISTENCY_FRAMES})",
@@ -213,7 +234,6 @@ while True:
 
     cv2.putText(output, status_text, (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-
     cv2.putText(output, f"Scene motion: {motion_pct:.1%}", (10, TARGET_SIZE[1] - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
@@ -222,7 +242,6 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# ── CLEANUP ───────────────────────────────────────────────────────────────
 cap.release()
 cv2.destroyAllWindows()
 print("[SPOT-IT] Stream closed.")

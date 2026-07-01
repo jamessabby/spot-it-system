@@ -5,6 +5,10 @@
  * Tables:   rooms, registered_lab_items, detections, monitoring_logs
  *
  * MICROSERVICES: This file only connects to spotit_monitor_db.
+ *
+ * Also houses ms_detection_stage() so that ingest_detection.php
+ * (a sessionless, Python-facing API endpoint) can compute the stage
+ * label without pulling in the full service_bootstrap.php.
  */
 require_once __DIR__ . '/../../config/env.php';
 
@@ -30,4 +34,23 @@ function getMonitorDB(): PDO {
         }
     }
     return $pdo;
+}
+
+// ── Detection timer stage helper ──────────────────────────────────────────────
+// Kept here (rather than only in service_bootstrap.php) so that
+// ingest_detection.php can use it without a session or the full bootstrap.
+// service_bootstrap.php still re-declares it; PHP's function_exists guard
+// prevents a fatal duplicate-function error if both files happen to be loaded
+// in the same request (e.g. during integrated testing).
+if (!function_exists('ms_detection_stage')) {
+    function ms_detection_stage(string $detectedAt): array {
+        $mins = (time() - strtotime($detectedAt)) / 60;
+        if ($mins >= TIMER_CONFIRMED_MIN) {
+            return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
+        }
+        if ($mins >= TIMER_POTENTIAL_MIN) {
+            return ['stage' => 'potential', 'label' => 'Potentially Lost',  'mins' => (int)$mins];
+        }
+        return ['stage' => 'detected',  'label' => 'Detected',            'mins' => (int)$mins];
+    }
 }
