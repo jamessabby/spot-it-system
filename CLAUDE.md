@@ -436,121 +436,13 @@ future session understands *why* the current values/logic are what they are:
    convention if the schema stores bcrypt/argon2 hashes — check
    `services/auth/schema.sql` and `login_handler.php` for the exact hashing
    function used before writing the seed, so the hash format matches what
-   login verification expects). This is a one-time manual step per
-   environment (local dev, eventual deployment), not a recurring task — do it
-   once, document the credentials somewhere Sab can find them, move on.
-   Once one admin exists, use their dashboard to provision `staff` accounts
-   for testing rather than more manual SQL.
+   login verification expects). Once one admin exists, use their dashboard
+   to provision `staff` accounts for testing rather than more manual SQL.
 
----
+## 5. Active Roadmap & Progress Checklists
 
-## 5. Full roadmap — start to finish of the thesis
+The project roadmap, phase-by-phase implementation checklists, and current task progress have been moved to [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook lightweight. Refer to that file to check off completed items and see what to work on next.
 
-This is the end-to-end plan, broken into phases. **Phases are sequenced by
-dependency, not calendar time** — treat as a checklist, not a fixed schedule.
-Update checkboxes/notes here as things complete or change, so state persists
-across sessions instead of needing re-discovery each time.
-
-### Phase 1 — Backend correctness (do first, everything else depends on this)
-- [x] Fix `ingest_detection.php` `ms_detection_stage()` bug (§4.1) — moved fn
-      into `services/monitoring/db.php` with `function_exists` guard; bootstrap
-      also guarded so no redeclaration fatal on shared request paths.
-- [x] Seed one real admin account via SQL (§4.4) — bcrypt hash generated via
-      `php -r "echo password_hash(...)"` on the XAMPP PHP CLI; SQL provided
-      in §4 comment block for phpMyAdmin.
-- [x] `dashboard-staff.php` fully rewritten — hardcoded `$queue`/`$resolved`/
-      `$myRooms` arrays replaced with live JS polling to `get_detections.php`
-      every 10s. Stat cards, filter tabs, and Verify/Dismiss buttons all live.
-- [x] `dashboard-admin.php` fully rewritten — all hardcoded `$events`/`$alerts`/
-      `$ok_rooms`/`$tl` arrays replaced with live JS polling. Room table,
-      event log, alerts feed, timeline all live.     
-- [x] `dashboard-student.php` fully rewritten — `$claims`/`$recent` replaced
-      with live fetch to new `get_claims.php` and `get_recovered_items.php`.
-      Two new read endpoints created to support this.
-- [x] `update_event_status.php` end-to-end wired — staff/admin dashboards now
-      POST to it from Verify/Dismiss/Recover/Confirm buttons with notes. `room_id`
-      added to `monitoring_logs` INSERT (was missing). UI refreshes on success.
-
-### Phase 2 — Detection pipeline correctness
-
-#### Step 2.1: Python Detection Engine Upgrades (`main.py`)
-- [ ] Add MobileNetV2 / DNN loader to `main.py` using OpenCV's DNN module
-- [ ] Implement the **Tier-Aware Pipeline logic** in the frame processing loop:
-  - **Tier 1 (Fixed Assets):** If change detected, crop and send to MobileNetV2 presence validation. Skip template matching.
-  - **Tier 2/3/4 (Personal Items):** Use standard background subtraction + template matching (1.5x → 2x → full frame search).
-- [ ] Add **Snapshot B (Re-detection/removal) logic**:
-  - Once a target enters RED/MISSING, continue monitoring its ROI pixels.
-  - If a sudden frame delta (hand reaching in or object shifting again) is detected, capture a second snapshot (Snapshot B) and upload it to the DB as evidence of who interacted with the item.
-- [ ] Implement the **Auto-Flood Gate protection**:
-  - Track count of items that enter MISSING state in the room.
-  - If >50% of the room's registered ROIs trigger MISSING within 60s, automatically toggle an `is_monitoring_paused` flag to `true` and log a single mass-rearrangement alert.
-
-#### Step 2.2: Live Comparison Engine (A/B testing)
-- [ ] Create `main_classical_only.py` by duplicating `main.py` and stripping out the MobileNetV2 presence validation blocks.
-- [ ] Verify both scripts read successfully from the same `rois.json` and local camera RTSP feed.
-- [ ] Setup a testing spreadsheet (or SQL table) to log accuracy differences (TP, FP, FN, TN) between both scripts under various test conditions (lighting shift, slight nudge, actual theft).
-
-#### Step 2.3: Ingestion & Backend Updates
-- [ ] Update `auth/ingest_detection.php` to accept and process the two separate snapshots (Snapshot A: Empty frame, Snapshot B: Retaking frame).
-- [ ] Add `is_monitoring_paused` status and mass-alert logging endpoints to `services/monitoring/db.php`.
-
-### Phase 3 — Web-Based Recalibration Tool (Canvas UI)
-
-#### Step 3.1: Backend Calibration API
-- [ ] Create `auth/capture_frame.php` to request/retrieve a fresh, rotated, and scaled frame from the room's camera stream, saving it temporarily for drawing.
-- [ ] Create `auth/save_rois.php` to accept a JSON payload of drawn coordinates and update `rois.json` (or the database).
-
-#### Step 3.2: HTML5 Canvas Annotation Interface
-- [ ] Add a "Recalibrate Room" modal/page to the Admin Dashboard.
-- [ ] Build the interactive HTML5 Canvas element:
-  - Load the captured fresh camera snapshot as the canvas background.
-  - Add JS event listeners to allow drawing rectangular bounding boxes with click-and-drag.
-  - Allow labeling boxes (e.g., `computer1`, `object1`).
-- [ ] Add a "Save Config" button that sends the drawn ROI boxes back to `auth/save_rois.php`, clears the old alerts for that room, and triggers `main.py` to reload its configuration.
-
-### Phase 3.5 — Real room + item data
-- [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms actually being tested (see thesis Table 3.2 for list)
-- [ ] Physically deploy the prototype IP camera stream inside the laboratory test environment
-- [ ] Perform live ROI calibration on the final CCTV stream using the newly built Canvas dashboard tool
-- [ ] Re-tune `THRESHOLD`, `SCENE_MOTION_LIMIT`, and `MATCH_SCORE_THRESHOLD` on the physical Dahua camera stream (due to changes in lighting/compression)
-
-### Phase 4 — Controlled testing (thesis §3.5, Table 3.5)
-Run each scenario ≥5 trials per the methodology, recording results as you go:
-- [ ] **S1 — Unattended Item Persistence**: item intentionally left → expect notification event generated
-- [ ] **S2 — Minor Object Movement**: item slightly moved within ROI tolerance → expect no notification
-- [ ] **S3 — Continuous Room Activity**: multiple people in room → expect monitoring temporarily pauses (scene-stability gate working)
-- [ ] **S4 — Temporary Object Obstruction**: item briefly covered/blocked → expect no immediate false alert
-- [ ] **S5 — Item Retrieval and Claiming**: detected item goes through claiming verification → expect claim record stored in DB
-- [ ] **S6 — Dashboard Notification Test**: valid event → expect it appears on dashboard
-- [ ] **S7 — Flood Gate Verification**: simulate a mass rearrangement → confirm the system automatically pauses and doesn't crash the database
-- [ ] **S8 — A/B Comparison run**: run the same set of trials with `main_classical_only.py` vs `main.py` and record the accuracy results (TP / FP / FN / TN) for the thesis paper
-- [ ] For each trial, record classification as **TP / FP / FN / TN** per thesis §3.5.2 (Accuracy Test) — this data is the core evidence for the accuracy/functionality chapter, keep it organized (spreadsheet or DB table) as you go rather than reconstructing it later
-
-
-### Phase 5 — Usability & expert evaluation
-- [ ] Distribute the Likert-scale questionnaire (thesis §3.9 has the exact
-      sample items — dashboard usability, notification clarity, claiming
-      process usability, overall usefulness) to ~30–50 respondents (students,
-      lab staff, IT-related evaluators) via convenience sampling
-- [ ] Run the expert evaluation with IT faculty/advisers using a structured
-      form covering functionality, notification reliability, visual
-      monitoring capability, dashboard usability, practicality (thesis §3.5.4)
-- [ ] Compile descriptive statistics (frequency counts, percentages, mean
-      scores) from both — this becomes Chapter 4 results
-
-### Phase 6 — Defense prep
-- [ ] Make sure the live system can be demoed end-to-end without manual
-      workarounds (real camera or convincing desk-test stand-in → detection →
-      dashboard → claiming)
-- [ ] Prepare answers grounded in this document for the likely hard questions:
-      "how does it tell apart items," "why ML only as a gatekeeper," "what
-      happens when housekeepers move equipment," "why microservices instead of
-      one database" — all already answered in §3a/§8, just need to be
-      rehearsed, not re-derived under pressure
-- [ ] Reconcile anything advisers/panelists changed along the way — update
-      this file's relevant sections and the actual thesis document (Chapter 3
-      methodology text) to match what was actually built, not what was
-      originally planned, if they diverged
 
 ---
 
@@ -638,27 +530,8 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
 
 ---
 
-## 9. Change log
 
-Keep this short — one line per meaningful change to project direction, newest
-first. This is so a future session can see "oh, this decision was revisited on
-[date] because [reason]" instead of silently drifting out of sync with reality.
+## 9. Change Log & Project History
 
-- **2026-07-04** — Added §3c: finalized scope/behavior decisions from team discussion.
-  Documented: no cross-room tracking (single-camera-frame only), item labeling
-  convention (registered = named, unregistered = auto `objectN`), claiming flow
-  (owner clicks + selfie), dual-snapshot evidence trail (Snapshot A = empty ROI,
-  Snapshot B = who took it), storage plan (Hostinger Cloud Startup 100GB NVMe,
-  compressed snapshots, no auto-delete, purge on donation), data retention tied to
-  end-of-year donation cycle, camera hardware TBD.
-  Added: MobileNetV2 A/B comparison script strategy (`main_classical_only.py`) and Calibration/Flood Prevention strategy (mass-alert auto-pause gate + HTML5 Canvas web recalibration UI).
-  Segregated future roadmap items into checkbox-based tasks to allow granular development.
+The historical change log documenting past development sessions and pivots has been moved to the end of [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook focused. Refer to that file to trace past modifications.
 
-- **2026-07-01** — Phase 1 backend correctness complete. Fixed `ingest_detection.php`
-  fatal (`ms_detection_stage()` undefined) by moving fn to `services/monitoring/db.php`
-  with `function_exists` guard. Provided real bcrypt admin seed SQL. Rewrote all three
-  dashboards (staff/admin/student) to replace hardcoded PHP arrays with live JS polling
-  to `get_detections.php`, `get_claims.php` (new), and `get_recovered_items.php` (new).
-  Wired all verify/dismiss/resolve/recover buttons to `update_event_status.php` with
-  notes. Added `room_id` to `monitoring_logs` audit INSERT. Also created `get_claims.php`
-  and `get_recovered_items.php` (were in README but never built).
