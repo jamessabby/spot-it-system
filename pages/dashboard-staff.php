@@ -4,7 +4,7 @@
  * pages/dashboard-staff.php
  * MICROSERVICES: No SQL here. All data comes from auth/get_detections.php via JS fetch.
  */
-require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../auth/service_bootstrap.php';
 ms_require_role('staff', 'login.php');
 $active_page = 'dashboard';
 $user_role   = 'staff';

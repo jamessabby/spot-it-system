@@ -4,7 +4,7 @@
  * pages/dashboard-admin.php
  * MICROSERVICES: No SQL here. Data comes from auth/get_detections.php via JS fetch.
  */
-require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../auth/service_bootstrap.php';
 ms_require_role('admin', 'login.php');
 $active_page = 'dashboard';
 $user_role   = 'admin';

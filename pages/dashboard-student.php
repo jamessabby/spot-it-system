@@ -4,7 +4,7 @@
  * pages/dashboard-student.php
  * MICROSERVICES: No SQL here. Data comes from auth/ endpoints via JS fetch.
  */
-require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../auth/service_bootstrap.php';
 ms_require_auth('login.php');
 $active_page = 'student';
 $user_role   = 'student';
