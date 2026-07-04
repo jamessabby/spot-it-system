@@ -361,83 +361,19 @@ snapshot files on disk.
     dismisses all stale pending alerts for that room before resuming live monitoring.
 
 
-### 3b. Bug diagnosis history (so root causes aren't re-investigated from scratch)
 
-These are past bugs and their **actual root causes**, not just the fixes, so a
-future session understands *why* the current values/logic are what they are:
+### 3b. Bug Diagnosis & Resolution History
 
-- **`Cannot find photos/live_image.jpg` on `main.py` run.** Root cause: an old
-  static-image version of `main.py` (which called
-  `cv2.imread('photos/live_image.jpg')`) was still the file being executed in
-  VS Code, while the correct RTSP-based version (`RTSP_URL = 'rtsp://...'`,
-  reading via `cv2.VideoCapture`) already existed elsewhere. Not a logic bug —
-  a stale-file-being-run problem. Lesson: when debugging "should be fixed but
-  isn't," check *which file is actually executing* before re-diagnosing logic.
-- **Live feed showing ~86% motion even with nothing moving, ROI boxes staying
-  orange/unstable.** Root cause: `capture_ref.py` rotates captured frames 90°
-  CCW to correct the iPhone's portrait orientation, but `main.py`'s live-frame
-  processing did not apply the same rotation — so `ref_image.jpg` was
-  landscape while every live frame was portrait/tilted, making almost every
-  pixel register as "different" by definition. Fix: apply identical
-  `cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)` in `main.py`'s frame
-  loop, then **re-resize back to `TARGET_SIZE` after rotating** (rotating a
-  640×480 frame produces 480×640, which silently breaks all ROI coordinates
-  if not corrected).
-- **"Constant red" detections even when items were untouched.** Root cause was
-  three compounding, independent issues, not one bug:
-  1. `THRESHOLD = 10` was sensitive enough to register ordinary H.264
-     compression artifacts (RTSP streams are lossy; static scenes still have
-     pixel-level noise every frame) as "changed" pixels.
-  2. `SCENE_MOTION_LIMIT = 0.15` was tight enough that ordinary compression
-     noise across the whole frame crossed the 15% threshold, which reset
-     *all* per-ROI consistency counters on every "unstable" frame — so
-     counters never had a clean run of stable frames to confirm anything
-     properly, and leftover partial state bled between adjacent ROIs.
-  3. `CONSISTENCY_FRAMES = 3` at ~30fps meant three flagged frames could occur
-     within a fraction of a second, well before a human would perceive the
-     "event" as real.
-  Fix was raising all three (see the tuning block above), which filters out
-  compression/lighting noise while still catching genuine removal (which
-  causes 50–200+ point pixel deltas, far above a threshold of 25).
-- **Items staying red/flagged after being placed back "close enough" but not
-  pixel-identical.** Root cause: `cv2.absdiff`-based pixel comparison has zero
-  tolerance for position, rotation, or shadow differences — "close enough"
-  visually is not "identical" pixel-for-pixel. Fix: the tolerance-zone
-  `cv2.matchTemplate` search described in §3 step 3, which asks "is this
-  reference crop findable somewhere nearby" instead of "are these exact
-  pixels unchanged."
+The detailed history of past resolved bugs (RTSP orientation issues, constant-red triggers, compression noise, etc.) and their diagnostic root causes has been moved to [BUGS.md](file:///c:/xampp/htdocs/spotit/BUGS.md) to keep this rulebook clean. Refer to that file before debugging repeated issues.
+
 
 ---
 
-## 4. Known bugs / immediate fix targets
 
-1. **`ingest_detection.php` undefined function error.** It calls
-   `ms_detection_stage()` on the response payload, but only requires
-   `config/env.php` and `services/monitoring/db.php` — `ms_detection_stage()`
-   is defined in `auth/service_bootstrap.php`, which is never required. Fix:
-   either `require_once __DIR__ . '/service_bootstrap.php';` at the top of
-   `ingest_detection.php`, or move `ms_detection_stage()` into
-   `services/monitoring/db.php` so the detection-ingest path doesn't need to
-   pull in the full bootstrap (lighter dependency for an API-key-only,
-   session-less endpoint — probably the better fix given this endpoint is hit
-   by Python, not a browser).
-2. **Staff dashboard wiring.** `dashboard-staff.php` needs to be fully wired to
-   `get_detections.php` (queue + stat cards) rather than any hardcoded PHP
-   arrays — confirm this is actually live, not just written once and untested.
-3. **Test data.** Need real room records inserted into `spotit_monitor_db.rooms`
-   / `registered_lab_items` beyond the `TESTROOM` desk setup, before Table 3.5
-   scenarios can be run against actual CEAT rooms.
-4. **No admin account exists yet / first-admin bootstrap problem.** Per §2
-   rule 3, admin accounts are provisioned only by an existing admin — but
-   there is no existing admin on a fresh install, so signup alone can never
-   produce one. This needs a **one-time SQL seed**, not a PHP feature: insert
-   a row directly into `spotit_auth_db.users` with `role = 'admin'` via
-   phpMyAdmin's SQL tab (hash the password with PHP's `password_hash()`
-   convention if the schema stores bcrypt/argon2 hashes — check
-   `services/auth/schema.sql` and `login_handler.php` for the exact hashing
-   function used before writing the seed, so the hash format matches what
-   login verification expects). Once one admin exists, use their dashboard
-   to provision `staff` accounts for testing rather than more manual SQL.
+## 4. Active / Immediate Fix Targets
+
+The list of active bugs and immediate development fix targets (like setting up real test rooms and the first admin account) is tracked in [BUGS.md](file:///c:/xampp/htdocs/spotit/BUGS.md). Refer to that file to see outstanding bug tasks.
+
 
 ## 5. Active Roadmap & Progress Checklists
 
