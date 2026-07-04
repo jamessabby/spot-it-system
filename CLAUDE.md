@@ -199,6 +199,168 @@ version currently deployed — verify by checking for `mobilenet`/`dnn`/`tier` i
 `main.py` before assuming it's live. If missing, that's the next real coding
 task, not already-done.
 
+### 3c. Finalized scope & behavior decisions (2026-07-04 discussion with team)
+
+These were discussed and agreed on by Sab and his groupmate. They are project
+requirements now, not open questions. Future sessions should implement against
+these — don't re-propose alternatives unless an adviser/panelist explicitly
+asks for a change.
+
+#### No cross-room item tracking
+
+- Detection and template matching operate **within a single camera frame only**.
+  The expanding search zone (1.5x → 2x → full frame) scans a wider rectangle
+  of the *same camera's current image*. There is no matching of items across
+  different rooms or cameras.
+- If Room 1 has an iPhone 13 and Room 2 also has an iPhone 13, the system
+  treats them as completely independent zones. No attempt to correlate or
+  identify "which specific iPhone" — that would require object identity
+  recognition, which is explicitly out of scope (§8).
+- This is a deliberate, non-negotiable scope decision, not a limitation to
+  apologize for. If a panelist asks about it, state it plainly: the system
+  tracks *presence in registered zones*, not *individual item identity*.
+
+#### Item labeling convention
+
+- **Registered items** (expected to be in the room, entered during ROI
+  registration): named descriptively — `computer1`, `keyboard3`, `monitor5`,
+  etc. These labels are stored in `rois.json` and the `registered_lab_items`
+  table.
+- **Unregistered / left items** (detected by the system but not part of the
+  room's registered inventory): auto-labeled `object1`, `object2`, etc.
+  This is a **dynamic display label**, not a permanent DB column — computed
+  on-the-fly by querying unlabeled items in `recovered_items`, ordered by
+  `recovered_at`, numbered sequentially.
+- **Admin relabeling workflow**: Admin/staff should relabel unregistered items
+  with a descriptive name (e.g. "red Jansport bag with keychain") by end of
+  day. If unlabeled items exist, the dashboard shows a notification nag.
+  When an item is relabeled, it drops out of the `objectN` pool and the
+  remaining auto-labels shift down naturally (no renumbering code needed —
+  just a `COUNT` query against still-unlabeled items).
+
+#### Claiming flow — owner-initiated, selfie required
+
+1. System detects item missing → flagged RED → staff/admin notified
+2. Item is eventually recovered (housekeeper finds it, or it reappears) →
+   brought to the dispensing room
+3. Staff marks item as available for claiming in the dashboard
+4. **Owner** goes to the claiming station (kiosk/device at the dispensing
+   window) and opens the claiming page in the web app
+5. Owner clicks "Claim" → enters university ID → describes the item →
+   **takes a selfie holding the retrieved item** via the web app's webcam
+   capture → clicks submit
+6. Status changes to **Claimed**
+
+The owner is the one who presses the "Claimed" button — no staff proxy for
+this step. This is a deliberate design: the selfie + button press by the
+owner creates an undeniable record that the item was physically handed off.
+The `claims.webcam_snapshot` column already exists for this.
+
+#### Dual-snapshot evidence trail ("who took the item")
+
+Every detection event produces **two snapshots**:
+
+| Snapshot | Trigger | Purpose |
+|----------|---------|--------|
+| **Snapshot A** | Item first confirmed missing (consistency counter met) | Evidence of the empty ROI — proves the item was gone |
+| **Snapshot B** | ROI changes *again* while item is in RED/MISSING state (someone physically interacts with or removes the flagged item) | Evidence of *who* touched it — supports recovery or theft investigation |
+
+This creates a chain of evidence:
+- Housekeeper took it → turned it over to dispensing room → good (normal flow)
+- Someone took it → item never reaches dispensing room → **Snapshot B shows
+  who interacted with the item + timestamp** → evidence for possible theft
+
+**Snapshot B requires new detection logic in `main.py`:** after an item
+enters RED/MISSING state, the system must continue monitoring that ROI.
+When it detects another significant change (a person reaching into the
+frame, the object disappearing from where it was last sitting), it captures
+a second snapshot and logs the timestamp. This is **not yet implemented**
+and is tracked as a Phase 2 task.
+
+#### Left-item event log fields
+
+When an unregistered/left item is detected, the system logs:
+- Timestamp (detected_at)
+- Room location (room_id)
+- Detected object label (auto-generated `objectN` or admin-assigned name)
+- Notification status (pending → potential → confirmed_missing → etc.)
+- Event duration (computed from detected_at to resolution)
+- Snapshot image of the item (Snapshot A)
+- Snapshot of whoever took it (Snapshot B, when triggered)
+
+These map to existing columns in `spotit_monitor_db.detections` plus the
+snapshot files on disk.
+
+#### Storage & hosting plan
+
+- **Hosting:** Hostinger Cloud Startup plan (₱409/mo) — 100 GB NVMe storage,
+  PHP + MySQL, deployed at a public URL (not localhost) for the defense demo.
+- **Snapshot compression:** All snapshots resized to 640×480 JPEG before
+  saving (~50–100 KB each). At 2 snapshots per event × ~100 events/day
+  across all rooms = ~20 MB/day = ~600 MB/month. Well within 100 GB.
+- **No automatic image deletion.** Snapshots are kept as long as the item
+  record exists — owners searching for their items need to see the photos.
+  Deduplication: only 1 snapshot per event trigger (not per frame).
+- **Data retention lifecycle:**
+  Detected → Flagged → Recovered → Claimed **or** Unclaimed → Donated
+  (end of academic year, per SWAFO Director + CEAT technician interview).
+  When an item is processed as donated on the donation page, associated
+  records (detection logs, snapshots, claim records) are purged. This is
+  the system's garbage collection — no manual cleanup needed.
+- **Donation page:** A separate UI page for admin to process end-of-year
+  donations of unclaimed items. When items are donated, their DB records
+  and snapshot files are archived or deleted. (Not yet built — Phase 5+
+  scope.)
+
+#### Camera hardware (TBD — pending team clarification)
+
+- **Planned:** Dahua 5MP Full-color Eyeball CCTV — but the specific model
+  listed is analog (coaxial output). The system needs an **IP camera** that
+  serves RTSP natively, or an analog camera connected through a DVR/NVR
+  that outputs RTSP. Team is clarifying this.
+- **Budget:** 2 cameras total. Prototyping with 1 camera first; once the
+  system works with 1, the second camera is added.
+- **Cannot access school CCTV** — project buys its own hardware regardless
+  of whether DLSU-D CEAT has existing cameras.
+- **Current desk-test stand-in:** iPhone + OctoStream RTSP app. This works
+  fine for development and will continue to be used until real hardware is
+  procured. Tuning values will need adjustment when switching (see §3,
+  closing note).
+
+#### MobileNetV2 A/B Accuracy Comparison
+
+- **Purpose:** To defend the use of AI/ML to the panel and provide concrete evidence
+  for Chapter 4 (Results). We need to prove that MobileNetV2 is necessary to eliminate
+  false positives from shadows, slight nudges, or camera compression noise.
+- **Two Parallel Scripts:**
+  - `main.py`: The live system with the full pipeline (Classical CV + MobileNetV2 gatekeeper).
+  - `main_classical_only.py`: The baseline system with only background subtraction +
+    tolerance-zone template matching (MobileNetV2 presence validation code is stripped).
+- **Execution:** Both scripts run against the same live stream and `rois.json` configuration.
+  For the defense demo, a keyboard nudged a few inches will stay green in `main.py`
+  but turn red (false alarm) in `main_classical_only.py`.
+- **Metrics:** Compare accuracy using TP/FP/FN/TN rates side-by-side in Chapter 4.
+
+#### Calibration & Database Flood Prevention
+
+- **Problem:** If a lab room is rearranged (e.g., desks moved for summer or cleaning), the
+  system would trigger simultaneous "MISSING" alerts for all items. This would generate dozens of concurrent
+  unnecessary database entries, snapshot files, and dashboard alerts.
+- **Auto-Flood Gate:** In the Python detection logic, if more than **50% of registered ROIs**
+  in a single room simultaneously enter the "MISSING" state within 60 seconds, monitoring for
+  that room **automatically pauses**. A single system alert is logged: *"Mass deviation detected.
+  Room monitoring paused. Recalibration required."* This protects the DB and file system.
+- **Web-Based Recalibration Tool (Option B):** Instead of running the command-line Python
+  registration tool (`register_roi.py`), the admin dashboard will host a polished, visually-pleasing
+  web interface:
+  - Admin selects a paused/rearranged room and clicks "Recalibrate".
+  - The system requests a fresh camera snapshot from the live RTSP feed.
+  - The web page loads this snapshot onto an HTML5 Canvas-based annotation tool.
+  - Admin draws/adjusts bounding boxes directly on the web browser.
+  - Clicking "Save" updates the backend `rois.json` (or database equivalent) and automatically
+    dismisses all stale pending alerts for that room before resuming live monitoring.
+
+
 ### 3b. Bug diagnosis history (so root causes aren't re-investigated from scratch)
 
 These are past bugs and their **actual root causes**, not just the fixes, so a
@@ -301,7 +463,7 @@ across sessions instead of needing re-discovery each time.
       every 10s. Stat cards, filter tabs, and Verify/Dismiss buttons all live.
 - [x] `dashboard-admin.php` fully rewritten — all hardcoded `$events`/`$alerts`/
       `$ok_rooms`/`$tl` arrays replaced with live JS polling. Room table,
-      event log, alerts feed, timeline all live.
+      event log, alerts feed, timeline all live.     
 - [x] `dashboard-student.php` fully rewritten — `$claims`/`$recent` replaced
       with live fetch to new `get_claims.php` and `get_recovered_items.php`.
       Two new read endpoints created to support this.
@@ -310,47 +472,60 @@ across sessions instead of needing re-discovery each time.
       added to `monitoring_logs` INSERT (was missing). UI refreshes on success.
 
 ### Phase 2 — Detection pipeline correctness
-- [ ] Verify current `main.py` state against §3a — implement the tier-aware +
-      MobileNetV2 gatekeeper split if not already present
-- [ ] Re-test the rotation fix and constant-red fix (§3b) are both still
-      applied after any `main.py` rewrites — these are easy to accidentally
-      drop when replacing the whole file
-- [ ] Confirm `main.py` → `ingest_detection.php` → `spotit_monitor_db.detections`
-      → dashboard is a fully closed loop with a live camera feed (not just a
-      single manual test)
 
-### Phase 3 — Real room + item data
-- [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms
-      actually being tested (see thesis Table 3.2 for the room list — MLH
-      401–407, MLH 301–306, MLH 201–204, MLB 107–111 — and each room's tier
-      classification from that same table)
-- [ ] Register real ROIs (via `register_roi.py` or the in-app registration
-      flow, per thesis §3.6.6) for at least the rooms selected for controlled
-      testing — this likely needs to happen physically in the CEAT building
-      with the actual/prototype camera setup, not just at Sab's desk
-- [ ] If moving from the iPhone/OctoStream stand-in to a real CCTV feed at any
-      point, re-tune `THRESHOLD` / `SCENE_MOTION_LIMIT` / `MATCH_SCORE_THRESHOLD`
-      — values tuned for OctoStream's compression artifacts will not
-      necessarily transfer to different camera hardware (§3, closing note)
+#### Step 2.1: Python Detection Engine Upgrades (`main.py`)
+- [ ] Add MobileNetV2 / DNN loader to `main.py` using OpenCV's DNN module
+- [ ] Implement the **Tier-Aware Pipeline logic** in the frame processing loop:
+  - **Tier 1 (Fixed Assets):** If change detected, crop and send to MobileNetV2 presence validation. Skip template matching.
+  - **Tier 2/3/4 (Personal Items):** Use standard background subtraction + template matching (1.5x → 2x → full frame search).
+- [ ] Add **Snapshot B (Re-detection/removal) logic**:
+  - Once a target enters RED/MISSING, continue monitoring its ROI pixels.
+  - If a sudden frame delta (hand reaching in or object shifting again) is detected, capture a second snapshot (Snapshot B) and upload it to the DB as evidence of who interacted with the item.
+- [ ] Implement the **Auto-Flood Gate protection**:
+  - Track count of items that enter MISSING state in the room.
+  - If >50% of the room's registered ROIs trigger MISSING within 60s, automatically toggle an `is_monitoring_paused` flag to `true` and log a single mass-rearrangement alert.
+
+#### Step 2.2: Live Comparison Engine (A/B testing)
+- [ ] Create `main_classical_only.py` by duplicating `main.py` and stripping out the MobileNetV2 presence validation blocks.
+- [ ] Verify both scripts read successfully from the same `rois.json` and local camera RTSP feed.
+- [ ] Setup a testing spreadsheet (or SQL table) to log accuracy differences (TP, FP, FN, TN) between both scripts under various test conditions (lighting shift, slight nudge, actual theft).
+
+#### Step 2.3: Ingestion & Backend Updates
+- [ ] Update `auth/ingest_detection.php` to accept and process the two separate snapshots (Snapshot A: Empty frame, Snapshot B: Retaking frame).
+- [ ] Add `is_monitoring_paused` status and mass-alert logging endpoints to `services/monitoring/db.php`.
+
+### Phase 3 — Web-Based Recalibration Tool (Canvas UI)
+
+#### Step 3.1: Backend Calibration API
+- [ ] Create `auth/capture_frame.php` to request/retrieve a fresh, rotated, and scaled frame from the room's camera stream, saving it temporarily for drawing.
+- [ ] Create `auth/save_rois.php` to accept a JSON payload of drawn coordinates and update `rois.json` (or the database).
+
+#### Step 3.2: HTML5 Canvas Annotation Interface
+- [ ] Add a "Recalibrate Room" modal/page to the Admin Dashboard.
+- [ ] Build the interactive HTML5 Canvas element:
+  - Load the captured fresh camera snapshot as the canvas background.
+  - Add JS event listeners to allow drawing rectangular bounding boxes with click-and-drag.
+  - Allow labeling boxes (e.g., `computer1`, `object1`).
+- [ ] Add a "Save Config" button that sends the drawn ROI boxes back to `auth/save_rois.php`, clears the old alerts for that room, and triggers `main.py` to reload its configuration.
+
+### Phase 3.5 — Real room + item data
+- [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms actually being tested (see thesis Table 3.2 for list)
+- [ ] Physically deploy the prototype IP camera stream inside the laboratory test environment
+- [ ] Perform live ROI calibration on the final CCTV stream using the newly built Canvas dashboard tool
+- [ ] Re-tune `THRESHOLD`, `SCENE_MOTION_LIMIT`, and `MATCH_SCORE_THRESHOLD` on the physical Dahua camera stream (due to changes in lighting/compression)
 
 ### Phase 4 — Controlled testing (thesis §3.5, Table 3.5)
 Run each scenario ≥5 trials per the methodology, recording results as you go:
-- [ ] **S1 — Unattended Item Persistence**: item intentionally left → expect
-      notification event generated
-- [ ] **S2 — Minor Object Movement**: item slightly moved within ROI tolerance
-      → expect no notification
-- [ ] **S3 — Continuous Room Activity**: multiple people in room → expect
-      monitoring temporarily pauses (scene-stability gate working)
-- [ ] **S4 — Temporary Object Obstruction**: item briefly covered/blocked →
-      expect no immediate false alert
-- [ ] **S5 — Item Retrieval and Claiming**: detected item goes through
-      claiming verification → expect claim record stored in DB
-- [ ] **S6 — Dashboard Notification Test**: valid event → expect it appears on
-      dashboard
-- [ ] For each trial, record classification as **TP / FP / FN / TN** per
-      thesis §3.5.2 (Accuracy Test) — this data is the core evidence for the
-      accuracy/functionality chapter, keep it organized (spreadsheet or DB
-      table) as you go rather than reconstructing it later
+- [ ] **S1 — Unattended Item Persistence**: item intentionally left → expect notification event generated
+- [ ] **S2 — Minor Object Movement**: item slightly moved within ROI tolerance → expect no notification
+- [ ] **S3 — Continuous Room Activity**: multiple people in room → expect monitoring temporarily pauses (scene-stability gate working)
+- [ ] **S4 — Temporary Object Obstruction**: item briefly covered/blocked → expect no immediate false alert
+- [ ] **S5 — Item Retrieval and Claiming**: detected item goes through claiming verification → expect claim record stored in DB
+- [ ] **S6 — Dashboard Notification Test**: valid event → expect it appears on dashboard
+- [ ] **S7 — Flood Gate Verification**: simulate a mass rearrangement → confirm the system automatically pauses and doesn't crash the database
+- [ ] **S8 — A/B Comparison run**: run the same set of trials with `main_classical_only.py` vs `main.py` and record the accuracy results (TP / FP / FN / TN) for the thesis paper
+- [ ] For each trial, record classification as **TP / FP / FN / TN** per thesis §3.5.2 (Accuracy Test) — this data is the core evidence for the accuracy/functionality chapter, keep it organized (spreadsheet or DB table) as you go rather than reconstructing it later
+
 
 ### Phase 5 — Usability & expert evaluation
 - [ ] Distribute the Likert-scale questionnaire (thesis §3.9 has the exact
@@ -430,6 +605,11 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
   valid). The eventual real deployment target is a Dahua 5MP IP CCTV camera per
   the thesis hardware spec — don't assume iPhone-specific quirks (portrait
   rotation, OctoStream compression artifacts) apply to the final hardware.
+  See §3c "Camera hardware" for current procurement status.
+- **Deployment target is Hostinger Cloud Startup** (₱409/mo, 100 GB NVMe),
+  not localhost/XAMPP. The defense demo will run against the hosted URL.
+  `main.py` will POST to the hosted `ingest_detection.php` instead of
+  `localhost`. XAMPP remains the local dev environment only.
 - **`capture_ref.py` rotates 90° CCW and rescales 50%** to correct the iPhone's
   portrait orientation; `main.py` must apply the same rotation to live frames
   or the reference/live comparison breaks (see §3b for the full root-cause
@@ -463,6 +643,16 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
 Keep this short — one line per meaningful change to project direction, newest
 first. This is so a future session can see "oh, this decision was revisited on
 [date] because [reason]" instead of silently drifting out of sync with reality.
+
+- **2026-07-04** — Added §3c: finalized scope/behavior decisions from team discussion.
+  Documented: no cross-room tracking (single-camera-frame only), item labeling
+  convention (registered = named, unregistered = auto `objectN`), claiming flow
+  (owner clicks + selfie), dual-snapshot evidence trail (Snapshot A = empty ROI,
+  Snapshot B = who took it), storage plan (Hostinger Cloud Startup 100GB NVMe,
+  compressed snapshots, no auto-delete, purge on donation), data retention tied to
+  end-of-year donation cycle, camera hardware TBD.
+  Added: MobileNetV2 A/B comparison script strategy (`main_classical_only.py`) and Calibration/Flood Prevention strategy (mass-alert auto-pause gate + HTML5 Canvas web recalibration UI).
+  Segregated future roadmap items into checkbox-based tasks to allow granular development.
 
 - **2026-07-01** — Phase 1 backend correctness complete. Fixed `ingest_detection.php`
   fatal (`ms_detection_stage()` undefined) by moving fn to `services/monitoring/db.php`

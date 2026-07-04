@@ -15,7 +15,7 @@ THRESHOLD            = 10
 MIN_CHANGE_PERCENT   = 0.08
 SCENE_MOTION_LIMIT   = 0.15
 CONSISTENCY_FRAMES   = 3
-RTSP_URL             = 'rtsp://10.169.96.20/stream'
+RTSP_URL             = 'rtsp://192.168.0.89/stream'
 
 # ── ROOM / API CONFIG ───────────────────────────────────────────────────────
 ROOM_ID           = 'TESTROOM'          # your personal desk test setup
