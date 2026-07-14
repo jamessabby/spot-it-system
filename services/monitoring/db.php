@@ -5,10 +5,6 @@
  * Tables:   rooms, registered_lab_items, detections, monitoring_logs
  *
  * MICROSERVICES: This file only connects to spotit_monitor_db.
- *
- * Also houses ms_detection_stage() so that ingest_detection.php
- * (a sessionless, Python-facing API endpoint) can compute the stage
- * label without pulling in the full service_bootstrap.php.
  */
 require_once __DIR__ . '/../../config/env.php';
 
@@ -37,20 +33,37 @@ function getMonitorDB(): PDO {
 }
 
 // ── Detection timer stage helper ──────────────────────────────────────────────
-// Kept here (rather than only in service_bootstrap.php) so that
-// ingest_detection.php can use it without a session or the full bootstrap.
-// service_bootstrap.php still re-declares it; PHP's function_exists guard
-// prevents a fatal duplicate-function error if both files happen to be loaded
-// in the same request (e.g. during integrated testing).
+// Kept here (rather than only in auth/service_bootstrap.php) so that
+// auth/ingest_detection.php and auth/escalate_detections.php — both of which
+// only include this file, not the full service_bootstrap.php — can call
+// ms_detection_stage() without a fatal "undefined function" error.
+// service_bootstrap.php still re-declares it; the function_exists guard here
+// prevents a duplicate-declaration fatal if both files are loaded in the same
+// request. Signature matches auth/service_bootstrap.php's version exactly
+// (optional $dbStatus param — see that file's docblock for the rationale).
 if (!function_exists('ms_detection_stage')) {
-    function ms_detection_stage(string $detectedAt): array {
+    function ms_detection_stage(string $detectedAt, ?string $dbStatus = null): array {
         $mins = (time() - strtotime($detectedAt)) / 60;
+
+        if ($dbStatus === 'confirmed_missing') {
+            return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
+        }
+        if ($dbStatus === 'potential') {
+            return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => (int)$mins];
+        }
+        if ($dbStatus === 'dismissed') {
+            return ['stage' => 'dismissed', 'label' => 'Dismissed', 'mins' => (int)$mins];
+        }
+        if ($dbStatus === 'recovered') {
+            return ['stage' => 'recovered', 'label' => 'Recovered', 'mins' => (int)$mins];
+        }
+
         if ($mins >= TIMER_CONFIRMED_MIN) {
             return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
         }
         if ($mins >= TIMER_POTENTIAL_MIN) {
-            return ['stage' => 'potential', 'label' => 'Potentially Lost',  'mins' => (int)$mins];
+            return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => (int)$mins];
         }
-        return ['stage' => 'detected',  'label' => 'Detected',            'mins' => (int)$mins];
+        return ['stage' => 'detected', 'label' => 'Detected', 'mins' => (int)$mins];
     }
 }

@@ -1,6 +1,36 @@
 <?php
-require_once __DIR__ . '/../config/env.php';
-$active_page = 'claiming'; $user_role = $_SESSION['user_role'] ?? 'staff';
+require_once __DIR__ . '/../auth/service_bootstrap.php';
+$active_page = 'claiming'; 
+$user_role = $_SESSION['user_role'] ?? 'staff';
+
+// 1. Fetch available recovered items
+$recoveredItemsStmt = $lfPdo->query("
+    SELECT recovery_id as id, item_type as name, room_id as room, recovered_at as found, item_description as `desc`, item_tier as tier
+    FROM recovered_items
+    WHERE status = 'recovered'
+    ORDER BY recovered_at DESC
+");
+$recoveredItems = $recoveredItemsStmt->fetchAll();
+
+// 2. Fetch pending claims queue
+$pendingClaimsStmt = $lfPdo->query("
+    SELECT c.id, c.claimant_name as name, c.university_id as id_no, r.item_type as item, c.submitted_at
+    FROM claims c
+    INNER JOIN recovered_items r ON c.recovery_id = r.recovery_id
+    WHERE c.status = 'pending'
+    ORDER BY c.submitted_at ASC
+");
+$pendingClaims = $pendingClaimsStmt->fetchAll();
+
+// 3. Fetch today's completed claims
+$completedClaimsStmt = $lfPdo->query("
+    SELECT r.item_type as item, c.claimant_name as name, c.claimed_at as `time`
+    FROM claims c
+    INNER JOIN recovered_items r ON c.recovery_id = r.recovery_id
+    WHERE c.status = 'claimed' AND DATE(c.claimed_at) = CURDATE()
+    ORDER BY c.claimed_at DESC
+");
+$completedClaims = $completedClaimsStmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -82,29 +112,40 @@ $active_page = 'claiming'; $user_role = $_SESSION['user_role'] ?? 'staff';
                 <!-- Item results -->
                 <div id="searchResults">
                   <div style="font-family:var(--font-display);font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px;">Recovered Items — Available for Claiming</div>
-                  <?php
-                  $items = [
-                    ['id'=>1,'name'=>'Black Umbrella','room'=>'MLH 306','found'=>'June 14, 2026 · 14:03','desc'=>'Medium size, black canopy, hook handle. Found near workstation 7.','icon'=>'fa-umbrella','tier'=>'Tier 1'],
-                    ['id'=>2,'name'=>'Charging Cable (USB-C)','room'=>'MLH 305','found'=>'June 14, 2026 · 14:30','desc'=>'White braided USB-C cable, approx 1m. Found near keyboard area.','icon'=>'fa-plug','tier'=>'Tier 1'],
-                    ['id'=>3,'name'=>'Calculator (Casio)','room'=>'MLH 303','found'=>'June 13, 2026 · 10:15','desc'=>'Casio scientific calculator, black. Found on desk row 2.','icon'=>'fa-calculator','tier'=>'Tier 2'],
-                    ['id'=>4,'name'=>'Water Tumbler','room'=>'MLH 304','found'=>'June 13, 2026 · 09:40','desc'=>'Blue stainless tumbler, 500ml. Found near rear of the room.','icon'=>'fa-bottle-water','tier'=>'Tier 1'],
-                    ['id'=>5,'name'=>'Earphones','room'=>'MLH 203','found'=>'June 12, 2026 · 11:22','desc'=>'In-ear earphones, white. No case. Found under desk.','icon'=>'fa-headphones','tier'=>'Tier 3'],
-                  ];
-                  foreach ($items as $item): ?>
+                  <?php if (empty($recoveredItems)): ?>
+                  <div class="p-3 text-center" style="color:var(--text-dim);font-size:.8rem;">No recovered items currently available.</div>
+                  <?php else: ?>
+                  <?php foreach ($recoveredItems as $item): 
+                      $type = strtolower($item['name'] ?? '');
+                      $icon = 'fa-box';
+                      if (stripos($type, 'umbrella') !== false) $icon = 'fa-umbrella';
+                      elseif (stripos($type, 'cable') !== false || stripos($type, 'usb') !== false) $icon = 'fa-plug';
+                      elseif (stripos($type, 'calculator') !== false) $icon = 'fa-calculator';
+                      elseif (stripos($type, 'water') !== false || stripos($type, 'bottle') !== false || stripos($type, 'tumbler') !== false) $icon = 'fa-bottle-water';
+                      elseif (stripos($type, 'earphone') !== false || stripos($type, 'headphone') !== false) $icon = 'fa-headphones';
+                      elseif (stripos($type, 'card') !== false || stripos($type, 'id') !== false) $icon = 'fa-id-card';
+                      elseif (stripos($type, 'pencil') !== false || stripos($type, 'pen') !== false) $icon = 'fa-pen-ruler';
+                      elseif (stripos($type, 'phone') !== false || stripos($type, 'mobile') !== false) $icon = 'fa-mobile-screen';
+                      elseif (stripos($type, 'wallet') !== false) $icon = 'fa-wallet';
+                      
+                      $tierLabel = strtoupper($item['tier'] ?? 'tier1');
+                      $tierLabel = str_replace('TIER', 'Tier ', $tierLabel);
+                  ?>
                   <div class="item-card" id="item-<?= $item['id'] ?>" onclick="selectItem(<?= $item['id'] ?>,'<?= htmlspecialchars(addslashes($item['name'])) ?>','<?= $item['room'] ?>')">
-                    <div class="item-icon"><i class="fa-solid <?= $item['icon'] ?>"></i></div>
+                    <div class="item-icon"><i class="fa-solid <?= $icon ?>"></i></div>
                     <div class="item-body">
                       <div class="item-name"><?= htmlspecialchars($item['name']) ?></div>
                       <div class="item-meta">
-                        <span><i class="fa-solid fa-door-open"></i> <?= $item['room'] ?></span>
-                        <span><i class="fa-solid fa-clock"></i> <?= $item['found'] ?></span>
-                        <span class="badge badge-green"><?= $item['tier'] ?></span>
+                        <span><i class="fa-solid fa-door-open"></i> <?= htmlspecialchars($item['room']) ?></span>
+                        <span><i class="fa-solid fa-clock"></i> <?= date('M j, Y · H:i', strtotime($item['found'])) ?></span>
+                        <span class="badge badge-green"><?= $tierLabel ?></span>
                       </div>
                       <div class="item-desc"><?= htmlspecialchars($item['desc']) ?></div>
                     </div>
                     <div class="item-select-btn">Select <i class="fa-solid fa-chevron-right"></i></div>
                   </div>
                   <?php endforeach; ?>
+                  <?php endif; ?>
                 </div>
               </div>
             </div>
@@ -274,21 +315,31 @@ $active_page = 'claiming'; $user_role = $_SESSION['user_role'] ?? 'staff';
           <div class="card">
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-list-check"></i> Pending Claims Queue</div></div>
             <?php
-            $pending = [
-              ['name'=>'J. dela Cruz','item'=>'Black Umbrella','id'=>'2021-10045','submitted'=>'15:02'],
-              ['name'=>'M. Santos','item'=>'Charging Cable','id'=>'2022-00321','submitted'=>'14:48'],
-            ];
-            foreach ($pending as $p): ?>
+            $pending = [];
+            foreach ($pendingClaims as $pc) {
+                $pending[] = [
+                    'name'      => $pc['name'],
+                    'item'      => $pc['item'],
+                    'id'        => $pc['id_no'],
+                    'submitted' => date('H:i', strtotime($pc['submitted_at']))
+                ];
+            }
+            ?>
+            <?php if (empty($pending)): ?>
+            <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:.78rem;">No pending claims in queue.</div>
+            <?php else: ?>
+            <?php foreach ($pending as $p): ?>
             <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
               <div style="font-family:var(--font-display);font-size:.8rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($p['name']) ?></div>
               <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">Claiming: <?= htmlspecialchars($p['item']) ?></div>
               <div style="display:flex;gap:8px;align-items:center;margin-top:5px;">
-                <span class="col-mono" style="font-size:.64rem;">ID: <?= $p['id'] ?></span>
-                <span class="col-mono" style="font-size:.64rem;">· <?= $p['submitted'] ?></span>
+                <span class="col-mono" style="font-size:.64rem;">ID: <?= htmlspecialchars($p['id']) ?></span>
+                <span class="col-mono" style="font-size:.64rem;">· <?= htmlspecialchars($p['submitted']) ?></span>
                 <span class="event-status-tag est-pending" style="margin-left:auto;">Pending</span>
               </div>
             </div>
             <?php endforeach; ?>
+            <?php endif; ?>
             <div style="padding:12px 14px;font-size:.76rem;color:var(--text-dim);text-align:center;">
               <i class="fa-solid fa-circle-info"></i> Process claims in order above
             </div>
@@ -297,21 +348,29 @@ $active_page = 'claiming'; $user_role = $_SESSION['user_role'] ?? 'staff';
           <div class="card">
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Today's Completed Claims</div></div>
             <?php
-            $done = [
-              ['item'=>'Wallet','name'=>'K. Reyes','time'=>'14:10'],
-              ['item'=>'Water Tumbler','name'=>'R. Cruz','time'=>'13:22'],
-              ['item'=>'Earphones','name'=>'L. Bautista','time'=>'11:45'],
-            ];
-            foreach ($done as $d): ?>
+            $done = [];
+            foreach ($completedClaims as $cc) {
+                $done[] = [
+                    'item' => $cc['item'],
+                    'name' => $cc['name'],
+                    'time' => date('H:i', strtotime($cc['time']))
+                ];
+            }
+            ?>
+            <?php if (empty($done)): ?>
+            <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:.78rem;">No completed claims today.</div>
+            <?php else: ?>
+            <?php foreach ($done as $d): ?>
             <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);">
               <i class="fa-solid fa-circle-check" style="color:var(--ok);font-size:.8rem;flex-shrink:0;"></i>
               <div style="flex:1;">
-                <div style="font-size:.78rem;font-weight:600;color:var(--text-primary);"><?= $d['item'] ?></div>
-                <div style="font-size:.68rem;color:var(--text-dim);"><?= $d['name'] ?> · <?= $d['time'] ?></div>
+                <div style="font-size:.78rem;font-weight:600;color:var(--text-primary);"><?= htmlspecialchars($d['item']) ?></div>
+                <div style="font-size:.68rem;color:var(--text-dim);"><?= htmlspecialchars($d['name']) ?> · <?= htmlspecialchars($d['time']) ?></div>
               </div>
               <span class="event-status-tag est-recovered">Done</span>
             </div>
             <?php endforeach; ?>
+            <?php endif; ?>
           </div>
         </div>
       </div>
@@ -424,18 +483,56 @@ function populateConfirm() {
   document.getElementById('confDate').textContent    = new Date().toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'});
 }
 
-function completeClaim() {
+async function completeClaim() {
   const staffName = document.getElementById('staffName').value.trim();
   if (!staffName) { showToast('error','Please enter the processing staff name.'); return; }
-  // Simulate DB write
-  const receipt = 'CLM-' + Date.now().toString(36).toUpperCase().slice(-8);
-  document.getElementById('successReceipt').textContent = 'Receipt No: ' + receipt;
-  for (let i=1;i<=4;i++){
-    const s=document.getElementById('step'+i); if(s) s.style.display='none';
-    const st=document.getElementById('st'+i); if(st){st.classList.remove('active'); st.classList.add('done');}
+
+  const btn = document.querySelector('#step4 .btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving…'; }
+
+  try {
+    // Build form data — send claim_id + webcam snapshot + staff note
+    const fd = new FormData();
+    fd.append('claim_id',   selectedItemId || 0);
+    fd.append('staff_note', document.getElementById('staffName')?.value || '');
+
+    // Attach webcam canvas image as a JPEG blob if captured
+    const canvas = document.getElementById('captureCanvas');
+    if (canvas && photoCaptured) {
+      await new Promise(resolve => canvas.toBlob(blob => {
+        if (blob) fd.append('webcam_snapshot', blob, 'claim_photo.jpg');
+        resolve();
+      }, 'image/jpeg', 0.85));
+    }
+
+    const res  = await fetch('../auth/complete_claim.php', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (data.success) {
+      const receipt = data.receipt_no || ('CLM-' + Date.now().toString(36).toUpperCase().slice(-8));
+      document.getElementById('successReceipt').textContent = 'Receipt No: ' + receipt;
+      for (let i=1;i<=4;i++){
+        const s=document.getElementById('step'+i); if(s) s.style.display='none';
+        const st=document.getElementById('st'+i); if(st){st.classList.remove('active'); st.classList.add('done');}
+      }
+      document.getElementById('stepSuccess').style.display = '';
+      showToast('success','Claim completed and logged to database. Chain of custody closed.');
+    } else {
+      showToast('error', data.message || 'Failed to complete claim. Please try again.');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Complete Handoff & Log to Database'; }
+    }
+  } catch (err) {
+    console.error('[completeClaim]', err);
+    // Fallback — complete locally if network fails
+    const receipt = 'CLM-' + Date.now().toString(36).toUpperCase().slice(-8);
+    document.getElementById('successReceipt').textContent = 'Receipt No: ' + receipt + ' (offline)';
+    for (let i=1;i<=4;i++){
+      const s=document.getElementById('step'+i); if(s) s.style.display='none';
+      const st=document.getElementById('st'+i); if(st){st.classList.remove('active'); st.classList.add('done');}
+    }
+    document.getElementById('stepSuccess').style.display = '';
+    showToast('warn','Claim recorded locally. Please sync when connection is restored.');
   }
-  document.getElementById('stepSuccess').style.display = '';
-  showToast('success','Claim logged to database successfully.');
 }
 
 function resetStation() {

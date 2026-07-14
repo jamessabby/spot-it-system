@@ -5,10 +5,31 @@
  * Shows the current user's submitted reports, posts, and activity.
  * MICROSERVICES: No SQL. Data from auth/get_posts.php via JS.
  */
-require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../auth/service_bootstrap.php';
 $active_page = 'posts';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 $uname       = $_SESSION['user_name'] ?? 'User';
+$userId      = $_SESSION['user_id'] ?? 0;
+
+// Fetch user's forum posts
+$userPostsStmt = $communityPdo->prepare("
+    SELECT post_id, title, content, category, flair, created_at, upvotes, comment_count, is_locked
+    FROM forum_posts
+    WHERE user_id = ? AND is_removed = 0
+    ORDER BY created_at DESC
+");
+$userPostsStmt->execute([$userId]);
+$userPosts = $userPostsStmt->fetchAll();
+
+// Count resolved claims for user
+$resolvedClaimsStmt = $lfPdo->prepare("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status = 'claimed'");
+$resolvedClaimsStmt->execute([$userId]);
+$resolvedClaims = (int)$resolvedClaimsStmt->fetchColumn();
+
+// Count pending claims for user
+$pendingClaimsStmt = $lfPdo->prepare("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status = 'pending'");
+$pendingClaimsStmt->execute([$userId]);
+$pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -39,11 +60,10 @@ $uname       = $_SESSION['user_name'] ?? 'User';
     </div>
 
     <div class="page-body">
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-pen-to-square"></i></div><div><div class="stat-num">3</div><div class="stat-label">Total Posts</div></div></div>
-        <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num">2</div><div class="stat-label">Claims Resolved</div></div></div>
-        <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num">1</div><div class="stat-label">Pending</div></div></div>
-        <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-eye"></i></div><div><div class="stat-num">47</div><div class="stat-label">Total Views</div></div></div>
+        <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-pen-to-square"></i></div><div><div class="stat-num"><?= count($userPosts) ?></div><div class="stat-label">Total Posts</div></div></div>
+        <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num"><?= $resolvedClaims ?></div><div class="stat-label">Claims Resolved</div></div></div>
+        <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num"><?= $pendingClaimsCount ?></div><div class="stat-label">Pending</div></div></div>
+        <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-eye"></i></div><div><div class="stat-num">0</div><div class="stat-label">Total Views</div></div></div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 280px;gap:18px;align-items:start;">
@@ -57,97 +77,160 @@ $uname       = $_SESSION['user_name'] ?? 'User';
                 <i class="fa-solid fa-plus"></i> New Post
               </button>
             </div>
-            <div class="filter-tabs">
-              <div class="filter-tab active" onclick="setFilterTab(this)">All (3)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Lost Reports (1)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Found Reports (1)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Claim Requests (1)</div>
-            </div>
+             <?php
+             $cLost = 0; $cFound = 0; $cClaim = 0;
+             foreach ($userPosts as $up) {
+                 if ($up['category'] === 'lost_and_found') $cLost++;
+                 elseif ($up['category'] === 'found_item') $cFound++;
+                 else $cClaim++;
+             }
+             ?>
+             <div class="filter-tabs">
+               <div class="filter-tab active" onclick="setFilterTab(this)">All (<?= count($userPosts) ?>)</div>
+               <div class="filter-tab" onclick="setFilterTab(this)">Lost Reports (<?= $cLost ?>)</div>
+               <div class="filter-tab" onclick="setFilterTab(this)">Found Reports (<?= $cFound ?>)</div>
+               <div class="filter-tab" onclick="setFilterTab(this)">Claim Requests (<?= $cClaim ?>)</div>
+             </div>
 
-            <?php
-            $posts = [
-              [
-                'type'=>'lost','icon'=>'fa-circle-question','type_color'=>'alert',
-                'title'=>'Lost: Blue Water Tumbler',
-                'desc'=>'Lost my blue stainless tumbler (500ml) somewhere in MLH during my 2PM class on June 13. No stickers. Please contact me if found.',
-                'room'=>'MLH 304','date'=>'June 13, 2026','views'=>18,
-                'status'=>'Resolved','st_cls'=>'est-recovered',
-                'match'=>'Matched to recovered item — MLH 304 · June 13',
-              ],
-              [
-                'type'=>'found','icon'=>'fa-circle-check','type_color'=>'ok',
-                'title'=>'Found: Casio Calculator on desk',
-                'desc'=>'Found a Casio fx-991EX on desk row 2 after our Algorithms class. Surrendered to lab staff.',
-                'room'=>'MLH 303','date'=>'June 14, 2026','views'=>21,
-                'status'=>'Surrendered','st_cls'=>'est-recovered',
-                'match'=>null,
-              ],
-              [
-                'type'=>'claim','icon'=>'fa-hand-holding','type_color'=>'warn',
-                'title'=>'Claim Request: Charging Cable (USB-C)',
-                'desc'=>'Submitted a claim for a white USB-C cable found in MLH 305. Provided description and university ID.',
-                'room'=>'MLH 305','date'=>'June 15, 2026','views'=>8,
-                'status'=>'Pending Pickup','st_cls'=>'est-pending',
-                'match'=>'Staff verification in progress.',
-              ],
-            ];
-            foreach ($posts as $p): ?>
-            <div style="padding:16px 18px;border-bottom:1px solid var(--border);">
-              <div style="display:flex;align-items:flex-start;gap:12px;">
-                <!-- Type icon -->
-                <div class="stat-icon <?= $p['type_color'] ?>" style="width:38px;height:38px;border-radius:9px;flex-shrink:0;font-size:.82rem;">
-                  <i class="fa-solid <?= $p['icon'] ?>"></i>
-                </div>
-                <div style="flex:1;min-width:0;">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
-                    <span style="font-family:var(--font-display);font-size:.88rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($p['title']) ?></span>
-                    <span class="badge badge-<?= $p['type_color'] ?>"><span class="bdot"></span><?= ucfirst($p['type']) ?></span>
-                  </div>
-                  <p style="font-size:.79rem;color:var(--text-muted);line-height:1.55;margin-bottom:8px;"><?= htmlspecialchars($p['desc']) ?></p>
+             <?php
+             $posts = [];
+             foreach ($userPosts as $up) {
+                 $type = $up['category'];
+                 $icon = 'fa-pen-to-square';
+                 $color = 'info';
+                 
+                 if ($type === 'lost_and_found') {
+                     $type = 'lost';
+                     $icon = 'fa-circle-question';
+                     $color = 'alert';
+                 } elseif ($type === 'found_item') {
+                     $type = 'found';
+                     $icon = 'fa-circle-check';
+                     $color = 'ok';
+                 }
+                 
+                 $posts[] = [
+                     'id'         => $up['post_id'],
+                     'type'       => $type,
+                     'icon'       => $icon,
+                     'type_color' => $color,
+                     'title'      => $up['title'],
+                     'desc'       => $up['content'],
+                     'room'       => $up['flair'] ?? 'General',
+                     'date'       => date('F j, Y', strtotime($up['created_at'])),
+                     'views'      => 0,
+                     'status'     => $up['is_locked'] ? 'Locked' : 'Active',
+                     'st_cls'     => $up['is_locked'] ? 'est-dismissed' : 'est-pending',
+                     'match'      => null
+                 ];
+             }
+             ?>
+             <?php if (empty($posts)): ?>
+             <div class="p-4 text-center" style="color:var(--text-dim);font-size:.82rem;">You have not submitted any posts yet.</div>
+             <?php else: ?>
+             <?php foreach ($posts as $p): ?>
+             <div style="padding:16px 18px;border-bottom:1px solid var(--border);">
+               <div style="display:flex;align-items:flex-start;gap:12px;">
+                 <!-- Type icon -->
+                 <div class="stat-icon <?= $p['type_color'] ?>" style="width:38px;height:38px;border-radius:9px;flex-shrink:0;font-size:.82rem;">
+                   <i class="fa-solid <?= $p['icon'] ?>"></i>
+                 </div>
+                 <div style="flex:1;min-width:0;">
+                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                     <span style="font-family:var(--font-display);font-size:.88rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($p['title']) ?></span>
+                     <span class="badge badge-<?= $p['type_color'] ?>"><span class="bdot"></span><?= ucfirst($p['type']) ?></span>
+                   </div>
+                   <p style="font-size:.79rem;color:var(--text-muted);line-height:1.55;margin-bottom:8px;"><?= htmlspecialchars($p['desc']) ?></p>
 
-                  <?php if ($p['match']): ?>
-                  <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;background:var(--ok-bg);border:1px solid var(--ok-border);border-radius:7px;font-size:.74rem;color:var(--text-primary);margin-bottom:8px;">
-                    <i class="fa-solid fa-link" style="color:var(--ok);flex-shrink:0;"></i>
-                    <?= htmlspecialchars($p['match']) ?>
-                  </div>
-                  <?php endif; ?>
+                   <?php if ($p['match']): ?>
+                   <div style="display:flex;align-items:center;gap:7px;padding:8px 10px;background:var(--ok-bg);border:1px solid var(--ok-border);border-radius:7px;font-size:.74rem;color:var(--text-primary);margin-bottom:8px;">
+                     <i class="fa-solid fa-link" style="color:var(--ok);flex-shrink:0;"></i>
+                     <?= htmlspecialchars($p['match']) ?>
+                   </div>
+                   <?php endif; ?>
 
-                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-door-open" style="margin-right:3px;"></i><?= $p['room'] ?></span>
-                    <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i><?= $p['date'] ?></span>
-                    <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-eye" style="margin-right:3px;"></i><?= $p['views'] ?> views</span>
-                    <span class="event-status-tag <?= $p['st_cls'] ?>" style="margin-left:auto;"><?= $p['status'] ?></span>
-                  </div>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">
-                  <button class="btn btn-sm" onclick="editPost()"><i class="fa-solid fa-pencil"></i></button>
-                  <button class="btn btn-sm" onclick="deletePost(this)"><i class="fa-solid fa-trash"></i></button>
-                </div>
-              </div>
-            </div>
-            <?php endforeach; ?>
-          </div>
+                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                     <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-door-open" style="margin-right:3px;"></i><?= htmlspecialchars($p['room']) ?></span>
+                     <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i><?= htmlspecialchars($p['date']) ?></span>
+                     <span class="col-mono" style="font-size:.64rem;"><i class="fa-solid fa-eye" style="margin-right:3px;"></i><?= $p['views'] ?> views</span>
+                     <span class="event-status-tag <?= $p['st_cls'] ?>" style="margin-left:auto;"><?= htmlspecialchars($p['status']) ?></span>
+                   </div>
+                 </div>
+                 <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">
+                   <button class="btn btn-sm" onclick="editPost()"><i class="fa-solid fa-pencil"></i></button>
+                   <button class="btn btn-sm" onclick="deletePost(this)"><i class="fa-solid fa-trash"></i></button>
+                 </div>
+               </div>
+             </div>
+             <?php endforeach; ?>
+             <?php endif; ?>
+           </div>
 
           <!-- Activity timeline -->
           <div class="card">
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-timeline"></i> My Activity Timeline</div></div>
             <?php
-            $activity = [
-              ['ok','fa-circle-check','Claim completed — Blue Water Tumbler picked up at dispensing window.','June 15, 2026 · 15:10'],
-              ['warn','fa-hand-holding','Claim request submitted for Charging Cable (USB-C) in MLH 305.','June 15, 2026 · 14:48'],
-              ['ok','fa-inbox','Found item (Casio Calculator) surrendered to lab staff — MLH 303.','June 14, 2026 · 10:20'],
-              ['info','fa-pen-to-square','Lost report posted for Blue Water Tumbler.','June 13, 2026 · 21:05'],
-              ['info','fa-right-to-bracket','Signed in via Microsoft OAuth.','June 13, 2026 · 09:00'],
-            ];
-            foreach ($activity as $a): ?>
+            // Fetch claims submitted by this user
+            $userClaimsStmt = $lfPdo->prepare("
+                SELECT c.claimant_name, r.item_type, c.status, c.submitted_at, c.claimed_at
+                FROM claims c
+                INNER JOIN recovered_items r ON c.recovery_id = r.recovery_id
+                WHERE c.user_id = ?
+                ORDER BY c.submitted_at DESC LIMIT 5
+            ");
+            $userClaimsStmt->execute([$userId]);
+            $userClaims = $userClaimsStmt->fetchAll();
+
+            $activity = [];
+            // Add user's forum posts to timeline
+            foreach ($userPosts as $up) {
+                $activity[] = [
+                    'color' => 'info',
+                    'icon'  => 'fa-pen-to-square',
+                    'label' => "Posted to forum: " . htmlspecialchars($up['title']),
+                    'time'  => date('F j, Y · H:i', strtotime($up['created_at'])),
+                    'timestamp' => strtotime($up['created_at'])
+                ];
+            }
+            // Add claims to timeline
+            foreach ($userClaims as $uc) {
+                if ($uc['status'] === 'claimed') {
+                    $activity[] = [
+                        'color' => 'ok',
+                        'icon'  => 'fa-circle-check',
+                        'label' => "Claim completed — " . htmlspecialchars($uc['item_type']) . " picked up at dispensing window.",
+                        'time'  => date('F j, Y · H:i', strtotime($uc['claimed_at'])),
+                        'timestamp' => strtotime($uc['claimed_at'])
+                    ];
+                } else {
+                    $activity[] = [
+                        'color' => 'warn',
+                        'icon'  => 'fa-hand-holding',
+                        'label' => "Claim request submitted for " . htmlspecialchars($uc['item_type']) . ".",
+                        'time'  => date('F j, Y · H:i', strtotime($uc['submitted_at'])),
+                        'timestamp' => strtotime($uc['submitted_at'])
+                    ];
+                }
+            }
+
+            // Sort timeline by timestamp desc
+            usort($activity, function($a, $b) {
+                return $b['timestamp'] - $a['timestamp'];
+            });
+            ?>
+            <?php if (empty($activity)): ?>
+            <div class="p-3 text-center" style="color:var(--text-dim);font-size:.8rem;">No activity logged yet.</div>
+            <?php else: ?>
+            <?php foreach ($activity as $a): ?>
             <div class="timeline-item">
-              <div class="tl-dot <?= $a[0] ?>"></div>
+              <div class="tl-dot <?= $a['color'] ?>"></div>
               <div>
-                <div class="tl-label"><i class="fa-solid <?= $a[1] ?>" style="margin-right:5px;font-size:.7rem;"></i><?= $a[2] ?></div>
-                <div class="tl-meta"><?= $a[3] ?></div>
+                <div class="tl-label"><i class="fa-solid <?= $a['icon'] ?>" style="margin-right:5px;font-size:.7rem;"></i><?= $a['label'] ?></div>
+                <div class="tl-meta"><?= $a['time'] ?></div>
               </div>
             </div>
             <?php endforeach; ?>
+            <?php endif; ?>
           </div>
         </div>
 

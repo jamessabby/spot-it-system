@@ -1,7 +1,17 @@
 <?php
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/../services/lostfound/db.php';
 $active_page = 'thread';
 $user_role   = $_SESSION['user_role'] ?? 'student';
+
+$lfPdo = getLostFoundDB();
+$dbItemsStmt = $lfPdo->query("
+    SELECT recovery_id, room_id, item_description, item_type, item_tier,
+           found_location, snapshot_path, recovered_at, source, status, notes
+    FROM recovered_items
+    ORDER BY recovered_at DESC
+");
+$dbItems = $dbItemsStmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -66,19 +76,52 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
         <!-- MAIN: Item cards thread -->
         <div id="threadGrid">
           <?php
-          $items = [
-            ['id'=>1,'name'=>'Black Umbrella','room'=>'MLH 306','zone'=>'Near Workstation 7','found'=>'June 15, 2026 · 14:03','desc'=>'Medium-sized black umbrella with a hook handle. Found on the floor near the CCTV-flagged workstation area after a session ended.','icon'=>'fa-umbrella','tier'=>'Tier 1','status'=>'available','color'=>'ok','auto'=>true,'img_icon'=>'fa-umbrella'],
-            ['id'=>2,'name'=>'Charging Cable (USB-C)','room'=>'MLH 305','zone'=>'Keyboard Area Row 3','found'=>'June 15, 2026 · 14:30','desc'=>'White braided USB-C cable approximately 1 meter. Left beside a keyboard after a class session.','icon'=>'fa-plug','tier'=>'Tier 1','status'=>'pending','color'=>'warn','auto'=>true,'img_icon'=>'fa-plug'],
-            ['id'=>3,'name'=>'Scientific Calculator (Casio)','room'=>'MLH 303','zone'=>'Desk Row 2','found'=>'June 14, 2026 · 10:15','desc'=>'Casio fx-991EX scientific calculator. Black. Has small scratch on back cover.','icon'=>'fa-calculator','tier'=>'Tier 2','status'=>'available','color'=>'ok','auto'=>false,'img_icon'=>'fa-calculator'],
-            ['id'=>4,'name'=>'Water Tumbler (Blue)','room'=>'MLH 304','zone'=>'Rear Corner','found'=>'June 14, 2026 · 09:40','desc'=>'Blue stainless steel tumbler, 500ml. No stickers. Found near the rear wall after a class.','icon'=>'fa-bottle-water','tier'=>'Tier 1','status'=>'available','color'=>'ok','auto'=>false,'img_icon'=>'fa-bottle-water'],
-            ['id'=>5,'name'=>'Earphones','room'=>'MLH 203','zone'=>'Under Workstation 4','found'=>'June 13, 2026 · 11:22','desc'=>'White wired in-ear earphones. No case. 3.5mm jack type.','icon'=>'fa-headphones','tier'=>'Tier 3','status'=>'available','color'=>'ok','auto'=>false,'img_icon'=>'fa-headphones'],
-            ['id'=>6,'name'=>'Student ID (DLSU-D)','room'=>'MLH 306','zone'=>'Workstation 3 Drawer','found'=>'June 13, 2026 · 16:05','desc'=>'DLSU-D student ID card. Name partially visible. Surrendered by classmate.','icon'=>'fa-id-card','tier'=>'Tier 1','status'=>'available','color'=>'ok','auto'=>false,'img_icon'=>'fa-id-card'],
-            ['id'=>7,'name'=>'Pencil Case (Gray)','room'=>'MLH 301','zone'=>'Table Row 1','found'=>'June 12, 2026 · 13:10','desc'=>'Gray zipper pencil case. Contains a ruler, eraser, and pens.','icon'=>'fa-pen-ruler','tier'=>'Tier 2','status'=>'pending','color'=>'warn','auto'=>false,'img_icon'=>'fa-pen-ruler'],
-            ['id'=>8,'name'=>'Cellphone (OPPO)','room'=>'MLH 305','zone'=>'Near Door','found'=>'June 11, 2026 · 17:45','desc'=>'Black OPPO smartphone. Cracked screen protector. Turned off when found.','icon'=>'fa-mobile-screen','tier'=>'Tier 1','status'=>'available','color'=>'ok','auto'=>false,'img_icon'=>'fa-mobile-screen'],
-            ['id'=>9,'name'=>'Wallet (Brown Leather)','room'=>'MLH 201','zone'=>'Workstation 2','found'=>'June 11, 2026 · 10:30','desc'=>'Brown bifold leather wallet. No cash found. Contains old receipts.','icon'=>'fa-wallet','tier'=>'Tier 1','status'=>'claimed','color'=>'muted','auto'=>false,'img_icon'=>'fa-wallet'],
-            ['id'=>10,'name'=>'USB Flash Drive','room'=>'MLH 304','zone'=>'Workstation 11 USB Port','found'=>'June 10, 2026 · 14:00','desc'=>'16GB black USB flash drive. No label.','icon'=>'fa-usb','tier'=>'Tier 2','status'=>'claimed','color'=>'muted','auto'=>false,'img_icon'=>'fa-usb'],
-          ];
-          foreach ($items as $item):
+          $items = [];
+          foreach ($dbItems as $i) {
+              $type = strtolower($i['item_type'] ?? '');
+              $icon = 'fa-box';
+              if (stripos($type, 'umbrella') !== false) $icon = 'fa-umbrella';
+              elseif (stripos($type, 'cable') !== false || stripos($type, 'usb') !== false) $icon = 'fa-plug';
+              elseif (stripos($type, 'calculator') !== false) $icon = 'fa-calculator';
+              elseif (stripos($type, 'water') !== false || stripos($type, 'bottle') !== false || stripos($type, 'tumbler') !== false) $icon = 'fa-bottle-water';
+              elseif (stripos($type, 'earphone') !== false || stripos($type, 'headphone') !== false) $icon = 'fa-headphones';
+              elseif (stripos($type, 'card') !== false || stripos($type, 'id') !== false) $icon = 'fa-id-card';
+              elseif (stripos($type, 'pencil') !== false || stripos($type, 'pen') !== false) $icon = 'fa-pen-ruler';
+              elseif (stripos($type, 'phone') !== false || stripos($type, 'mobile') !== false) $icon = 'fa-mobile-screen';
+              elseif (stripos($type, 'wallet') !== false) $icon = 'fa-wallet';
+
+              $status = match($i['status']) {
+                  'pending_claim' => 'pending',
+                  'claimed'       => 'claimed',
+                  default         => 'available',
+              };
+
+              $color = match($status) {
+                  'pending' => 'warn',
+                  'claimed' => 'muted',
+                  default   => 'ok',
+              };
+
+              $items[] = [
+                  'id'          => $i['recovery_id'],
+                  'name'        => $i['item_type'] ?? 'Unknown Item',
+                  'room'        => $i['room_id'],
+                  'zone'        => $i['found_location'],
+                  'found'       => date('F j, Y · H:i', strtotime($i['recovered_at'])),
+                  'desc'        => $i['item_description'],
+                  'icon'        => $icon,
+                  'tier'        => strtoupper($i['item_tier'] ?? 'TIER1'),
+                  'status'      => $status,
+                  'color'       => $color,
+                  'auto'        => $i['source'] === 'cctv_auto',
+                  'img_icon'    => $icon,
+              ];
+          }
+          ?>
+          <?php if (empty($items)): ?>
+          <div class="p-4 text-center card w-100" style="color:var(--text-dim);">No items currently logged in Lost &amp; Found.</div>
+          <?php else: ?>
+          <?php foreach ($items as $item):
             $statusLabel = ['available'=>'Available','pending'=>'Pending Claim','claimed'=>'Claimed'][$item['status']];
             $stCls = ['available'=>'badge-ok','pending'=>'badge-warn','claimed'=>'badge-muted'][$item['status']];
           ?>
@@ -130,6 +173,7 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
             </div>
           </div>
           <?php endforeach; ?>
+          <?php endif; ?>
 
           <div id="noResults" style="display:none;text-align:center;padding:3rem;color:var(--text-dim);">
             <i class="fa-solid fa-magnifying-glass" style="font-size:2rem;margin-bottom:.8rem;display:block;"></i>
@@ -143,7 +187,17 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-chart-pie"></i> Thread Summary</div></div>
             <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
               <?php
-              $summary = [['9','Available for claiming','ok'],['2','Pending claim review','warn'],['3','Successfully claimed','muted'],['14','Total items this month','info']];
+              $cAvailable = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'recovered'")->fetchColumn();
+              $cPending   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'pending_claim'")->fetchColumn();
+              $cClaimed   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'claimed'")->fetchColumn();
+              $cTotal     = $cAvailable + $cPending + $cClaimed;
+              
+              $summary = [
+                  [$cAvailable, 'Available for claiming', 'ok'],
+                  [$cPending,   'Pending claim review',   'warn'],
+                  [$cClaimed,   'Successfully claimed',   'muted'],
+                  [$cTotal,     'Total items logged',     'info']
+              ];
               foreach ($summary as [$n,$l,$c]): ?>
               <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:var(--bg-base);border:1px solid var(--border);">
                 <div style="font-family:var(--font-display);font-size:1.4rem;font-weight:800;color:var(--text-primary);min-width:30px;"><?= $n ?></div>

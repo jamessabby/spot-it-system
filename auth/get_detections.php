@@ -1,11 +1,19 @@
 <?php
 /**
- * S.P.O.T.-IT — Get Detections API
+ * S.P.O.T.-IT — Get Detections API  [FIXES G4]
  * auth/get_detections.php
  *
  * GET endpoint. Returns JSON.
- * Called every 10s by dashboard JS to update badges and room status.
- * MICROSERVICES: Reads from spotit_monitor_db only.
+ * Called every 10s by dashboard JS.
+ *
+ * FIXES:
+ *   G4 — Summary badge for 'potential' previously queried a mix of status + elapsed
+ *        which always returned 0 because status was never actually written to
+ *        'potential' in the DB. Now that escalate_detections.php writes the status,
+ *        we query status = 'potential' directly. The 'pending' badge also fixed:
+ *        it now correctly shows items detected but not yet at the 30-min threshold.
+ *
+ * MICROSERVICES: Reads from spotit_monitor_db and spotit_lf_db.
  */
 require_once __DIR__ . '/service_bootstrap.php';
 
@@ -16,54 +24,75 @@ ms_require_auth('../pages/login.php');
 
 $summary = isset($_GET['summary']);
 
-// ── Summary mode (for sidebar badges) ─────────────────────────────────────────
+// ── [G4 FIXED] Summary mode — correct status-based badge counts ───────────────
 if ($summary) {
     try {
+        // confirmed_missing: status explicitly set by escalate_detections.php
         $confirmed = (int)$monitorPdo->query(
             "SELECT COUNT(*) FROM detections
              WHERE status = 'confirmed_missing'
-               AND TIMESTAMPDIFF(MINUTE, detected_at, NOW()) >= " . TIMER_CONFIRMED_MIN
+               AND is_removed = 0"
         )->fetchColumn();
 
+        // potential: status explicitly set (was always 0 before G4 fix)
         $potential = (int)$monitorPdo->query(
             "SELECT COUNT(*) FROM detections
-             WHERE status IN ('pending','potential')
-               AND TIMESTAMPDIFF(MINUTE, detected_at, NOW()) BETWEEN "
-                . TIMER_POTENTIAL_MIN . " AND " . (TIMER_CONFIRMED_MIN - 1)
+             WHERE status = 'potential'
+               AND is_removed = 0"
         )->fetchColumn();
 
+        // pending: detected but not yet at 30-min threshold (still being watched)
+        $pending = (int)$monitorPdo->query(
+            "SELECT COUNT(*) FROM detections
+             WHERE status = 'pending'
+               AND is_removed = 0"
+        )->fetchColumn();
+
+        // pending claims from lf_db
         $claims = (int)$lfPdo->query(
             "SELECT COUNT(*) FROM claims WHERE status = 'pending'"
         )->fetchColumn();
 
+        // unread notifications for current user
+        $userId   = (int)$_SESSION['user_id'];
+        $unreadStmt = $authPdo->prepare(
+            "SELECT COUNT(*) FROM notifications
+             WHERE user_id = ? AND is_read = 0"
+        );
+        $unreadStmt->execute([$userId]);
+        $unread = (int)$unreadStmt->fetchColumn();
+
         ms_json([
             'confirmed_missing' => $confirmed,
             'potential_lost'    => $potential,
+            'pending_new'       => $pending,
             'pending_claims'    => $claims,
+            'unread_notifs'     => $unread,
             'polled_at'         => date('Y-m-d H:i:s'),
         ]);
+
     } catch (Throwable $e) {
-        ms_json(['confirmed_missing' => 0, 'potential_lost' => 0, 'pending_claims' => 0]);
+        ms_json([
+            'confirmed_missing' => 0,
+            'potential_lost'    => 0,
+            'pending_new'       => 0,
+            'pending_claims'    => 0,
+            'unread_notifs'     => 0,
+        ]);
     }
 }
 
 // ── Full detection list ───────────────────────────────────────────────────────
-$room_id  = $_GET['room'] ?? null;
-$status   = $_GET['status'] ?? null;
-$limit    = min((int)($_GET['limit'] ?? 50), 200);
-$offset   = (int)($_GET['offset'] ?? 0);
+$room_id = $_GET['room']   ?? null;
+$status  = $_GET['status'] ?? null;
+$limit   = min((int)($_GET['limit']  ?? 50), 200);
+$offset  = (int)($_GET['offset'] ?? 0);
 
-$where  = ['1=1'];
+$where  = ['d.is_removed = 0'];
 $params = [];
 
-if ($room_id) {
-    $where[]  = 'd.room_id = ?';
-    $params[] = $room_id;
-}
-if ($status) {
-    $where[]  = 'd.status = ?';
-    $params[] = $status;
-}
+if ($room_id) { $where[] = 'd.room_id = ?';  $params[] = $room_id; }
+if ($status)  { $where[] = 'd.status = ?';    $params[] = $status; }
 
 $whereSQL = implode(' AND ', $where);
 
@@ -77,10 +106,20 @@ try {
             d.object_zone,
             d.detected_at,
             d.snapshot_path,
+            d.snapshot_path_b,
             d.baseline_count,
             d.live_count,
-            (d.live_count - d.baseline_count) AS deviation,
+            (d.live_count - d.baseline_count)  AS deviation,
+            d.roi_change_pct,
+            d.match_score,
+            d.confidence_score,
+            d.confidence_grade,
+            d.confidence_factors,
+            d.validation_status,
+            d.validated_by,
+            d.validated_at,
             d.status,
+            d.verified_by,
             d.notes,
             TIMESTAMPDIFF(MINUTE, d.detected_at, NOW()) AS elapsed_minutes
          FROM detections d
@@ -94,13 +133,25 @@ try {
     $stmt->execute($params);
     $detections = $stmt->fetchAll();
 
-    // Add detection stage to each event
+    // Enrich — add stage label + snapshot URL
     foreach ($detections as &$det) {
-        $det['stage'] = ms_detection_stage($det['detected_at']);
+        $det['stage']        = ms_detection_stage($det['detected_at']);
         $det['snapshot_url'] = $det['snapshot_path']
             ? SNAPSHOT_URL . basename($det['snapshot_path'])
             : null;
+        $det['snapshot_url_b'] = $det['snapshot_path_b']
+            ? SNAPSHOT_URL . basename($det['snapshot_path_b'])
+            : null;
+
+        // Lookup verified_by name if set
+        if ($det['verified_by']) {
+            $u = ms_get_user($authPdo, (int)$det['verified_by']);
+            $det['verified_by_name'] = $u['full_name'] ?? null;
+        } else {
+            $det['verified_by_name'] = null;
+        }
     }
+    unset($det);
 
     ms_json([
         'success'    => true,
@@ -108,6 +159,7 @@ try {
         'detections' => $detections,
         'polled_at'  => date('Y-m-d H:i:s'),
     ]);
+
 } catch (Throwable $e) {
-    ms_json(['success' => false, 'message' => 'Failed to fetch detections.'], 500);
+    ms_json(['success' => false, 'message' => 'Failed to fetch detections.', 'detail' => $e->getMessage()], 500);
 }

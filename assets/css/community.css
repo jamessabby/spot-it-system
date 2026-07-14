@@ -1,0 +1,482 @@
+/* =============================================================
+   S.P.O.T.-IT — Community CSS (community.css)
+   Shared by: announcements.php, forum.php
+   Covers: announcement cards, forum post cards, vote buttons,
+           nested comment threads, badges, filters, compose modal
+   ============================================================= */
+@import url('variables.css');
+
+/* ══════════════════════════════════════
+   SHARED — PAGE HEADER BAR
+══════════════════════════════════════ */
+.comm-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.comm-header-left h2 {
+  font-family: var(--font-display); font-size: 1.05rem; font-weight: 800;
+  color: var(--text-primary); margin-bottom: 3px;
+}
+.comm-header-left p { font-size: .8rem; color: var(--text-muted); font-weight: 300; }
+
+/* ══════════════════════════════════════
+   SHARED — SEARCH & FILTER BAR
+══════════════════════════════════════ */
+.comm-filter-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.comm-search-wrap {
+  position: relative; flex: 1; min-width: 200px;
+}
+.comm-search-wrap i {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--text-dim); font-size: .8rem; pointer-events: none;
+}
+.comm-search {
+  width: 100%; padding: 9px 12px 9px 36px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  font-family: var(--font-body); font-size: .86rem; outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.comm-search:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(0,86,49,.08);
+}
+.comm-select {
+  padding: 9px 12px; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-muted);
+  font-family: var(--font-display); font-size: .74rem; font-weight: 700;
+  cursor: pointer; outline: none; transition: border-color var(--transition);
+}
+.comm-select:focus { border-color: var(--border-focus); }
+
+/* Sort tabs (forum) */
+.sort-tabs {
+  display: flex; gap: 2px; background: var(--bg-base);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px;
+}
+.sort-tab {
+  padding: 6px 14px; border-radius: 7px; font-size: .74rem;
+  font-family: var(--font-display); font-weight: 700;
+  color: var(--text-muted); cursor: pointer; transition: var(--transition);
+  display: flex; align-items: center; gap: 5px; border: none; background: none;
+}
+.sort-tab:hover  { color: var(--green-main); }
+.sort-tab.active { background: var(--bg-surface); color: var(--green-main); box-shadow: var(--shadow-sm); }
+
+/* ══════════════════════════════════════
+   ANNOUNCEMENTS — Category pill
+══════════════════════════════════════ */
+.ann-category {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-display); font-size: .6rem; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 100px;
+}
+.ann-cat-laboratory_advisory { background: var(--alert-bg);  color: var(--alert); }
+.ann-cat-lost_and_found      { background: var(--ok-bg);     color: var(--ok); }
+.ann-cat-claiming_schedule   { background: var(--info-bg);   color: var(--info); }
+.ann-cat-maintenance         { background: var(--warn-bg);   color: var(--warn); }
+.ann-cat-system_update       { background: var(--green-pale); color: var(--green-main); }
+.ann-cat-general             { background: var(--bg-base);   color: var(--text-muted); }
+
+/* Announcement card */
+.ann-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 0;
+  box-shadow: var(--shadow-sm); overflow: hidden;
+  transition: var(--transition); margin-bottom: 12px;
+  position: relative;
+}
+.ann-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.ann-card.pinned {
+  border-color: rgba(0,86,49,.25);
+  box-shadow: var(--shadow-sm), 0 0 0 1px rgba(0,86,49,.1);
+}
+.ann-pin-stripe {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 4px;
+  background: var(--green-main); border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+.ann-card-body { padding: 18px 20px 18px 22px; }
+.ann-card.pinned .ann-card-body { padding-left: 28px; }
+
+.ann-top-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.ann-pin-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-display); font-size: .58rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--green-main); background: var(--green-pale);
+  padding: 2px 8px; border-radius: 100px; border: 1px solid rgba(0,86,49,.2);
+}
+.ann-title {
+  font-family: var(--font-display); font-size: .96rem; font-weight: 800;
+  color: var(--text-primary); margin-bottom: 8px; line-height: 1.3; cursor: pointer;
+}
+.ann-title:hover { color: var(--green-main); }
+.ann-content {
+  font-size: .83rem; color: var(--text-muted); line-height: 1.7;
+  font-weight: 300; margin-bottom: 12px;
+}
+.ann-content.clamped {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ann-footer {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: .72rem; color: var(--text-dim);
+}
+.ann-footer i { font-size: .68rem; margin-right: 3px; }
+.ann-read-more {
+  margin-left: auto; font-family: var(--font-display); font-size: .7rem;
+  font-weight: 700; color: var(--green-main); cursor: pointer;
+  display: flex; align-items: center; gap: 4px; text-decoration: none;
+}
+.ann-read-more:hover { text-decoration: underline; }
+
+/* Admin controls on announcement */
+.ann-admin-actions {
+  display: flex; gap: 6px; opacity: 0; transition: opacity var(--transition);
+}
+.ann-card:hover .ann-admin-actions { opacity: 1; }
+
+/* ══════════════════════════════════════
+   FORUM — Post cards
+══════════════════════════════════════ */
+.forum-layout {
+  display: grid; grid-template-columns: 1fr 280px; gap: 18px; align-items: start;
+}
+@media (max-width: 960px) { .forum-layout { grid-template-columns: 1fr; } }
+
+.forum-post-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); display: flex; gap: 0;
+  transition: var(--transition); margin-bottom: 8px; overflow: hidden;
+}
+.forum-post-card:hover { box-shadow: var(--shadow-md); border-color: rgba(0,86,49,.15); }
+.forum-post-card.detection-post { border-left: 3px solid var(--alert); }
+
+/* Vote column (left side like Reddit) */
+.vote-col {
+  width: 48px; flex-shrink: 0; background: var(--bg-base);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 0; gap: 4px; border-right: 1px solid var(--border);
+}
+.vote-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: none;
+  background: none; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; font-size: .9rem;
+  color: var(--text-dim); transition: var(--transition);
+}
+.vote-btn:hover { background: var(--bg-surface); }
+.vote-btn.upvote:hover,
+.vote-btn.upvote.active { color: var(--alert); }
+.vote-btn.downvote:hover,
+.vote-btn.downvote.active { color: var(--info); }
+.vote-score {
+  font-family: var(--font-display); font-size: .78rem; font-weight: 800;
+  color: var(--text-primary); line-height: 1;
+}
+.vote-score.positive { color: var(--alert); }
+.vote-score.negative { color: var(--info); }
+
+/* Post content */
+.post-body { flex: 1; padding: 14px 16px; min-width: 0; }
+.post-meta-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: .7rem; color: var(--text-dim); margin-bottom: 6px;
+}
+.post-category-tag {
+  font-family: var(--font-display); font-size: .6rem; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase; padding: 2px 8px;
+  border-radius: 100px;
+}
+.post-cat-detection_thread { background: var(--alert-bg);  color: var(--alert); }
+.post-cat-lost_and_found   { background: var(--warn-bg);   color: var(--warn); }
+.post-cat-found_item       { background: var(--ok-bg);     color: var(--ok); }
+.post-cat-question         { background: var(--info-bg);   color: var(--info); }
+.post-cat-general          { background: var(--bg-base);   color: var(--text-muted); }
+.post-author-chip {
+  display: flex; align-items: center; gap: 5px;
+}
+.post-author-avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--green-main); color: #fff;
+  font-family: var(--font-display); font-size: .52rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.role-badge-admin  { background: var(--alert); }
+.role-badge-staff  { background: var(--warn); }
+.role-badge-system { background: var(--info); }
+
+.post-title {
+  font-family: var(--font-display); font-size: .92rem; font-weight: 700;
+  color: var(--text-primary); cursor: pointer; margin-bottom: 6px;
+  line-height: 1.3;
+}
+.post-title:hover { color: var(--green-main); }
+.post-excerpt {
+  font-size: .8rem; color: var(--text-muted); line-height: 1.6; font-weight: 300;
+  margin-bottom: 10px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Detection alert box inside post */
+.detection-infobox {
+  background: var(--alert-bg); border: 1px solid var(--alert-border);
+  border-radius: 9px; padding: 10px 13px; margin-bottom: 10px;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.detection-infobox i { color: var(--alert); flex-shrink: 0; margin-top: 1px; }
+.detection-infobox-text { font-size: .76rem; color: var(--text-primary); line-height: 1.5; }
+.detection-infobox-text strong { font-weight: 700; }
+
+.post-action-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.post-action-btn {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--font-display); font-size: .68rem; font-weight: 700;
+  letter-spacing: .04em; color: var(--text-dim); cursor: pointer;
+  padding: 4px 8px; border-radius: 6px; transition: var(--transition);
+  border: none; background: none;
+}
+.post-action-btn:hover { background: var(--bg-base); color: var(--green-main); }
+
+/* ══════════════════════════════════════
+   FORUM — Full post view / comments
+══════════════════════════════════════ */
+.full-post-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 16px;
+}
+.full-post-header {
+  padding: 20px 22px 0; display: flex; gap: 16px;
+}
+.full-vote-col {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0;
+}
+.full-post-content { padding: 14px 22px 18px; }
+.full-post-title {
+  font-family: var(--font-display); font-size: 1.15rem; font-weight: 800;
+  color: var(--text-primary); line-height: 1.3; margin-bottom: 12px;
+}
+.full-post-body {
+  font-size: .86rem; color: var(--text-muted); line-height: 1.8; font-weight: 300;
+}
+.full-post-body strong { color: var(--text-primary); font-weight: 700; }
+.full-post-body p { margin-bottom: .7rem; }
+
+/* Comment snapshot preview */
+.post-snap-preview {
+  width: 100%; max-height: 220px; object-fit: cover; border-radius: 9px;
+  border: 1px solid var(--border); margin-bottom: 14px; display: block;
+}
+.post-snap-mock {
+  width: 100%; height: 160px; background: #0f1e17; border-radius: 9px;
+  border: 1px solid var(--border); margin-bottom: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: .7rem; color: rgba(100,255,160,.4);
+  position: relative; overflow: hidden;
+}
+
+/* ══════════════════════════════════════
+   FORUM — Comment threads (nested)
+══════════════════════════════════════ */
+.comments-section { padding: 0 0 16px; }
+.comments-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-top: 1px solid var(--border);
+  font-family: var(--font-display); font-size: .8rem; font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Comment compose box */
+.comment-compose {
+  padding: 14px 18px; border-top: 1px solid var(--border);
+}
+.compose-wrap {
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.compose-wrap:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(0,86,49,.07);
+}
+.compose-textarea {
+  width: 100%; background: none; border: none; outline: none;
+  font-family: var(--font-body); font-size: .86rem; color: var(--text-primary);
+  padding: 12px 14px; min-height: 80px; resize: vertical; line-height: 1.6;
+}
+.compose-textarea::placeholder { color: var(--text-dim); }
+.compose-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-base);
+}
+
+/* Comment thread container */
+.comment-thread { padding: 0 18px; }
+
+/* Single comment */
+.comment-item { display: flex; gap: 10px; margin-bottom: 0; }
+.comment-item + .comment-item { border-top: 1px solid var(--border); }
+
+/* Nesting indent line */
+.comment-indent {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+  flex-shrink: 0;
+}
+.indent-line {
+  width: 2px; flex: 1; background: var(--border); margin: 4px auto;
+  border-radius: 1px; cursor: pointer; transition: background var(--transition);
+  min-height: 20px;
+}
+.indent-line:hover { background: var(--green-main); }
+.comment-vote-col {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  flex-shrink: 0; padding-top: 12px;
+}
+.comment-vote-btn {
+  width: 22px; height: 22px; border-radius: 5px; border: none;
+  background: none; cursor: pointer; font-size: .75rem;
+  color: var(--text-dim); transition: var(--transition);
+  display: flex; align-items: center; justify-content: center;
+}
+.comment-vote-btn:hover { background: var(--bg-base); }
+.comment-vote-btn.upvote.active   { color: var(--alert); }
+.comment-vote-btn.downvote.active { color: var(--info); }
+.comment-score {
+  font-family: var(--font-display); font-size: .66rem; font-weight: 800;
+  color: var(--text-dim); line-height: 1;
+}
+
+.comment-body { flex: 1; min-width: 0; padding: 12px 0 10px; }
+.comment-author-row {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 5px; flex-wrap: wrap;
+}
+.comment-author {
+  font-family: var(--font-display); font-size: .76rem; font-weight: 700;
+  color: var(--text-primary);
+}
+.comment-role-badge {
+  font-family: var(--font-display); font-size: .56rem; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 100px;
+}
+.crb-admin  { background: var(--alert-bg); color: var(--alert); }
+.crb-staff  { background: var(--warn-bg);  color: var(--warn); }
+.crb-student{ background: var(--green-pale); color: var(--green-main); }
+.comment-ts { font-family: var(--font-mono); font-size: .62rem; color: var(--text-dim); }
+
+.comment-text {
+  font-size: .82rem; color: var(--text-muted); line-height: 1.65; font-weight: 300;
+}
+.comment-text.removed { color: var(--text-dim); font-style: italic; }
+
+.comment-actions {
+  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+}
+.comment-action-btn {
+  font-family: var(--font-display); font-size: .66rem; font-weight: 700;
+  color: var(--text-dim); cursor: pointer; border: none; background: none;
+  padding: 3px 6px; border-radius: 5px; transition: var(--transition);
+  display: flex; align-items: center; gap: 4px;
+}
+.comment-action-btn:hover { background: var(--bg-base); color: var(--green-main); }
+
+/* Replies container */
+.comment-replies {
+  margin-left: 12px;
+  border-left: 2px solid var(--border);
+  padding-left: 0;
+}
+
+/* Continue thread button (depth >= 5) */
+.continue-thread-btn {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-display); font-size: .74rem; font-weight: 700;
+  color: var(--green-main); cursor: pointer; padding: 8px 10px;
+  border-radius: 8px; border: 1px dashed rgba(0,86,49,.25);
+  background: var(--green-pale); margin: 8px 0; transition: var(--transition);
+  width: fit-content;
+}
+.continue-thread-btn:hover { background: var(--green-main); color: #fff; border-color: transparent; }
+
+/* Inline reply compose (appears below a comment) */
+.reply-compose-box {
+  margin: 8px 0 0; display: none; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+}
+.reply-compose-box.open { display: block; }
+.reply-compose-box textarea {
+  width: 100%; padding: 10px 12px; background: none; border: none; outline: none;
+  font-family: var(--font-body); font-size: .82rem; color: var(--text-primary);
+  min-height: 64px; resize: vertical; line-height: 1.6;
+}
+.reply-compose-box textarea::placeholder { color: var(--text-dim); }
+.reply-compose-footer {
+  display: flex; justify-content: flex-end; gap: 6px;
+  padding: 6px 10px; border-top: 1px solid var(--border); background: var(--bg-base);
+}
+
+/* ══════════════════════════════════════
+   FORUM — Sidebar (right column)
+══════════════════════════════════════ */
+.forum-sidebar { display: flex; flex-direction: column; gap: 14px; }
+.comm-sidebar-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.comm-sidebar-card .card-head { padding: 13px 16px; border-bottom: 1px solid var(--border); }
+.comm-sidebar-card .card-head .card-title { font-size: .8rem; }
+
+/* ══════════════════════════════════════
+   COMPOSE POST MODAL
+══════════════════════════════════════ */
+.compose-category-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem;
+}
+.compose-cat-btn {
+  padding: 10px; border-radius: 9px; border: 1.5px solid var(--border);
+  background: var(--bg-input); cursor: pointer; text-align: center;
+  transition: var(--transition);
+}
+.compose-cat-btn:hover  { border-color: var(--green-main); background: var(--green-pale); }
+.compose-cat-btn.active { border-color: var(--green-main); background: var(--green-pale); }
+.compose-cat-btn i { font-size: 1rem; margin-bottom: 5px; display: block; color: var(--text-dim); }
+.compose-cat-btn.active i { color: var(--green-main); }
+.compose-cat-btn .cat-label { font-family: var(--font-display); font-size: .72rem; font-weight: 700; color: var(--text-muted); }
+.compose-cat-btn.active .cat-label { color: var(--green-main); }
+
+/* "Create from detection" banner in compose modal */
+.detection-link-banner {
+  padding: 11px 14px; background: var(--alert-bg); border: 1px solid var(--alert-border);
+  border-radius: 9px; margin-bottom: 14px; display: flex; gap: 9px; align-items: flex-start;
+}
+.detection-link-banner i { color: var(--alert); flex-shrink: 0; margin-top: 1px; }
+.detection-link-banner .text { font-size: .78rem; color: var(--text-primary); line-height: 1.5; }
+
+/* ══════════════════════════════════════
+   ANNOUNCEMENT DETAIL MODAL
+══════════════════════════════════════ */
+.ann-modal-content {
+  font-size: .88rem; color: var(--text-muted); line-height: 1.85; font-weight: 300;
+}
+.ann-modal-content p { margin-bottom: .9rem; }
+
+/* ══════════════════════════════════════
+   EMPTY STATE
+══════════════════════════════════════ */
+.comm-empty {
+  text-align: center; padding: 3.5rem 2rem; color: var(--text-dim);
+}
+.comm-empty i { font-size: 2.4rem; margin-bottom: .9rem; display: block; }
+.comm-empty h3 { font-family: var(--font-display); font-size: .95rem; font-weight: 800; color: var(--text-primary); margin-bottom: .4rem; }
+.comm-empty p  { font-size: .82rem; font-weight: 300; }
+
+/* Unread notification dot on sidebar nav badge */
+.sb-badge-new { background: var(--alert); animation: spotit-blink .9s infinite; }

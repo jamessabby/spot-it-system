@@ -68,6 +68,7 @@ CREATE TABLE `detections` (
   `object_zone`     varchar(150) DEFAULT NULL COMMENT 'Inspection zone label e.g. WS-07 Monitor Zone',
   `detected_at`     datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `snapshot_path`   varchar(300) DEFAULT NULL COMMENT 'Relative path in uploads/snapshots/',
+  `snapshot_path_b` varchar(300) DEFAULT NULL COMMENT 'Second snapshot path, showing interaction/removal',
   `baseline_count`  int(11)      NOT NULL DEFAULT 0,
   `live_count`      int(11)      NOT NULL DEFAULT 0,
   `deviation`       int(11)      GENERATED ALWAYS AS (`live_count` - `baseline_count`) STORED,

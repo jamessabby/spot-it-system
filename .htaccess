@@ -1,22 +1,22 @@
 # ============================================================
 # S.P.O.T.-IT — Root .htaccess
-# Security rules for the entire project
+# Security rules for the entire project (merged: local XAMPP + Hostinger-ready)
 # ============================================================
 
-Options -Indexes
+Options -Indexes -MultiViews
 ServerSignature Off
 
-# ── Deny direct access to sensitive directories ───────────────────────────────
+# ── HTTPS redirect (uncomment after SSL is active on Hostinger) ──────────────
+# RewriteCond %{HTTPS} off
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# ── Deny direct access to sensitive directories + clean URLs ─────────────────
 <IfModule mod_rewrite.c>
   RewriteEngine On
 
-  # Block direct access to config, services, and vendor folders
   RewriteRule ^config/           - [F,L]
   RewriteRule ^services/         - [F,L]
   RewriteRule ^vendor/           - [F,L]
-
-  # Allow auth/ endpoints only via POST/GET from legitimate referrers
-  # (auth/ PHP files are the API — they handle their own auth checks)
 
   # Redirect root to landing page
   RewriteCond %{REQUEST_URI} ^/$
@@ -28,14 +28,23 @@ ServerSignature Off
   RewriteRule ^dashboard/? pages/dashboard-admin.php [L]
 </IfModule>
 
-# ── Block .sql files from web access ──────────────────────────────────────────
+# ── Block .sql/.env/.md/.log/.sh/.py files from web access, wherever they sit ─
+# (Catches root-level files like main.py, CLAUDE.md, UPDATES.md, BUGS.md, *.sql
+#  — a dotfile-only rule alone would miss these since none of them start with
+#  a leading dot.)
 <FilesMatch "\.(sql|env|md|log|sh|py)$">
   Order Allow,Deny
   Deny from all
 </FilesMatch>
 
-# ── Protect .htaccess itself ──────────────────────────────────────────────────
-<Files .htaccess>
+# ── Block access to hidden files (.htaccess, .env, .git) ─────────────────────
+<FilesMatch "^\.">
+  Order Allow,Deny
+  Deny from all
+</FilesMatch>
+
+# ── Block rois.json from direct web access (leaks ROI layout/camera setup) ───
+<Files "rois.json">
   Order Allow,Deny
   Deny from all
 </Files>
@@ -47,17 +56,27 @@ ServerSignature Off
   Header always set X-XSS-Protection "1; mode=block"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set Permissions-Policy "camera=(self), microphone=()"
-  # CSP — adjust domains as needed for your CDN setup
   Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com;"
 </IfModule>
 
 # ── PHP settings ──────────────────────────────────────────────────────────────
+# Upload/memory limits raised for webcam claim photos (complete_claim.php) and
+# forum/announcement attachments.
 <IfModule mod_php.c>
   php_flag display_errors Off
   php_flag log_errors On
   php_value session.cookie_httponly 1
   php_value session.cookie_samesite "Lax"
   php_value session.use_strict_mode 1
+  php_value upload_max_filesize 10M
+  php_value post_max_size 12M
+  php_value max_execution_time 60
+  php_value memory_limit 256M
+</IfModule>
+
+# ── Gzip compression ───────────────────────────────────────────────────────────
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
 </IfModule>
 
 # ── File caching for assets ───────────────────────────────────────────────────
@@ -69,3 +88,9 @@ ServerSignature Off
   ExpiresByType image/png            "access plus 30 days"
   ExpiresByType image/webp           "access plus 30 days"
 </IfModule>
+
+# ── Protect .htaccess itself ──────────────────────────────────────────────────
+<Files .htaccess>
+  Order Allow,Deny
+  Deny from all
+</Files>

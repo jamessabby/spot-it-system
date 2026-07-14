@@ -30,12 +30,18 @@ $initials = strtoupper(
       <i class="fa-solid fa-gauge-high"></i> Overview
       <span class="sb-badge sb-badge-alert" id="sb-badge-alerts" style="display:none">0</span>
     </a>
+    <a href="inventory-monitor.php" class="sb-item <?= $active==='inventory'?'active':'' ?>">
+      <i class="fa-solid fa-boxes-stacked"></i> Inventory Monitor
+      <span class="sb-badge sb-badge-warn" id="sb-badge-warn" style="display:none">0</span>
+    </a>
     <a href="room-monitor.php" class="sb-item <?= $active==='rooms'?'active':'' ?>">
       <i class="fa-solid fa-video"></i> Room Monitor
     </a>
-    <a href="#" class="sb-item <?= $active==='alerts'?'active':'' ?>">
+    <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
+      <i class="fa-solid fa-flask"></i> Desk Sandbox Test
+    </a>
+    <a href="alerts.php" class="sb-item <?= $active==='alerts'?'active':'' ?>">
       <i class="fa-solid fa-triangle-exclamation"></i> Alerts
-      <span class="sb-badge sb-badge-warn" id="sb-badge-warn" style="display:none">0</span>
     </a>
   </div>
 
@@ -44,14 +50,14 @@ $initials = strtoupper(
     <a href="lost-thread.php" class="sb-item <?= $active==='thread'?'active':'' ?>">
       <i class="fa-solid fa-list-check"></i> Event Log
     </a>
-    <a href="#" class="sb-item <?= $active==='surrender'?'active':'' ?>">
+    <a href="surrender-log.php" class="sb-item <?= $active==='surrender'?'active':'' ?>">
       <i class="fa-solid fa-inbox"></i> Surrender Log
     </a>
     <a href="claiming-station.php" class="sb-item <?= $active==='claiming'?'active':'' ?>">
       <i class="fa-solid fa-hand-holding"></i> Claiming Station
       <span class="sb-badge sb-badge-ok" id="sb-badge-claims" style="display:none">0</span>
     </a>
-    <a href="#" class="sb-item <?= $active==='recovered'?'active':'' ?>">
+    <a href="recovered-items.php" class="sb-item <?= $active==='recovered'?'active':'' ?>">
       <i class="fa-solid fa-box-open"></i> Recovered Items
     </a>
   </div>
@@ -60,16 +66,16 @@ $initials = strtoupper(
   <?php if ($role === 'admin'): ?>
   <div class="sb-section">
     <div class="sb-section-label">Management</div>
-    <a href="admin-audit.php" class="sb-item <?= $active==='audit'?'active':'' ?>">
+    <a href="analytics.php" class="sb-item <?= $active==='analytics'?'active':'' ?>">
       <i class="fa-solid fa-chart-line"></i> Analytics &amp; Audit
     </a>
-    <a href="#" class="sb-item <?= $active==='setup'?'active':'' ?>">
+    <a href="room-setup.php" class="sb-item <?= $active==='setup'?'active':'' ?>">
       <i class="fa-solid fa-sliders"></i> Room Setup
     </a>
-    <a href="#" class="sb-item <?= $active==='users'?'active':'' ?>">
+    <a href="user-management.php" class="sb-item <?= $active==='users'?'active':'' ?>">
       <i class="fa-solid fa-users"></i> Users
     </a>
-    <a href="#" class="sb-item <?= $active==='logs'?'active':'' ?>">
+    <a href="system-logs.php" class="sb-item <?= $active==='logs'?'active':'' ?>">
       <i class="fa-solid fa-database"></i> System Logs
     </a>
   </div>
@@ -99,10 +105,26 @@ $initials = strtoupper(
   </div>
   <?php endif; ?>
 
+  <!-- Community — visible to ALL roles -->
+  <div class="sb-section">
+    <div class="sb-section-label">Community</div>
+    <a href="announcements.php" class="sb-item <?= $active==='announcements'?'active':'' ?>">
+      <i class="fa-solid fa-bullhorn"></i> Announcements
+      <span class="sb-badge sb-badge-alert" id="sb-badge-ann" style="display:none">0</span>
+    </a>
+    <a href="forum.php" class="sb-item <?= $active==='forum'?'active':'' ?>">
+      <i class="fa-brands fa-reddit"></i> Community Forum
+    </a>
+  </div>
+
   <div class="sb-section">
     <div class="sb-section-label">Account</div>
     <a href="profile.php" class="sb-item <?= $active==='profile'?'active':'' ?>">
       <i class="fa-solid fa-circle-user"></i> Profile
+    </a>
+    <a href="notifications.php" class="sb-item <?= $active==='notifications'?'active':'' ?>">
+      <i class="fa-solid fa-bell"></i> Notifications
+      <span class="sb-badge sb-badge-alert" id="sb-badge-notif" style="display:none;">0</span>
     </a>
     <a href="settings.php" class="sb-item <?= $active==='settings'?'active':'' ?>">
       <i class="fa-solid fa-gear"></i> Settings

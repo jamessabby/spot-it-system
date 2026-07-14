@@ -169,13 +169,13 @@ file honest" at the top).
   - **Tier 2/3/4 personal/lost items** (lecture room logic): keep template
     matching + expanding-search-zone logic, since here "where did it move to"
     is genuinely useful info for recovery, not noise.
-- **MobileNetV2 is a secondary validation gate only**, per the thesis's own
-  literature-justified constraint: *"ML is allowed ONLY as a secondary
-  validation filter (gatekeeper pattern) on top of the classical pipeline,
-  using lightweight MobileNetV2 pre-trained on ImageNet."* It must never become
-  the primary detector — classical absdiff/threshold/contour still does the
-  first-pass "did anything change" job; MobileNetV2 only answers "is an
-  object still there" on the flagged crop. This framing is what makes the ML
+  - **MobileNetV2 is a secondary validation gate only**, per the thesis's own
+    literature-justified constraint: *"ML is allowed ONLY as a secondary
+    validation filter (gatekeeper pattern) on top of the classical pipeline,
+    using lightweight MobileNetV2 pre-trained on ImageNet."* It must never become
+    the primary detector — classical absdiff/threshold/contour still does the
+    first-pass "did anything change" job; MobileNetV2 only answers "is an
+    object still there" on the flagged crop. This framing is what makes the ML
   use defensible to the panel (disambiguates repositioning from genuine
   removal; classical pipeline alone cannot).
 - **Expanding search zone** (a panel suggestion, grounded in thesis §3.6.7):

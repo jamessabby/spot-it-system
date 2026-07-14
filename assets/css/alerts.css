@@ -1,0 +1,118 @@
+/* =============================================================
+   S.P.O.T.-IT — Alerts Triage Page (alerts.css)
+   Central real-time triage surface for lab personnel & admins.
+   ============================================================= */
+@import url('variables.css');
+
+/* ══════════════════════════════════════
+   CONTROLS BAR (search + filter pills)
+══════════════════════════════════════ */
+.al-controls {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.al-search-wrap { position: relative; flex: 1; min-width: 220px; }
+.al-search-wrap i {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--text-dim); font-size: .78rem; pointer-events: none;
+}
+.al-search {
+  width: 100%; padding: 9px 12px 9px 34px;
+  background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: .8rem; color: var(--text-primary);
+  font-family: inherit; transition: var(--transition);
+}
+.al-search:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 3px rgba(0,86,49,.08); }
+.al-search::placeholder { color: var(--text-dim); }
+
+.al-last-updated {
+  font-size: .68rem; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.al-last-updated .al-live-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-bg); animation: alPulse 1.6s ease-in-out infinite;
+}
+@keyframes alPulse { 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
+
+/* ══════════════════════════════════════
+   TRIAGE TABLE
+══════════════════════════════════════ */
+.al-table-wrap { overflow-x: auto; }
+.al-table { width: 100%; border-collapse: collapse; min-width: 880px; }
+.al-table thead th {
+  text-align: left; font-family: var(--font-display); font-size: .62rem;
+  font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim); padding: 10px 14px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.al-row td {
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; font-size: .8rem;
+}
+.al-row:last-child td { border-bottom: none; }
+.al-row:hover td { background: var(--bg-base); }
+.al-row.al-hidden { display: none; }
+
+.al-type-cell { display: flex; align-items: center; gap: 10px; min-width: 170px; }
+.al-type-icon {
+  width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: .8rem;
+}
+.al-type-icon.tp-cctv    { background: var(--alert-bg); color: var(--alert); }
+.al-type-icon.tp-offline { background: var(--bg-base);  color: var(--text-dim); }
+.al-type-icon.tp-claim   { background: var(--info-bg);  color: var(--info); }
+.al-type-label { font-family: var(--font-display); font-size: .72rem; font-weight: 700; color: var(--text-primary); }
+.al-type-sub   { font-size: .64rem; color: var(--text-dim); margin-top: 1px; }
+
+.al-subject { font-weight: 600; color: var(--text-primary); line-height: 1.35; }
+.al-subject-sub { font-size: .7rem; color: var(--text-muted); margin-top: 2px; }
+
+.al-room-badge {
+  font-family: var(--font-mono); font-size: .68rem; font-weight: 700;
+  color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px; display: inline-block; white-space: nowrap;
+}
+
+.al-time-wrap { display: flex; flex-direction: column; gap: 3px; }
+.al-time-ts { font-family: var(--font-mono); font-size: .7rem; color: var(--text-dim); }
+.al-elapsed {
+  font-family: var(--font-display); font-size: .64rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 20px; display: inline-block; width: fit-content;
+}
+.al-elapsed.el-alert { background: var(--alert-bg); color: var(--alert); }
+.al-elapsed.el-warn  { background: var(--warn-bg);  color: var(--warn); }
+.al-elapsed.el-info  { background: var(--info-bg);  color: var(--info); }
+.al-elapsed.el-dim   { background: var(--bg-base);  color: var(--text-dim); }
+
+.al-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.al-empty {
+  padding: 60px 20px; text-align: center; color: var(--text-dim);
+}
+.al-empty i { font-size: 2rem; color: var(--ok); margin-bottom: 10px; display: block; }
+.al-empty h4 { font-family: var(--font-display); font-size: .9rem; color: var(--text-primary); margin: 0 0 4px; }
+.al-empty p { font-size: .78rem; margin: 0; }
+
+/* ══════════════════════════════════════
+   SNAPSHOT MODAL
+══════════════════════════════════════ */
+.al-snap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.al-snap-box {
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  background: var(--bg-base);
+}
+.al-snap-box img { width: 100%; height: 200px; object-fit: cover; display: block; }
+.al-snap-box .al-snap-empty {
+  height: 200px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); font-size: .74rem; flex-direction: column; gap: 6px;
+}
+.al-snap-label {
+  font-family: var(--font-display); font-size: .64rem; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted);
+  padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-card);
+}
+
+@media (max-width: 860px) {
+  .al-snap-grid { grid-template-columns: 1fr; }
+}
