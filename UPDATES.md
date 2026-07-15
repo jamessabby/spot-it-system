@@ -19,39 +19,39 @@ Phases are sequenced by dependency, not calendar time — treat this as a checkl
 ### Phase 2 — Detection pipeline correctness
 
 #### Step 2.1: Python Detection Engine Upgrades (`main.py`)
-- [ ] Add MobileNetV2 / DNN loader to `main.py` using OpenCV's DNN module
-- [ ] Implement the **Tier-Aware Pipeline logic** in the frame processing loop:
+- [x] Add MobileNetV2 / DNN loader to `main.py` using OpenCV's DNN module
+- [x] Implement the **Tier-Aware Pipeline logic** in the frame processing loop:
   - **Tier 1 (Fixed Assets):** If change detected, crop and send to MobileNetV2 presence validation. Skip template matching.
   - **Tier 2/3/4 (Personal Items):** Use standard background subtraction + template matching (1.5x → 2x → full frame search).
-- [ ] Add **Snapshot B (Re-detection/removal) logic**:
+- [x] Add **Snapshot B (Re-detection/removal) logic**:
   - Once a target enters RED/MISSING, continue monitoring its ROI pixels.
   - If a sudden frame delta (hand reaching in or object shifting again) is detected, capture a second snapshot (Snapshot B) and upload it to the DB as evidence of who interacted with the item.
-- [ ] Implement the **Auto-Flood Gate protection**:
+- [x] Implement the **Auto-Flood Gate protection**:
   - Track count of items that enter MISSING state in the room.
   - If >50% of the room's registered ROIs trigger MISSING within 60s, automatically toggle an `is_monitoring_paused` flag to `true` and log a single mass-rearrangement alert.
 
 #### Step 2.2: Live Comparison Engine (A/B testing)
-- [ ] Create `main_classical_only.py` by duplicating `main.py` and stripping out the MobileNetV2 presence validation blocks.
-- [ ] Verify both scripts read successfully from the same `rois.json` and local camera RTSP feed.
-- [ ] Setup a testing spreadsheet (or SQL table) to log accuracy differences (TP, FP, FN, TN) between both scripts under various test conditions (lighting shift, slight nudge, actual theft).
+- [x] Create `main_classical_only.py` by duplicating `main.py` and stripping out the MobileNetV2 presence validation blocks.
+- [x] Verify both scripts read successfully from the same `rois.json` and local camera RTSP feed.
+- [x] Setup a testing spreadsheet (or SQL table) to log accuracy differences (TP, FP, FN, TN) between both scripts under various test conditions (lighting shift, slight nudge, actual theft).
 
 #### Step 2.3: Ingestion & Backend Updates
-- [ ] Update `auth/ingest_detection.php` to accept and process the two separate snapshots (Snapshot A: Empty frame, Snapshot B: Retaking frame).
-- [ ] Add `is_monitoring_paused` status and mass-alert logging endpoints to `services/monitoring/db.php`.
+- [x] Update `auth/ingest_detection.php` to accept and process the two separate snapshots (Snapshot A: Empty frame, Snapshot B: Retaking frame).
+- [x] Add `is_monitoring_paused` status and mass-alert logging endpoints to `services/monitoring/db.php`.
 
 ### Phase 3 — Web-Based Recalibration Tool (Canvas UI)
 
 #### Step 3.1: Backend Calibration API
-- [ ] Create `auth/capture_frame.php` to request/retrieve a fresh, rotated, and scaled frame from the room's camera stream, saving it temporarily for drawing.
-- [ ] Create `auth/save_rois.php` to accept a JSON payload of drawn coordinates and update `rois.json` (or the database).
+- [x] Create `auth/capture_frame.php` to request/retrieve a fresh, rotated, and scaled frame from the room's camera stream, saving it temporarily for drawing.
+- [x] Create `auth/save_rois.php` to accept a JSON payload of drawn coordinates and update `rois.json` (or the database).
 
 #### Step 3.2: HTML5 Canvas Annotation Interface
-- [ ] Add a "Recalibrate Room" modal/page to the Admin Dashboard.
-- [ ] Build the interactive HTML5 Canvas element:
+- [x] Add a "Recalibrate Room" modal/page to the Admin Dashboard.
+- [x] Build the interactive HTML5 Canvas element:
   - Load the captured fresh camera snapshot as the canvas background.
   - Add JS event listeners to allow drawing rectangular bounding boxes with click-and-drag.
   - Allow labeling boxes (e.g., `computer1`, `object1`).
-- [ ] Add a "Save Config" button that sends the drawn ROI boxes back to `auth/save_rois.php`, clears the old alerts for that room, and triggers `main.py` to reload its configuration.
+- [x] Add a "Save Config" button that sends the drawn ROI boxes back to `auth/save_rois.php`, clears the old alerts for that room, and triggers `main.py` to reload its configuration.
 
 ### Phase 3.5 — Real room + item data
 - [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms actually being tested (see thesis Table 3.2 for list)
@@ -87,6 +87,7 @@ Run each scenario ≥5 trials per the methodology, recording results as you go:
 
 Keep this short — one line per meaningful change to project direction, newest first.
 
+- **2026-07-15** — Resolved live feed flicker by implementing atomic image replacement (`save_frames_atomic` in `main.py`). Eliminated duplicate notification flood by fixing the status matching logic in `ingest_detection.php` duplicate queries and gating user notifications on `$action === 'inserted'`. Implemented dynamic Testing/Production mode toggle dropdown on the Desk Sandbox dashboard and hot-reloaded values dynamically inside `main.py`.
 - **2026-07-04** — Split roadmap and changelog into a separate `UPDATES.md` file to keep `CLAUDE.md` lightweight.
 - **2026-07-04** — Added §3c: finalized scope/behavior decisions from team discussion.
   Documented: no cross-room tracking (single-camera-frame only), item labeling convention (registered = named, unregistered = auto `objectN`), claiming flow (owner clicks + selfie), dual-snapshot evidence trail (Snapshot A = empty ROI, Snapshot B = who took it), storage plan (Hostinger Cloud Startup 100GB NVMe, compressed snapshots, no auto-delete, purge on donation), data retention tied to end-of-year donation cycle, camera hardware TBD.

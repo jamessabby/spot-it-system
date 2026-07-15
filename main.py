@@ -1,8 +1,13 @@
+import os
+import time
+
+# ── FFMPEG RTSP SOCKET TIMEOUT ──────────────────────────────────────────────
+# Must be set before cv2 is imported so OpenCV's backend respects this variable!
+os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;5000000'
+
 import cv2
 import json
 import numpy as np
-import os
-import time
 import requests
 from datetime import datetime
 
@@ -277,41 +282,94 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
 import threading
 
 class VideoStream:
+    STALE_TIMEOUT_SEC = 8  # reconnect if stream goes dead for 8 seconds
+
     def __init__(self, src):
-        self.cap = cv2.VideoCapture(src)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.ret, self.frame = self.cap.read()
+        self.src = src
+        self.cap = None
+        self.ret = False
+        self.frame = None
+        self.last_good_frame_at = time.time()
         self.stopped = False
         self.lock = threading.Lock()
 
     def start(self):
         threading.Thread(target=self.update, args=(), daemon=True).start()
+        threading.Thread(target=self._watchdog, args=(), daemon=True).start()
         return self
 
     def update(self):
+        # Asynchronously connect in the background to avoid startup hang
+        new_cap = cv2.VideoCapture(self.src)
+        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        with self.lock:
+            self.cap = new_cap
+            self.last_good_frame_at = time.time()
+
         while not self.stopped:
+            if self.cap is None:
+                time.sleep(0.5)
+                continue
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
                     self.ret = ret
                     self.frame = frame
+                    self.last_good_frame_at = time.time()
             else:
-                time.sleep(0.5)
+                time.sleep(0.1)
+
+    def _reconnect(self):
+        print(f"[SPOT-IT][WATCHDOG] Dead stream detected. Reconnecting RTSP...")
+        with self.lock:
+            old_cap = self.cap
+            self.cap = None
+        
+        if old_cap is not None:
+            try:
+                old_cap.release()
+            except Exception:
+                pass
+                
+        new_cap = cv2.VideoCapture(self.src)
+        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        with self.lock:
+            self.cap = new_cap
+            self.last_good_frame_at = time.time()
+        print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
+
+    def _watchdog(self):
+        while not self.stopped:
+            time.sleep(2)
+            if self.cap is not None:
+                if time.time() - self.last_good_frame_at > self.STALE_TIMEOUT_SEC:
+                    self._reconnect()
 
     def read(self):
         with self.lock:
             return self.ret, self.frame
 
     def isOpened(self):
-        return self.cap.isOpened()
+        with self.lock:
+            return self.cap is not None and self.cap.isOpened()
 
     def release(self):
         self.stopped = True
-        self.cap.release()
+        with self.lock:
+            if self.cap is not None:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
 
 # ── CONNECT TO RTSP STREAM ────────────────────────────────────────────────
 print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
 cap = VideoStream(RTSP_URL).start()
+
+# Wait up to 10 seconds for the background connection to resolve
+start_wait = time.time()
+while not cap.isOpened() and time.time() - start_wait < 10.0:
+    time.sleep(0.5)
 
 if not cap.isOpened():
     print("[ERROR] Cannot open RTSP stream. Check:")
@@ -336,6 +394,7 @@ monitoring_paused    = False
 
 last_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
 last_ref_mtime  = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
+last_mode_mtime = 0
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
 def is_scene_stable(frame_blur):
@@ -353,6 +412,20 @@ def check_roi(roi, thresh_mask):
     changed_pixels = cv2.countNonZero(roi_mask)
     change_pct     = changed_pixels / total_pixels
     return change_pct >= MIN_CHANGE_PERCENT, change_pct
+
+def save_frames_atomic(output_frame, clean_frame):
+    try:
+        live_path = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
+        live_tmp  = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}_tmp.jpg")
+        cv2.imwrite(live_tmp, output_frame)
+        os.replace(live_tmp, live_path)
+
+        clean_path = os.path.join(SNAPSHOT_DIR, f"clean_{ROOM_ID}.jpg")
+        clean_tmp  = os.path.join(SNAPSHOT_DIR, f"clean_{ROOM_ID}_tmp.jpg")
+        cv2.imwrite(clean_tmp, clean_frame)
+        os.replace(clean_tmp, clean_path)
+    except Exception:
+        pass
 
 def save_snapshot(frame, label):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -512,6 +585,24 @@ while True:
     current_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
     current_ref_mtime  = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
     
+    # Check dynamic testing vs production mode toggle
+    mode_file = 'detection_mode.json'
+    current_mode_mtime = os.path.getmtime(mode_file) if os.path.exists(mode_file) else 0
+    if current_mode_mtime > last_mode_mtime:
+        last_mode_mtime = current_mode_mtime
+        try:
+            with open(mode_file, 'r') as mf:
+                mode_data = json.load(mf)
+                mode = mode_data.get('mode', 'testing')
+                if mode == 'production':
+                    CONSISTENCY_FRAMES = 25
+                    print("[SPOT-IT] Switched to Production Mode (8.0s confirmation delay / 25 frames)")
+                else:
+                    CONSISTENCY_FRAMES = 5
+                    print("[SPOT-IT] Switched to Quick Testing Mode (1.5s confirmation delay / 5 frames)")
+        except Exception as me:
+            print(f"[SPOT-IT][ERROR] Failed to load detection mode: {me}")
+    
     if current_rois_mtime > last_rois_mtime or current_ref_mtime > last_ref_mtime:
         print("[SPOT-IT] Config or reference frame change detected! Reloading parameters dynamically...")
         time.sleep(1.0) # Wait a second for any write operations to fully finish
@@ -562,6 +653,15 @@ while True:
         frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
     frame = rescaleFrame(frame)
 
+    # ── RESIZE REFERENCE FRAME IF SIZES MISMATCH ──────────────────────────
+    if frame.shape[:2] != ref_bgr.shape[:2]:
+        print(f"[SPOT-IT][WARN] Resolution mismatch! Live frame is {frame.shape[1]}x{frame.shape[0]}, "
+              f"but reference frame is {ref_bgr.shape[1]}x{ref_bgr.shape[0]}. Resizing reference baseline to fit...")
+        ref_bgr = cv2.resize(ref_bgr, (frame.shape[1], frame.shape[0]))
+        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
+        TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
+
     gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur  = cv2.GaussianBlur(gray, (21, 21), 0)
 
@@ -580,6 +680,8 @@ while True:
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 0, 255), 2)
             cv2.putText(output, f"LOCKED: {roi['label']}", (x, y - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
+
+        save_frames_atomic(output, frame)
 
         if SHOW_GUI:
             cv2.imshow("S.P.O.T.-IT Live Detection", output)
@@ -604,6 +706,8 @@ while True:
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 165, 255), 2)
             cv2.putText(output, roi['label'], (x, y - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
+
+        save_frames_atomic(output, frame)
 
         if SHOW_GUI:
             cv2.imshow("S.P.O.T.-IT Live Detection", output)
@@ -740,13 +844,8 @@ while True:
         cv2.putText(output, f"Scene motion: {motion_pct:.1%}", (10, TARGET_SIZE[1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
-    # Write live stream frame for web dashboard (avoids pipe buffering issues)
-    live_path = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
-    cv2.imwrite(live_path, output)
-
-    # Write clean baseline stream frame for web calibration editor (no bounding boxes burnt in)
-    clean_path = os.path.join(SNAPSHOT_DIR, f"clean_{ROOM_ID}.jpg")
-    cv2.imwrite(clean_path, frame)
+    # Write live stream frame and clean baseline frame for web dashboard
+    save_frames_atomic(output, frame)
 
     if SHOW_GUI:
         cv2.imshow("S.P.O.T.-IT Live Detection", output)

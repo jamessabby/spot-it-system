@@ -41,3 +41,14 @@ Refer to this log so you do not waste time re-investigating previously solved pr
 *   **Symptom:** Putting an item back slightly off-center (not pixel-identical) kept the alert active.
 *   **Root Cause:** Pixel-by-pixel `absdiff` subtraction has zero tolerance for small shifts, rotations, or casting shadows.
 *   **Resolution:** Implemented `cv2.matchTemplate` to search a wider tolerance area (the template matching search zone) to confirm if the reference object crop is findable nearby rather than pixel-identical.
+
+### Live Feed Flicker to Black (Apache File Read Race)
+*   **Symptom:** The live feed in the browser calibration view flickers to black or half-rendered gray boxes every second.
+*   **Root Cause:** `main.py` used `cv2.imwrite` directly to target image files. Since `imwrite` takes time to write the JPEG top-to-bottom, the Apache server frequently read the file mid-write, serving corrupted/incomplete frames.
+*   **Resolution:** Updated `main.py` to write to a temporary file (`*_tmp.jpg`) first, then atomically overwrite the destination using `os.replace`.
+
+### Duplicate Notification & Alert Storm
+*   **Symptom:** A single missing item fires countless duplicate notifications in the event log and alerts page.
+*   **Root Cause:** The duplicate suppression check in `ingest_detection.php` only matched detections with states `pending` or `potential`. Once an event escalated to `confirmed_missing`, it dropped out of the check, causing the system to insert new duplicate rows. Additionally, the notification block was fired unconditionally on every request.
+*   **Resolution:** Added `confirmed_missing` to the duplicate SQL search and wrapped the notification dispatcher so it only triggers on new inserts (`$action === 'inserted'`).
+

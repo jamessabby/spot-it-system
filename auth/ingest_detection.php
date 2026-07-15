@@ -235,8 +235,7 @@ try {
     $existing   = $monitorPdo->prepare(
         "SELECT detection_id FROM detections
          WHERE room_id = ? AND object_zone = ?
-           AND status IN ('pending','potential')
-           AND detected_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+           AND status IN ('pending','potential','confirmed_missing')
          ORDER BY detected_at DESC LIMIT 1"
     );
     $existing->execute([$room_id, $object_zone]);
@@ -317,36 +316,38 @@ try {
     ]);
 
     // ── G3: Create in-app notification immediately for all admins and staff ──────
-    try {
-        require_once __DIR__ . '/../services/auth/db.php';
-        $authPdo = getAuthDB();
-        
-        $usersStmt = $authPdo->prepare("SELECT id FROM users WHERE role IN ('admin', 'staff') AND is_active = 1");
-        $usersStmt->execute();
-        $targetUsers = $usersStmt->fetchAll();
-        
-        $notifStmt = $authPdo->prepare(
-            "INSERT INTO notifications 
-               (user_id, type, title, body, detection_id, room_id, is_read, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 0, NOW())"
-        );
-        
-        $notifTitle = "New Deviation Detected — {$object_zone}";
-        $notifBody  = "Item in {$room_id} has been reported missing (Confidence: {$confidence_score}% {$confidence_grade}).";
-        $notifType  = 'potential_lost';
-        
-        foreach ($targetUsers as $u) {
-            $notifStmt->execute([
-                $u['id'], 
-                $notifType, 
-                $notifTitle, 
-                $notifBody, 
-                $detection_id, 
-                $room_id
-            ]);
+    if ($action === 'inserted') {
+        try {
+            require_once __DIR__ . '/../services/auth/db.php';
+            $authPdo = getAuthDB();
+            
+            $usersStmt = $authPdo->prepare("SELECT id FROM users WHERE role IN ('admin', 'staff') AND is_active = 1");
+            $usersStmt->execute();
+            $targetUsers = $usersStmt->fetchAll();
+            
+            $notifStmt = $authPdo->prepare(
+                "INSERT INTO notifications 
+                   (user_id, type, title, body, detection_id, room_id, is_read, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, NOW())"
+            );
+            
+            $notifTitle = "New Deviation Detected — {$object_zone}";
+            $notifBody  = "Item in {$room_id} has been reported missing (Confidence: {$confidence_score}% {$confidence_grade}).";
+            $notifType  = 'potential_lost';
+            
+            foreach ($targetUsers as $u) {
+                $notifStmt->execute([
+                    $u['id'], 
+                    $notifType, 
+                    $notifTitle, 
+                    $notifBody, 
+                    $detection_id, 
+                    $room_id
+                ]);
+            }
+        } catch (Throwable $notifEx) {
+            // Fail silently so a notification database issue doesn't crash the camera stream ingest
         }
-    } catch (Throwable $notifEx) {
-        // Fail silently so a notification database issue doesn't crash the camera stream ingest
     }
 
     echo json_encode([

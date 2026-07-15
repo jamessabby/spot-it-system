@@ -12,6 +12,15 @@ $active_page = 'sandbox';
 $user_role   = $_SESSION['user_role'] ?? 'staff';
 $uname       = $_SESSION['user_name'] ?? 'User';
 
+$modeFile = __DIR__ . '/../detection_mode.json';
+$currentMode = 'testing';
+if (file_exists($modeFile)) {
+    $modeData = json_decode(file_get_contents($modeFile), true);
+    if (isset($modeData['mode']) && $modeData['mode'] === 'production') {
+        $currentMode = 'production';
+    }
+}
+
 // Enforce access control: Admin & Staff only
 if ($user_role !== 'admin' && $user_role !== 'staff') {
     header('Location: dashboard-student.php');
@@ -265,6 +274,10 @@ try {
                 <select id="streamQualitySelect" onchange="toggleQuality(this.value)" class="form-control" style="font-size:.65rem; padding:2px 6px; height:auto; width:auto; border-radius:6px; background:var(--bg-base); border-color:var(--border);">
                   <option value="high">1080p Premium</option>
                   <option value="low">480p Balanced</option>
+                </select>
+                <select id="detectionModeSelect" onchange="toggleDetectionMode(this.value)" class="form-control" style="font-size:.65rem; padding:2px 6px; height:auto; width:auto; border-radius:6px; background:var(--bg-base); border-color:var(--border);">
+                  <option value="testing" <?= $currentMode === 'testing' ? 'selected' : '' ?>>Quick Testing (1.5s)</option>
+                  <option value="production" <?= $currentMode === 'production' ? 'selected' : '' ?>>Production Mode (8s)</option>
                 </select>
                 <span id="streamStatusBadge" class="badge badge-warn" style="font-size:.65rem; padding:3px 10px; border-radius:6px;">
                   <span class="bdot" style="background:var(--warn);"></span> CONNECTING
@@ -910,6 +923,24 @@ async function saveRoisToSystem() {
   } catch (e) {
     showToast('error', 'Network error saving configurations.');
   }
+}
+
+function toggleDetectionMode(mode) {
+  spotitFetch('../auth/save_detection_mode.php', {
+    method: 'POST',
+    body: new URLSearchParams({ mode: mode })
+  })
+  .then(res => {
+    if (res && res.success) {
+      showToast('success', 'Detection mode updated to ' + mode);
+    } else {
+      showToast('error', res ? res.message : 'Failed to update detection mode');
+    }
+  })
+  .catch(err => {
+    console.error('Error toggling detection mode:', err);
+    showToast('error', 'Network error updating detection mode');
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

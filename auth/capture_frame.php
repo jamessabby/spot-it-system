@@ -68,6 +68,9 @@ if (file_exists($liveSnapshot) && (time() - filemtime($liveSnapshot)) < 15) {
 }
 
 if (!$usedLive) {
+    if (file_exists($targetRef)) {
+        @unlink($targetRef);
+    }
     $cmd = '"' . $ffmpegPath . '"'
         . " -rtsp_transport tcp -y -i " . escapeshellarg($rtsp)
         . " -vframes 1 -vf scale=960:-2 -f image2 " . escapeshellarg($targetRef);
