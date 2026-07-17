@@ -74,7 +74,46 @@ $rtsp = "rtsp://{$cam['user']}:{$cam['pass']}@{$cam['ip']}:554/{$quality}";
 // ── Camera status check ───────────────────────────────────────────────────────
 if ($action === 'status') {
     header('Content-Type: application/json');
-    // Quick TCP check to see if camera is online
+
+    // BUG FIXED: this used to ONLY do a raw TCP probe to the camera itself,
+    // so the badge showed "ONLINE" as long as the physical Tapo camera was
+    // powered on — completely independent of whether main.py was actually
+    // running and producing new frames. That's why the feed sat frozen for
+    // 30+ minutes while the UI kept saying ONLINE.
+    //
+    // For any room main.py exports a local live_{room}.jpg for (currently
+    // DESK), the freshness of that file IS the real signal: if main.py has
+    // written a frame in the last few seconds, the pipeline is genuinely
+    // alive. If it hasn't, main.py has crashed, hung, or was never started —
+    // report that plainly instead of pretending the feed is fine.
+    $liveFramePath = SNAPSHOT_PATH . "live_{$roomId}.jpg";
+    if (file_exists($liveFramePath)) {
+        $age = time() - filemtime($liveFramePath);
+        if ($age <= 6) {
+            echo json_encode([
+                'status'             => 'online',
+                'room_id'            => $roomId,
+                'cam'                => $camNum,
+                'source'             => 'main.py local export',
+                'frame_age_seconds'  => $age,
+            ]);
+        } else {
+            echo json_encode([
+                'status'             => 'offline',
+                'room_id'            => $roomId,
+                'cam'                => $camNum,
+                'reason'             => "main.py hasn't written a new frame in {$age}s — the detector "
+                                        . "process has likely crashed, hung, or isn't running. Check its "
+                                        . "terminal/console window and restart it.",
+                'frame_age_seconds'  => $age,
+            ]);
+        }
+        exit();
+    }
+
+    // Fallback for rooms with no local main.py export yet (e.g. a real CEAT
+    // room camera before its own detector process is deployed) — raw TCP
+    // reachability check, same as before.
     $ctx = stream_context_create(['socket' => ['timeout' => 2]]);
     $sock = @stream_socket_client("tcp://{$cam['ip']}:554", $errno, $errstr, 2, STREAM_CLIENT_CONNECT, $ctx);
     if ($sock) {

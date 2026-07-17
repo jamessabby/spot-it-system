@@ -108,9 +108,19 @@ spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
 3. **Auth:** Microsoft OAuth (`@dlsud.edu.ph` domain only) is primary login;
    manual email/password is fallback (same domain restriction, CAPTCHA
    required). Rate limiting: 3 fails → 30s cooldown, 5 fails → 5 min lockout,
-   tracked in `login_attempts`. Roles: `student`, `staff`, `admin` — admin is
-   provisioned only by an existing admin, never self-signup (see §4 for the
-   bootstrap problem this creates and how to solve it).
+   tracked in `login_attempts`. DB role values are `student`, `staff`,
+   `admin`, but **`staff` is normalized to `admin` at login** (both
+   `login_handler.php` and `microsoft_callback.php`) — there is no separate
+   staff dashboard or nav anymore. The thesis only has two real user types:
+   admin (lab-in-charge/IT staff/faculty who view the dashboard) and student
+   (owners who claim items). Housekeepers who physically verify items don't
+   need a web login — they go to the room when alerted. `dashboard-staff.php`
+   is kept only as a redirect stub for old links; `_sidebar.php` gates the
+   monitoring/admin nav on `$role === 'admin'` only. The `staff` value is
+   left in the `users` table itself (no DB/schema change) in case advisers
+   ask about it — only the session/routing layer merges it into admin.
+   Admin is provisioned only by an existing admin, never self-signup (see §4
+   for the bootstrap problem this creates and how to solve it).
 4. **Detection ingestion is API-key authenticated, not session-authenticated**
    (Python has no browser session). Key comes from `SPOTIT_DETECTION_KEY` env
    var / `env.php`, checked with `hash_equals()`.

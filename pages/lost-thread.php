@@ -298,19 +298,19 @@ let currentDetailId, currentDetailName, currentDetailRoom;
 
 // Stored item detail data for modal
 const itemDetails = {
-  1:{name:'Black Umbrella',room:'MLH 306',method:'CCTV Auto-Detection',status:'Available',desc:'Medium-sized black umbrella with a hook handle. Found on the floor near the CCTV-flagged workstation area after a session ended.'},
-  2:{name:'Charging Cable (USB-C)',room:'MLH 305',method:'CCTV Auto-Detection',status:'Pending Claim',desc:'White braided USB-C cable approximately 1 meter. Left beside a keyboard after a class session.'},
-  3:{name:'Scientific Calculator (Casio)',room:'MLH 303',method:'Manual Surrender',status:'Available',desc:'Casio fx-991EX scientific calculator. Black. Has small scratch on back cover.'},
-  4:{name:'Water Tumbler (Blue)',room:'MLH 304',method:'Manual Surrender',status:'Available',desc:'Blue stainless steel tumbler, 500ml. No stickers. Found near the rear wall after a class.'},
-  5:{name:'Earphones',room:'MLH 203',method:'Manual Surrender',status:'Available',desc:'White wired in-ear earphones. No case. 3.5mm jack type.'},
-  6:{name:'Student ID (DLSU-D)',room:'MLH 306',method:'Manual Surrender',status:'Available',desc:'DLSU-D student ID card. Name partially visible. Surrendered by classmate.'},
-  7:{name:'Pencil Case (Gray)',room:'MLH 301',method:'Manual Surrender',status:'Pending Claim',desc:'Gray zipper pencil case. Contains a ruler, eraser, and pens.'},
-  8:{name:'Cellphone (OPPO)',room:'MLH 305',method:'Manual Surrender',status:'Available',desc:'Black OPPO smartphone. Cracked screen protector. Turned off when found.'},
-  9:{name:'Wallet (Brown Leather)',room:'MLH 201',method:'Manual Surrender',status:'Claimed',desc:'Brown bifold leather wallet. No cash found. Contains old receipts.'},
-  10:{name:'USB Flash Drive',room:'MLH 304',method:'Manual Surrender',status:'Claimed',desc:'16GB black USB flash drive. No label.'},
+  <?php foreach ($dbItems as $i): ?>
+  <?= $i['recovery_id'] ?>: {
+      name: <?= json_encode($i['item_type'] ?? 'Unknown Item') ?>,
+      room: <?= json_encode($i['room_id']) ?>,
+      method: <?= json_encode($i['source'] === 'cctv_auto' ? 'CCTV Auto-Detection' : 'Manual Surrender') ?>,
+      status: <?= json_encode(['recovered'=>'Available', 'pending_claim'=>'Pending Claim', 'claimed'=>'Claimed'][$i['status']] ?? 'Available') ?>,
+      desc: <?= json_encode($i['item_description']) ?>
+  },
+  <?php endforeach; ?>
 };
 
 function openClaimModal(id, name, room) {
+  currentDetailId = id;
   document.getElementById('claimItemName').textContent = name;
   document.getElementById('claimItemRoom').textContent = room;
   ['ci_name','ci_id','ci_desc','ci_contact'].forEach(i=>{ const el=document.getElementById(i); if(el) el.value=''; });
@@ -331,13 +331,35 @@ function openDetailModal(id, name) {
   openModal('detailModal');
 }
 
-function submitClaim() {
+async function submitClaim() {
   const name = document.getElementById('ci_name').value.trim();
   const id   = document.getElementById('ci_id').value.trim();
   const desc = document.getElementById('ci_desc').value.trim();
+  const contact = document.getElementById('ci_contact') ? document.getElementById('ci_contact').value.trim() : '';
+  
   if (!name || !id || !desc) { showToast('error','Please fill in all required fields.'); return; }
-  closeModal('claimModal');
-  showToast('success','Claim submitted! Please proceed to the CEAT dispensing window with your university ID.');
+  
+  try {
+    const res = await spotitFetch('../auth/submit_claim.php', {
+      method: 'POST',
+      body: new URLSearchParams({
+        recovery_id: currentDetailId,
+        full_name: name,
+        id_number: id,
+        contact: contact,
+        description: desc
+      })
+    });
+    if (res && res.success) {
+      showToast('success', 'Claim submitted! Please proceed to the CEAT dispensing window with your university ID.');
+      closeModal('claimModal');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      showToast('error', res ? res.message : 'Claim submission failed.');
+    }
+  } catch (e) {
+    showToast('error', 'Network error submitting claim.');
+  }
 }
 
 function filterThread() {

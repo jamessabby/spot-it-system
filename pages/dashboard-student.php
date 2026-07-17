@@ -1,7 +1,64 @@
 <?php
 require_once __DIR__ . '/../auth/service_bootstrap.php';
 ms_require_auth('login.php');
-$active_page = 'student'; $user_role = 'student';
+$active_page = 'student'; 
+$user_role   = $_SESSION['user_role'] ?? 'student';
+
+// Normalise staff to admin session (matches routing changes in login handlers)
+if ($user_role === 'staff') {
+    $user_role = 'admin';
+}
+
+$studentId = $_SESSION['user_id'] ?? 0;
+$statPendingClaims = 0;
+$statItemsClaimed  = 0;
+$statTotalRecovered = 0;
+$statRoomsMonitored = 0;
+$myClaims = [];
+$recentRecoveries = [];
+
+try {
+    // 1. Pending Claims count (for this user, status pending/verified)
+    $stmt = $lfPdo->prepare("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status IN ('pending', 'verified')");
+    $stmt->execute([$studentId]);
+    $statPendingClaims = (int)$stmt->fetchColumn();
+
+    // 2. Items Claimed count (for this user, status claimed)
+    $stmt = $lfPdo->prepare("SELECT COUNT(*) FROM claims WHERE user_id = ? AND status = 'claimed'");
+    $stmt->execute([$studentId]);
+    $statItemsClaimed = (int)$stmt->fetchColumn();
+
+    // 3. Total recovered items available (status recovered or pending_claim)
+    $statTotalRecovered = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status IN ('recovered', 'pending_claim')")->fetchColumn();
+
+    // 4. Rooms monitored (from monitor DB)
+    $statRoomsMonitored = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1")->fetchColumn();
+
+    // 5. Fetch student claim history (join with recovered_items to get item details)
+    $stmt = $lfPdo->prepare("
+        SELECT c.id AS claim_id, c.status, c.submitted_at, c.item_description AS claimant_desc,
+               r.item_description AS recovered_desc, r.room_id, r.item_type, r.item_tier
+        FROM claims c
+        LEFT JOIN recovered_items r ON c.recovery_id = r.recovery_id
+        WHERE c.user_id = ?
+        ORDER BY c.submitted_at DESC
+        LIMIT 5
+    ");
+    $stmt->execute([$studentId]);
+    $myClaims = $stmt->fetchAll();
+
+    // 6. Fetch recently recovered items preview
+    $recentRecoveries = $lfPdo->query("
+        SELECT recovery_id, item_type, item_description, room_id, recovered_at
+        FROM recovered_items
+        WHERE status IN ('recovered', 'pending_claim')
+        ORDER BY recovered_at DESC
+        LIMIT 5
+    ")->fetchAll();
+
+} catch (Throwable $e) {
+    // Fail silently, fallbacks are set to 0/empty
+}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -49,10 +106,10 @@ $active_page = 'student'; $user_role = 'student';
       </div>
 
       <div class="stat-grid" id="tourStatGrid">
-        <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num">1</div><div class="stat-label">Pending Claim</div><div class="stat-delta flat">Submitted today</div></div></div>
-        <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num">2</div><div class="stat-label">Items Claimed</div><div class="stat-delta down">This semester</div></div></div>
-        <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-box-open"></i></div><div><div class="stat-num">14</div><div class="stat-label">Items in Recovered Log</div><div class="stat-delta flat">Updated today</div></div></div>
-        <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-door-open"></i></div><div><div class="stat-num">8</div><div class="stat-label">Rooms Monitored</div><div class="stat-delta flat">CEAT MLH Building</div></div></div>
+        <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num"><?= $statPendingClaims ?></div><div class="stat-label">Pending Claim<?= $statPendingClaims === 1 ? '' : 's' ?></div><div class="stat-delta flat">Awaiting review</div></div></div>
+        <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num"><?= $statItemsClaimed ?></div><div class="stat-label">Item<?= $statItemsClaimed === 1 ? '' : 's' ?> Claimed</div><div class="stat-delta down">Completed</div></div></div>
+        <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-box-open"></i></div><div><div class="stat-num"><?= $statTotalRecovered ?></div><div class="stat-label">Items in Recovered Log</div><div class="stat-delta flat">Available now</div></div></div>
+        <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-door-open"></i></div><div><div class="stat-num"><?= $statRoomsMonitored ?></div><div class="stat-label">Rooms Monitored</div><div class="stat-delta flat">CEAT Building</div></div></div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 320px;gap:18px;align-items:start;">
@@ -64,32 +121,60 @@ $active_page = 'student'; $user_role = 'student';
               <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> My Claim History</div>
               <a href="lost-thread.php" class="card-action"><i class="fa-solid fa-plus"></i> Browse Items</a>
             </div>
-            <?php
-            $claims = [
-              ['item'=>'Black Umbrella','desc'=>'Recovered from MLH 306 on June 14','date'=>'June 14, 2026','status'=>'Claimed','stCls'=>'est-recovered','icon'=>'fa-umbrella'],
-              ['item'=>'Charging Cable (USB-C)','desc'=>'Recovered from MLH 305 — Awaiting pickup at dispensing window','date'=>'June 15, 2026','status'=>'Pending Pickup','stCls'=>'est-pending','icon'=>'fa-plug'],
-              ['item'=>'Water Tumbler (blue)','desc'=>'Previously claimed at dispensing window — June 2, 2026','date'=>'June 2, 2026','status'=>'Claimed','stCls'=>'est-recovered','icon'=>'fa-bottle-water'],
-            ];
-            foreach ($claims as $c): ?>
+            <?php if (empty($myClaims)): ?>
+            <div style="padding:24px;text-align:center;color:var(--text-dim);font-size:.82rem;">
+              <i class="fa-solid fa-inbox" style="font-size:1.4rem;margin-bottom:6px;display:block;"></i>
+              You haven't submitted any claim requests yet.
+            </div>
+            <?php else: ?>
+            <?php foreach ($myClaims as $c):
+                $type = strtolower($c['item_type'] ?? '');
+                $icon = 'fa-box';
+                if (stripos($type, 'umbrella') !== false) $icon = 'fa-umbrella';
+                elseif (stripos($type, 'cable') !== false || stripos($type, 'usb') !== false) $icon = 'fa-plug';
+                elseif (stripos($type, 'calculator') !== false) $icon = 'fa-calculator';
+                elseif (stripos($type, 'water') !== false || stripos($type, 'bottle') !== false || stripos($type, 'tumbler') !== false) $icon = 'fa-bottle-water';
+                elseif (stripos($type, 'earphone') !== false || stripos($type, 'headphone') !== false) $icon = 'fa-headphones';
+                elseif (stripos($type, 'phone') !== false || stripos($type, 'mobile') !== false) $icon = 'fa-mobile-screen';
+                elseif (stripos($type, 'wallet') !== false) $icon = 'fa-wallet';
+
+                $statusLabel = match($c['status']) {
+                    'pending'  => 'Pending Verification',
+                    'verified' => 'Pending Pickup',
+                    'claimed'  => 'Claimed',
+                    'rejected' => 'Rejected',
+                    default    => 'Pending',
+                };
+                $stCls = match($c['status']) {
+                    'pending'  => 'est-pending',
+                    'verified' => 'est-pending',
+                    'claimed'  => 'est-recovered',
+                    'rejected' => 'est-dismissed',
+                    default    => 'est-pending',
+                };
+            ?>
             <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);">
               <div style="width:40px;height:40px;border-radius:10px;background:var(--green-pale);color:var(--green-main);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.9rem;">
-                <i class="fa-solid <?= $c['icon'] ?>"></i>
+                <i class="fa-solid <?= $icon ?>"></i>
               </div>
               <div style="flex:1;">
-                <div style="font-family:var(--font-display);font-size:.84rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($c['item']) ?></div>
-                <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;"><?= htmlspecialchars($c['desc']) ?></div>
+                <div style="font-family:var(--font-display);font-size:.84rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($c['item_type'] ?? 'Unknown Item') ?></div>
+                <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">
+                  Recovered from <?= htmlspecialchars($c['room_id']) ?> · Description: <?= htmlspecialchars($c['recovered_desc'] ?? $c['claimant_desc']) ?>
+                </div>
                 <div style="display:flex;gap:8px;align-items:center;margin-top:5px;">
-                  <span class="col-mono" style="font-size:.64rem;"><?= $c['date'] ?></span>
-                  <span class="event-status-tag <?= $c['stCls'] ?>"><?= $c['status'] ?></span>
+                  <span class="col-mono" style="font-size:.64rem;"><?= date('F j, Y · H:i', strtotime($c['submitted_at'])) ?></span>
+                  <span class="event-status-tag <?= $stCls ?>"><?= $statusLabel ?></span>
                 </div>
               </div>
-              <?php if ($c['status'] === 'Pending Pickup'): ?>
+              <?php if ($c['status'] === 'verified'): ?>
               <button class="btn btn-primary btn-sm" onclick="showToast('info','Please proceed to the dispensing window at the CEAT Building lobby.')">
                 <i class="fa-solid fa-location-dot"></i> How to Claim
               </button>
               <?php endif; ?>
             </div>
             <?php endforeach; ?>
+            <?php endif; ?>
             <div style="padding:14px 16px;">
               <a href="lost-thread.php" class="btn btn-primary" style="width:100%;justify-content:center;">
                 <i class="fa-solid fa-magnifying-glass"></i> Browse All Recovered Items
@@ -127,26 +212,34 @@ $active_page = 'student'; $user_role = 'student';
         <div style="display:flex;flex-direction:column;gap:18px;">
           <div class="card" id="tourRecentRecovered">
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-box-open"></i> Recently Recovered</div><a href="lost-thread.php" class="card-action">See All</a></div>
-            <?php
-            $recent = [
-              ['Bag / Pouch','MLH 306','June 15','fa-bag-shopping'],
-              ['Cellphone','MLH 305','June 15','fa-mobile-screen'],
-              ['Calculator','MLH 303','June 14','fa-calculator'],
-              ['Earphones','MLH 304','June 14','fa-headphones'],
-              ['Wallet','MLH 201','June 13','fa-wallet'],
-            ];
-            foreach ($recent as $r): ?>
+            <?php if (empty($recentRecoveries)): ?>
+            <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:.82rem;">
+              No recently recovered items logged.
+            </div>
+            <?php else: ?>
+            <?php foreach ($recentRecoveries as $r):
+                $type = strtolower($r['item_type'] ?? '');
+                $icon = 'fa-box';
+                if (stripos($type, 'umbrella') !== false) $icon = 'fa-umbrella';
+                elseif (stripos($type, 'cable') !== false || stripos($type, 'usb') !== false) $icon = 'fa-plug';
+                elseif (stripos($type, 'calculator') !== false) $icon = 'fa-calculator';
+                elseif (stripos($type, 'water') !== false || stripos($type, 'bottle') !== false || stripos($type, 'tumbler') !== false) $icon = 'fa-bottle-water';
+                elseif (stripos($type, 'earphone') !== false || stripos($type, 'headphone') !== false) $icon = 'fa-headphones';
+                elseif (stripos($type, 'phone') !== false || stripos($type, 'mobile') !== false) $icon = 'fa-mobile-screen';
+                elseif (stripos($type, 'wallet') !== false) $icon = 'fa-wallet';
+            ?>
             <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border);">
               <div style="width:34px;height:34px;border-radius:8px;background:var(--ok-bg);color:var(--ok);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:.8rem;">
-                <i class="fa-solid <?= $r[3] ?>"></i>
+                <i class="fa-solid <?= $icon ?>"></i>
               </div>
               <div style="flex:1;">
-                <div style="font-size:.8rem;font-weight:600;color:var(--text-primary);"><?= $r[0] ?></div>
-                <div style="font-size:.7rem;color:var(--text-dim);"><?= $r[1] ?> · <?= $r[2] ?></div>
+                <div style="font-size:.8rem;font-weight:600;color:var(--text-primary);"><?= htmlspecialchars($r['item_type'] ?? 'Unknown Item') ?></div>
+                <div style="font-size:.7rem;color:var(--text-dim);"><?= htmlspecialchars($r['room_id']) ?> · <?= date('M j', strtotime($r['recovered_at'])) ?></div>
               </div>
-              <button class="btn btn-sm btn-ok" onclick="openClaimModal('<?= htmlspecialchars($r[0]) ?>')">Claim</button>
+              <button class="btn btn-sm btn-ok" onclick="openClaimModal(<?= $r['recovery_id'] ?>,'<?= htmlspecialchars(addslashes($r['item_type'] ?? 'Item')) ?>','<?= $r['room_id'] ?>')">Claim</button>
             </div>
             <?php endforeach; ?>
+            <?php endif; ?>
           </div>
 
           <div class="card" style="background:var(--info-bg);border-color:rgba(26,106,181,.15);">
@@ -174,10 +267,14 @@ $active_page = 'student'; $user_role = 'student';
   <div class="modal-box" style="max-width:440px;">
     <div class="modal-head"><div class="modal-title">Submit Claim Request</div><div class="modal-close" onclick="closeModal('claimModal')"><i class="fa-solid fa-xmark"></i></div></div>
     <div class="modal-body">
-      <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:1rem;">You are claiming: <strong id="claimItemName" style="color:var(--text-primary);">Item</strong></p>
-      <div class="form-group"><label class="form-label">University ID</label><input type="text" class="form-control" placeholder="e.g. 2021-00001"/></div>
-      <div class="form-group"><label class="form-label">Describe Your Item</label><textarea class="form-control" rows="2" placeholder="Unique characteristics — color, brand, contents, etc."></textarea></div>
-      <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" class="form-control" placeholder="e.g. 09xx-xxx-xxxx"/></div>
+      <div class="selected-item-banner" style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:9px;background:var(--ok-bg);border:1px solid var(--ok-border);font-size:.82rem;color:var(--text-primary);margin-bottom:1rem;">
+        <i class="fa-solid fa-circle-check" style="color:var(--ok);"></i>
+        <span>Claiming: <strong id="claimItemName">—</strong> from <strong id="claimItemRoom">—</strong></span>
+      </div>
+      <div class="form-group"><label class="form-label">Full Name *</label><input type="text" id="ci_name" class="form-control" placeholder="e.g. Maria Santos"/></div>
+      <div class="form-group"><label class="form-label">University ID *</label><input type="text" id="ci_id" class="form-control" placeholder="e.g. 2021-00001"/></div>
+      <div class="form-group"><label class="form-label">Describe Your Item *</label><textarea id="ci_desc" class="form-control" rows="3" placeholder="Color, brand, markings, contents, damage — anything that proves it's yours."></textarea></div>
+      <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" id="ci_contact" class="form-control" placeholder="e.g. 09xx-xxx-xxxx"/></div>
       <div style="padding:12px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:9px;font-size:.78rem;color:var(--text-primary);margin-bottom:1rem;">
         <i class="fa-solid fa-triangle-exclamation" style="color:var(--warn);"></i>
         Staff will verify your description matches the recovered item before releasing it. Please proceed to the dispensing window with your university ID.
@@ -249,8 +346,46 @@ $active_page = 'student'; $user_role = 'student';
 <script src="../assets/js/spotit.js"></script>
 <script>
 startLiveClock('liveClock');
-function openClaimModal(name) { document.getElementById('claimItemName').textContent = name; openModal('claimModal'); }
-function submitClaim() { showToast('success','Claim submitted! Please visit the dispensing window with your university ID.'); closeModal('claimModal'); }
+let currentDetailId;
+
+function openClaimModal(id, name, room) {
+  currentDetailId = id;
+  document.getElementById('claimItemName').textContent = name;
+  document.getElementById('claimItemRoom').textContent = room;
+  ['ci_name','ci_id','ci_desc','ci_contact'].forEach(i=>{ const el=document.getElementById(i); if(el) el.value=''; });
+  openModal('claimModal');
+}
+
+async function submitClaim() {
+  const name = document.getElementById('ci_name').value.trim();
+  const id   = document.getElementById('ci_id').value.trim();
+  const desc = document.getElementById('ci_desc').value.trim();
+  const contact = document.getElementById('ci_contact') ? document.getElementById('ci_contact').value.trim() : '';
+  
+  if (!name || !id || !desc) { showToast('error','Please fill in all required fields.'); return; }
+  
+  try {
+    const res = await spotitFetch('../auth/submit_claim.php', {
+      method: 'POST',
+      body: new URLSearchParams({
+        recovery_id: currentDetailId,
+        full_name: name,
+        id_number: id,
+        contact: contact,
+        description: desc
+      })
+    });
+    if (res && res.success) {
+      showToast('success', 'Claim submitted! Please proceed to the CEAT dispensing window with your university ID.');
+      closeModal('claimModal');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      showToast('error', res ? res.message : 'Claim submission failed.');
+    }
+  } catch (e) {
+    showToast('error', 'Network error submitting claim.');
+  }
+}
 </script>
 
 <script>

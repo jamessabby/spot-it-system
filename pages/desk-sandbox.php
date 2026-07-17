@@ -12,15 +12,6 @@ $active_page = 'sandbox';
 $user_role   = $_SESSION['user_role'] ?? 'staff';
 $uname       = $_SESSION['user_name'] ?? 'User';
 
-$modeFile = __DIR__ . '/../detection_mode.json';
-$currentMode = 'testing';
-if (file_exists($modeFile)) {
-    $modeData = json_decode(file_get_contents($modeFile), true);
-    if (isset($modeData['mode']) && $modeData['mode'] === 'production') {
-        $currentMode = 'production';
-    }
-}
-
 // Enforce access control: Admin & Staff only
 if ($user_role !== 'admin' && $user_role !== 'staff') {
     header('Location: dashboard-student.php');
@@ -87,6 +78,14 @@ try {
     $trials = $trialsStmt->fetchAll();
 } catch (PDOException $e) {
     // Fallback
+}
+
+// 3. Read current tracking mode from detection_mode.json
+$tracking_mode = 'registered';
+$mode_file_path = __DIR__ . '/../detection_mode.json';
+if (file_exists($mode_file_path)) {
+    $mdata = json_decode(file_get_contents($mode_file_path), true);
+    $tracking_mode = $mdata['tracking_mode'] ?? 'registered';
 }
 
 ?>
@@ -262,24 +261,37 @@ try {
           
           <!-- Live CCTV Feed -->
           <div class="card" style="position:relative; overflow:hidden; border:1px solid var(--border); box-shadow:0 8px 30px rgba(0,0,0,0.15);">
-            <div class="card-head" style="border-bottom:1px solid var(--border);">
+            <div class="card-head" style="border-bottom:1px solid var(--border); flex-wrap:wrap; row-gap:8px;">
               <div class="card-title" style="display:flex; align-items:center; gap:8px;">
                 <i class="fa-solid fa-video" style="color:var(--ok);"></i> 
                 <span>Desk Calibration Feed</span>
               </div>
-              <div style="display:flex; gap:8px; align-items:center;">
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                 <button class="btn btn-sm" onclick="openRoiEditor()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary);">
                   <i class="fa-solid fa-pen-ruler"></i> Setup ROI Zones
                 </button>
+                <!-- Tracking Mode Toggle -->
+                <div id="trackingModeToggle" style="display:flex; gap:4px; background:var(--bg-base); border:1px solid var(--border); border-radius:8px; padding:3px;">
+                  <button id="btnModeRegistered"
+                    onclick="switchTrackingMode('registered')"
+                    style="font-size:.65rem; padding:3px 10px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $tracking_mode === 'registered' ? 'var(--primary)' : 'transparent' ?>;
+                           color:<?= $tracking_mode === 'registered' ? '#fff' : 'var(--text-dim)' ?>; font-weight:600;">
+                    <i class="fa-solid fa-box-archive"></i> Registered
+                  </button>
+                  <button id="btnModeUnregistered"
+                    onclick="switchTrackingMode('unregistered')"
+                    style="font-size:.65rem; padding:3px 10px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $tracking_mode === 'unregistered' ? 'var(--warn)' : 'transparent' ?>;
+                           color:<?= $tracking_mode === 'unregistered' ? '#fff' : 'var(--text-dim)' ?>; font-weight:600;">
+                    <i class="fa-solid fa-person-walking-luggage"></i> Left Items
+                  </button>
+                </div>
                 <select id="streamQualitySelect" onchange="toggleQuality(this.value)" class="form-control" style="font-size:.65rem; padding:2px 6px; height:auto; width:auto; border-radius:6px; background:var(--bg-base); border-color:var(--border);">
                   <option value="high">1080p Premium</option>
                   <option value="low">480p Balanced</option>
                 </select>
-                <select id="detectionModeSelect" onchange="toggleDetectionMode(this.value)" class="form-control" style="font-size:.65rem; padding:2px 6px; height:auto; width:auto; border-radius:6px; background:var(--bg-base); border-color:var(--border);">
-                  <option value="testing" <?= $currentMode === 'testing' ? 'selected' : '' ?>>Quick Testing (1.5s)</option>
-                  <option value="production" <?= $currentMode === 'production' ? 'selected' : '' ?>>Production Mode (8s)</option>
-                </select>
-                <span id="streamStatusBadge" class="badge badge-warn" style="font-size:.65rem; padding:3px 10px; border-radius:6px;">
+                <span id="streamStatusBadge" class="badge badge-warn" style="font-size:.65rem; padding:3px 10px; border-radius:6px; white-space:normal; max-width:260px; line-height:1.35; text-align:left;">
                   <span class="bdot" style="background:var(--warn);"></span> CONNECTING
                 </span>
               </div>
@@ -592,6 +604,40 @@ async function clearLogs() {
     }
   } catch (e) {
     showToast('error', 'Communication error.');
+  }
+}
+
+/* ══════════════════════════════════════
+   TRACKING MODE TOGGLE
+══════════════════════════════════════ */
+async function switchTrackingMode(mode) {
+  const btnReg   = document.getElementById('btnModeRegistered');
+  const btnUnreg = document.getElementById('btnModeUnregistered');
+  try {
+    const res = await spotitFetch('../auth/save_tracking_mode.php', {
+      method: 'POST',
+      body: new URLSearchParams({ tracking_mode: mode })
+    });
+    if (res && res.success) {
+      // Update button styles
+      if (mode === 'registered') {
+        btnReg.style.background   = 'var(--primary)';
+        btnReg.style.color        = '#fff';
+        btnUnreg.style.background = 'transparent';
+        btnUnreg.style.color      = 'var(--text-dim)';
+      } else {
+        btnUnreg.style.background = 'var(--warn)';
+        btnUnreg.style.color      = '#fff';
+        btnReg.style.background   = 'transparent';
+        btnReg.style.color        = 'var(--text-dim)';
+      }
+      const label = mode === 'registered' ? 'Registered Items' : 'Left Items / Unregistered';
+      showToast('success', `Tracking mode set to: ${label}. Restart python engine to apply.`);
+    } else {
+      showToast('error', res ? res.message : 'Failed to set tracking mode.');
+    }
+  } catch (e) {
+    showToast('error', 'Network error setting tracking mode.');
   }
 }
 
@@ -923,24 +969,6 @@ async function saveRoisToSystem() {
   } catch (e) {
     showToast('error', 'Network error saving configurations.');
   }
-}
-
-function toggleDetectionMode(mode) {
-  spotitFetch('../auth/save_detection_mode.php', {
-    method: 'POST',
-    body: new URLSearchParams({ mode: mode })
-  })
-  .then(res => {
-    if (res && res.success) {
-      showToast('success', 'Detection mode updated to ' + mode);
-    } else {
-      showToast('error', res ? res.message : 'Failed to update detection mode');
-    }
-  })
-  .catch(err => {
-    console.error('Error toggling detection mode:', err);
-    showToast('error', 'Network error updating detection mode');
-  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

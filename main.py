@@ -267,10 +267,16 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
             for term in search_terms:
                 if any(term == name or term in name or name in term for name in class_names):
                     confidence = float(probs[idx])
-                    return confidence >= conf_threshold, confidence
+                    is_present = (confidence >= conf_threshold)
+                    print(f"[SPOT-IT][DNN] Target '{target_label}' matched ImageNet class '{DNN_CLASS_LABELS[idx]}' "
+                          f"with {confidence:.1%} confidence (thresh: {conf_threshold:.1%}) -> Result: {'Present' if is_present else 'Absent'}")
+                    return is_present, confidence
 
         # target_label never appeared in the top-K at all
-        top1_confidence = float(probs[top_indices[0]])
+        top1_idx = top_indices[0]
+        top1_name = DNN_CLASS_LABELS[top1_idx]
+        top1_confidence = float(probs[top1_idx])
+        print(f"[SPOT-IT][DNN] Target '{target_label}' NOT in top-{top_k} predictions. Top 1 predicted: '{top1_name}' ({top1_confidence:.1%}) -> Result: Absent")
         return False, top1_confidence
 
     except Exception as e:
@@ -390,11 +396,14 @@ snapshot_b_triggered = {roi['label']: False for roi in roi_list}
 prev_roi_gray        = {roi['label']: None for roi in roi_list}
 shifted_locations    = {roi['label']: None for roi in roi_list}
 missing_timestamps   = {}
+registered_seq_count = {roi['label']: 0 for roi in roi_list}  # sequential frame counter per Tier 1 item
 monitoring_paused    = False
 
-last_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
-last_ref_mtime  = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
-last_mode_mtime = 0
+last_rois_mtime    = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
+last_ref_mtime     = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
+last_mode_mtime    = 0
+IS_PRODUCTION_MODE   = False   # updated dynamically from detection_mode.json
+SANDBOX_TRACKING_MODE = 'registered'  # 'registered' | 'unregistered' — updated dynamically
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
 def is_scene_stable(frame_blur):
@@ -427,9 +436,8 @@ def save_frames_atomic(output_frame, clean_frame):
     except Exception:
         pass
 
-def save_snapshot(frame, label):
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename  = f"{label}_{timestamp}.jpg"
+def save_snapshot(frame, label, suffix="snapshot_A"):
+    filename  = f"{label}_{suffix}.jpg"
     filepath  = os.path.join(SNAPSHOT_DIR, filename)
     cv2.imwrite(filepath, frame)
     return filepath
@@ -439,10 +447,22 @@ def count_missing_items():
     return sum(1 for label in consistency_count if consistency_count[label] >= CONSISTENCY_FRAMES)
 
 def get_roi_tier(roi):
-    """Determine ROI tier based on label keywords (fallback if not in json)."""
+    """Determine ROI tier based on label keywords (fallback if not in json).
+    Handles both numeric (1) and string ('tier1') formats saved by the web editor.
+    Falls back to keyword matching if 'tier' key is absent.
+    """
     if 'tier' in roi:
-        return int(roi['tier'])
-    
+        t = roi['tier']
+        if isinstance(t, int):
+            return t
+        # Handle 'tier1', 'tier2', 'tier3', 'tier4' string formats
+        if isinstance(t, str):
+            t_lower = t.lower().replace('tier', '').strip()
+            try:
+                return int(t_lower)
+            except ValueError:
+                pass
+    # Keyword fallback — Tier 1 = fixed lab equipment per thesis Table 3.2/3.3
     label = roi['label'].lower()
     fixed_keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'ups', 'computer', 'fan', 'headphones', 'mini_fan']
     if any(kw in label for kw in fixed_keywords):
@@ -586,6 +606,8 @@ while True:
     current_ref_mtime  = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
     
     # Check dynamic testing vs production mode toggle
+    # In TESTING mode: flood gate only triggers at 100% (all items gone).
+    # In PRODUCTION mode: flood gate triggers at >50% (realistic lab scenario).
     mode_file = 'detection_mode.json'
     current_mode_mtime = os.path.getmtime(mode_file) if os.path.exists(mode_file) else 0
     if current_mode_mtime > last_mode_mtime:
@@ -594,12 +616,13 @@ while True:
             with open(mode_file, 'r') as mf:
                 mode_data = json.load(mf)
                 mode = mode_data.get('mode', 'testing')
-                if mode == 'production':
-                    CONSISTENCY_FRAMES = 25
-                    print("[SPOT-IT] Switched to Production Mode (8.0s confirmation delay / 25 frames)")
+                IS_PRODUCTION_MODE = (mode == 'production')
+                SANDBOX_TRACKING_MODE = mode_data.get('tracking_mode', 'registered')
+                if IS_PRODUCTION_MODE:
+                    print("[SPOT-IT] Production Mode active — flood gate at >50% items missing | Both tiers active")
                 else:
-                    CONSISTENCY_FRAMES = 5
-                    print("[SPOT-IT] Switched to Quick Testing Mode (1.5s confirmation delay / 5 frames)")
+                    tracking_label = 'Registered Items' if SANDBOX_TRACKING_MODE == 'registered' else 'Unregistered/Left Items'
+                    print(f"[SPOT-IT] Testing Mode active — flood gate at 100% | Tracking: {tracking_label}")
         except Exception as me:
             print(f"[SPOT-IT][ERROR] Failed to load detection mode: {me}")
     
@@ -634,6 +657,10 @@ while True:
                 BASELINE_COUNT = len(roi_list)
                 last_rois_mtime = current_rois_mtime
                 last_ref_mtime  = current_ref_mtime
+                # Reinitialize all per-label state for new/changed ROI set
+                for roi in roi_list:
+                    lbl = roi['label']
+                    if lbl not in registered_seq_count: registered_seq_count[lbl] = 0
                 print(f"[SPOT-IT] Successfully reloaded {len(roi_list)} ROIs dynamically!")
             else:
                 print("[SPOT-IT][WARN] Failed to read new reference image. Postponing reload.")
@@ -723,7 +750,19 @@ while True:
     for roi in roi_list:
         x, y, w, h = roi['x'], roi['y'], roi['w'], roi['h']
         label      = roi['label']
-        tier       = get_roi_tier(roi)
+        base_tier  = get_roi_tier(roi)
+
+        # ── SANDBOX TRACKING MODE OVERRIDE ──────────────────────────────────
+        # In production, use actual ROI tier from JSON/keywords (full pipeline).
+        # In sandbox testing:
+        #   'registered'   → treat ALL ROIs as Tier 1 (DNN check, sequential snapshots)
+        #   'unregistered' → treat ALL ROIs as Tier 2 (template match, Snapshot A/B)
+        if IS_PRODUCTION_MODE:
+            tier = base_tier
+        elif SANDBOX_TRACKING_MODE == 'registered':
+            tier = 1
+        else:  # 'unregistered'
+            tier = 2
 
         changed, change_pct = check_roi(roi, thresh)
         is_actually_missing = changed
@@ -749,12 +788,27 @@ while True:
 
         if is_actually_missing:
             consistency_count[label] += 1
+            if consistency_count[label] == 1:
+                print(f"[SPOT-IT] '{label}' change detected! (change: {change_pct:.1%}). Status: CHECKING ({consistency_count[label]}/{CONSISTENCY_FRAMES})")
+            elif consistency_count[label] < CONSISTENCY_FRAMES:
+                print(f"[SPOT-IT] '{label}' checking progress ({consistency_count[label]}/{CONSISTENCY_FRAMES})")
+
+            # ── REGISTERED ITEM (Tier 1): save each checking frame sequentially ───────
+            # These frames show the moment the item starts being moved/removed.
+            if tier == 1 and not active_events[label]:
+                registered_seq_count[label] += 1
+                save_snapshot(frame, label, f"registered_{registered_seq_count[label]}")
         else:
+            if consistency_count[label] > 0 or active_events[label]:
+                print(f"[SPOT-IT] '{label}' returned to OK state (change: {change_pct:.1%}).")
             consistency_count[label] = 0
             active_events[label]     = False
             active_detection_ids[label] = None
             snapshot_b_triggered[label] = False
             shifted_locations[label] = None
+            registered_seq_count[label] = 0
+            if label in missing_timestamps:
+                del missing_timestamps[label]
 
         confirmed_missing = (
             consistency_count[label] >= CONSISTENCY_FRAMES
@@ -763,13 +817,17 @@ while True:
 
         if confirmed_missing:
             active_events[label] = True
-            snapshot_path = save_snapshot(frame, label)
 
-            print(f"\n[CANDIDATE EVENT DETECTED (Snapshot A)]")
+            if tier == 1:
+                snapshot_path = os.path.join(SNAPSHOT_DIR, f"{label}_registered_{registered_seq_count[label]}.jpg")
+            else:
+                snapshot_path = save_snapshot(frame, label, "snapshot_A")
+
+            print(f"\n[CANDIDATE EVENT DETECTED ({'Registered Item sequence' if tier == 1 else 'Snapshot A'})]")
             print(f"  ROI Label    : {label} (Tier {tier})")
             print(f"  Room ID      : {ROOM_ID}")
             print(f"  Detected At  : {datetime.now().isoformat()}")
-            print(f"  Snapshot A   : {snapshot_path}")
+            print(f"  Snapshot     : {snapshot_path}")
             print(f"  Change       : {change_pct:.1%} over {CONSISTENCY_FRAMES} consecutive frames")
 
             det_id = post_to_api(label, snapshot_path, change_pct)
@@ -778,34 +836,42 @@ while True:
             print()
 
             # ── AUTO-FLOOD GATE PROTECTION ────────────────────────────────
-            # Check how many registered items went missing in the last 60s
             recent_missing = [lbl for lbl, ts in missing_timestamps.items() if time.time() - ts <= 60]
-            # Only trigger flood gate if we have at least 4 items and more than 50% of them go missing
-            if len(roi_list) >= 4 and len(recent_missing) > 0.50 * len(roi_list):
-                print(f"[ALERT] Auto-Flood Gate triggered! {len(recent_missing)}/{len(roi_list)} items went missing.")
+            n_rois = len(roi_list)
+            n_missing = len(recent_missing)
+            flood_triggered = False
+            if IS_PRODUCTION_MODE:
+                if n_rois > 0 and n_missing > 0.50 * n_rois:
+                    flood_triggered = True
+            else:
+                if n_rois > 0 and n_missing >= n_rois:
+                    flood_triggered = True
+            if flood_triggered:
+                print(f"[ALERT] Auto-Flood Gate triggered! {n_missing}/{n_rois} items went missing ({'production' if IS_PRODUCTION_MODE else 'testing'} mode).")
                 monitoring_paused = True
                 post_mass_deviation()
                 break  # Exit ROI loop immediately
 
-        # ── SNAPSHOT B LOGIC ──────────────────────────────────────────────
+        # ── SNAPSHOT B LOGIC (Unregistered / Tier 2 Only) ──────────────────
         # If item is already confirmed missing, watch it for subsequent movement (theft/hand capture)
-        if active_events[label] and not snapshot_b_triggered[label]:
+        if tier == 2 and active_events[label] and not snapshot_b_triggered[label]:
             roi_gray = gray[y:y+h, x:x+w]
             if prev_roi_gray[label] is not None:
-                # Frame-to-frame difference within the empty ROI
-                ftf_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
-                _, ftf_thresh = cv2.threshold(ftf_diff, 15, 255, cv2.THRESH_BINARY)
-                motion_val = cv2.countNonZero(ftf_thresh) / (w * h)
-                
-                if motion_val >= 0.05:  # 5% of pixels changed frame-to-frame
-                    snapshot_b_triggered[label] = True
-                    snapshot_path_b = save_snapshot(frame, f"{label}_b")
-                    print(f"\n[INTERACTION DETECTED (Snapshot B)]")
-                    print(f"  ROI Label    : {label}")
-                    print(f"  Detection ID : {active_detection_ids[label]}")
-                    print(f"  Snapshot B   : {snapshot_path_b}")
-                    post_snapshot_b(label, active_detection_ids[label], snapshot_path_b)
-                    print()
+                if prev_roi_gray[label].shape == roi_gray.shape:
+                    # Frame-to-frame difference within the empty ROI
+                    ftf_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
+                    _, ftf_thresh = cv2.threshold(ftf_diff, 15, 255, cv2.THRESH_BINARY)
+                    motion_val = cv2.countNonZero(ftf_thresh) / (w * h)
+                    
+                    if motion_val >= 0.05:  # 5% of pixels changed frame-to-frame
+                        snapshot_b_triggered[label] = True
+                        snapshot_path_b = save_snapshot(frame, label, "snapshot_B")
+                        print(f"\n[INTERACTION DETECTED (Snapshot B)]")
+                        print(f"  ROI Label    : {label}")
+                        print(f"  Detection ID : {active_detection_ids[label]}")
+                        print(f"  Snapshot B   : {snapshot_path_b}")
+                        post_snapshot_b(label, active_detection_ids[label], snapshot_path_b)
+                        print()
             prev_roi_gray[label] = roi_gray
 
         # ── DRAW ROI BOXES ────────────────────────────────────────────────

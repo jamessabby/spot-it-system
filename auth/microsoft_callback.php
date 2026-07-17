@@ -110,7 +110,14 @@ if (!$user['is_active']) {
 }
 
 // ── 8. Set session and redirect ───────────────────────────────────────────────
-ms_set_session($user);
+// Staff is treated as admin for UI/routing purposes (no separate staff
+// dashboard/nav) — the DB role value is left untouched, only the session
+// and redirect are normalized. See CLAUDE.md §2 for why.
+$sessionUser = $user;
+if ($sessionUser['role'] === 'staff') {
+    $sessionUser['role'] = 'admin';
+}
+ms_set_session($sessionUser);
 
 // Update microsoft_id if changed
 if (($user['microsoft_id'] ?? '') !== $msId && $msId) {
@@ -118,9 +125,8 @@ if (($user['microsoft_id'] ?? '') !== $msId && $msId) {
             ->execute([$msId, $user['id']]);
 }
 
-$redirect = match($user['role']) {
+$redirect = match($sessionUser['role']) {
     'admin'  => '../pages/dashboard-admin.php',
-    'staff'  => '../pages/dashboard-staff.php',
     default  => '../pages/dashboard-student.php',
 };
 

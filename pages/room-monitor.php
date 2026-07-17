@@ -175,7 +175,7 @@ if ($room_id) {
 <html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Room Monitor — <?= htmlspecialchars($room_id) ?> — S.P.O.T.-IT</title>
+  <title>Room Cameras — <?= htmlspecialchars($room_id) ?> — S.P.O.T.-IT</title>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"/>
@@ -193,7 +193,7 @@ if ($room_id) {
     <div class="topbar">
       <button class="tb-btn tb-hamburger" id="hamburgerBtn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
       <div>
-        <span class="topbar-title">Room Monitor</span>
+        <span class="topbar-title">Room Cameras</span>
         <span class="topbar-sub"> — <?= htmlspecialchars($room_id) ?> · <?= htmlspecialchars($room_name) ?></span>
       </div>
       <div class="live-pill"><div class="live-dot"></div>LIVE FEED</div>

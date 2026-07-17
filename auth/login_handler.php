@@ -68,9 +68,18 @@ if (!$user['is_active']) {
 
 // ── 7. Successful login ──────────────────────────────────────────────────────
 ms_clear_attempts($authPdo, $email);
-ms_set_session($user);
 
-// Log the login to monitoring_logs (optional, non-blocking)
+// Staff is treated as admin for UI/routing purposes (no separate staff
+// dashboard/nav) — the DB role value is left untouched, only the session
+// and redirect are normalized. See CLAUDE.md §2 for why.
+$sessionUser = $user;
+if ($sessionUser['role'] === 'staff') {
+    $sessionUser['role'] = 'admin';
+}
+ms_set_session($sessionUser);
+
+// Log the login to monitoring_logs (optional, non-blocking) — logs the
+// REAL DB role, not the normalized one, so audit history stays accurate.
 try {
     $monitorPdo->prepare(
         "INSERT INTO monitoring_logs (event_type, event_message, logged_at)
@@ -78,10 +87,9 @@ try {
     )->execute(["User login: {$user['email']} (role: {$user['role']})"]);
 } catch (Throwable $e) { /* non-critical */ }
 
-$redirect = match($user['role']) {
+$redirect = match($sessionUser['role']) {
     'admin'  => 'dashboard-admin.php',
-    'staff'  => 'dashboard-staff.php',
     default  => 'dashboard-student.php',
 };
 
-ms_json(['success' => true, 'redirect' => $redirect, 'role' => $user['role']]);
+ms_json(['success' => true, 'redirect' => $redirect, 'role' => $sessionUser['role']]);

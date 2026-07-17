@@ -18,14 +18,13 @@ $initials = strtoupper(
       <div class="sb-logo-icon">S</div>
       <div>
         <div class="sb-logo-name">S.P.O.T.-IT</div>
-        <div class="sb-logo-sub"><?= match($role){'admin'=>'Admin Panel','staff'=>'Staff Panel',default=>'Student Portal'} ?></div>
-      </div>
+        <div class="sb-logo-sub"><?= match($role){'admin','staff'=>'Admin Panel',default=>'Student Portal'} ?></div>      </div>
     </a>
   </div>
 
-  <?php if ($role === 'admin' || $role === 'staff'): ?>
-  <div class="sb-section">
-    <div class="sb-section-label">Monitoring</div>
+  <?php if ($role === 'admin'): ?>
+    <div class="sb-section">
+      <div class="sb-section-label">Monitoring</div>
     <a href="dashboard-admin.php" class="sb-item <?= $active==='dashboard'?'active':'' ?>">
       <i class="fa-solid fa-gauge-high"></i> Overview
       <span class="sb-badge sb-badge-alert" id="sb-badge-alerts" style="display:none">0</span>
@@ -35,7 +34,7 @@ $initials = strtoupper(
       <span class="sb-badge sb-badge-warn" id="sb-badge-warn" style="display:none">0</span>
     </a>
     <a href="room-monitor.php" class="sb-item <?= $active==='rooms'?'active':'' ?>">
-      <i class="fa-solid fa-video"></i> Room Monitor
+      <i class="fa-solid fa-video"></i> Room Cameras
     </a>
     <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
       <i class="fa-solid fa-flask"></i> Desk Sandbox Test
@@ -96,9 +95,9 @@ $initials = strtoupper(
   </div>
   <?php endif; ?>
 
-  <?php if ($role === 'staff' || $role === 'admin'): ?>
-  <div class="sb-section">
-    <div class="sb-section-label">My Activity</div>
+  <?php if ($role === 'admin'): ?>
+    <div class="sb-section">
+      <div class="sb-section-label">My Activity</div>
     <a href="my-posts.php" class="sb-item <?= $active==='posts'?'active':'' ?>">
       <i class="fa-solid fa-pen-to-square"></i> My Posts
     </a>
