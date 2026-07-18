@@ -22,7 +22,7 @@ SCENE_MOTION_LIMIT         = 0.40        # % of frame stable (was 0.15)
 CONSISTENCY_FRAMES         = 5           # consecutive frames to confirm (was 3)
 RTSP_URL                   = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
 ROTATE_CAMERA              = False       # Set to True for portrait iPhone, False for Tapo CCTV
-MATCH_SCORE_THRESHOLD      = 0.55        # threshold score for template matching (0.45 - 0.65)
+MATCH_SCORE_THRESHOLD      = 0.78        # threshold score for template matching (raised from 0.55 for accuracy)
 
 # ── ROOM / API CONFIG ───────────────────────────────────────────────────────
 ROOM_ID           = 'DESK'              # changed to DESK for personal desk testing
@@ -79,8 +79,21 @@ BASELINE_COUNT = len(roi_list)  # all items present = baseline
 # ── LOAD REFERENCE FRAME ──────────────────────────────────────────────────
 ref_bgr = cv2.imread(REF_IMAGE)
 if ref_bgr is None:
-    print(f"[ERROR] Cannot load reference image: {REF_IMAGE}")
-    exit()
+    print(f"[SPOT-IT] Reference image missing! Auto-capturing baseline from stream...")
+    cap_temp = cv2.VideoCapture(RTSP_URL)
+    ret_temp, frame_temp = cap_temp.read()
+    if ret_temp:
+        width = int(frame_temp.shape[1] * STREAM_SCALE)
+        height = int(frame_temp.shape[0] * STREAM_SCALE)
+        resized_temp = cv2.resize(frame_temp, (width, height), interpolation=cv2.INTER_AREA)
+        os.makedirs(os.path.dirname(REF_IMAGE), exist_ok=True)
+        cv2.imwrite(REF_IMAGE, resized_temp)
+        print(f"[SPOT-IT] Successfully captured and saved new baseline: {REF_IMAGE}")
+        ref_bgr = resized_temp
+    else:
+        print(f"[ERROR] Failed to connect to stream to capture baseline. Check IP/Network.")
+        exit()
+    cap_temp.release()
 ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
 ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
 TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
@@ -198,7 +211,7 @@ else:
 
 
 def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
-                           conf_threshold=DNN_CONFIDENCE_THRESHOLD):
+                           conf_threshold=DNN_CONFIDENCE_THRESHOLD, verbose=False):
     """
     Secondary ML validation gate (gatekeeper pattern, CLAUDE.md §3a).
 
@@ -216,6 +229,7 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
                         against MobileNetV2's ImageNet class names.
         top_k         : How many top predictions to search for a match.
         conf_threshold: Minimum softmax confidence required to count as present.
+        verbose       : Whether to print classification diagnostic output.
 
     Returns:
         (is_present: bool, confidence: float)
@@ -268,15 +282,17 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
                 if any(term == name or term in name or name in term for name in class_names):
                     confidence = float(probs[idx])
                     is_present = (confidence >= conf_threshold)
-                    print(f"[SPOT-IT][DNN] Target '{target_label}' matched ImageNet class '{DNN_CLASS_LABELS[idx]}' "
-                          f"with {confidence:.1%} confidence (thresh: {conf_threshold:.1%}) -> Result: {'Present' if is_present else 'Absent'}")
+                    if verbose:
+                        print(f"[SPOT-IT][DNN] Target '{target_label}' matched ImageNet class '{DNN_CLASS_LABELS[idx]}' "
+                              f"with {confidence:.1%} confidence (thresh: {conf_threshold:.1%}) -> Result: {'Present' if is_present else 'Absent'}")
                     return is_present, confidence
 
         # target_label never appeared in the top-K at all
         top1_idx = top_indices[0]
         top1_name = DNN_CLASS_LABELS[top1_idx]
         top1_confidence = float(probs[top1_idx])
-        print(f"[SPOT-IT][DNN] Target '{target_label}' NOT in top-{top_k} predictions. Top 1 predicted: '{top1_name}' ({top1_confidence:.1%}) -> Result: Absent")
+        if verbose:
+            print(f"[SPOT-IT][DNN] Target '{target_label}' NOT in top-{top_k} predictions. Top 1 predicted: '{top1_name}' ({top1_confidence:.1%}) -> Result: Absent")
         return False, top1_confidence
 
     except Exception as e:
@@ -766,7 +782,6 @@ while True:
 
         changed, change_pct = check_roi(roi, thresh)
         is_actually_missing = changed
-
         if changed:
             if tier == 1:
                 # Fixed Asset -> MobileNetV2 Secondary Presence Validation Gate
@@ -776,15 +791,37 @@ while True:
                 if is_present_dnn:
                     # Still present in zone (nudged or shadowed) -> suppress alert
                     is_actually_missing = False
+                else:
+                    # DNN returned Absent. Since general-purpose DNNs can fail on custom objects (like boxes),
+                    # we use template matching *locally* inside the ROI as a fallback to prevent false positives.
+                    ref_crop = ref_bgr[y:y+h, x:x+w]
+                    h_f, w_f = frame.shape[:2]
+                    cx, cy = x + w // 2, y + h // 2
+                    sw = int(w * 1.5)
+                    sh = int(h * 1.5)
+                    sx = max(0, cx - sw // 2)
+                    sy = max(0, cy - sh // 2)
+                    if sx + sw > w_f: sw = w_f - sx
+                    if sy + sh > h_f: sh = h_f - sy
+                    
+                    if sw >= w and sh >= h:
+                        search_area = frame[sy:sy+sh, sx:sx+sw]
+                        res = cv2.matchTemplate(search_area, ref_crop, cv2.TM_CCOEFF_NORMED)
+                        _, max_val, _, _ = cv2.minMaxLoc(res)
+                        if max_val >= MATCH_SCORE_THRESHOLD:
+                            # It is still physically there, DNN was just not confident
+                            is_actually_missing = False
             else:
-                # Personal/Lost Asset -> Template Matching Search in Wider Margin
                 ref_crop = ref_bgr[y:y+h, x:x+w]
                 found_match, fx, fy, f_score = find_item_template_match(frame, ref_crop, roi)
                 
                 if found_match:
                     # Shifted but still in room/zone -> suppress alert, track location
+                    print(f"[DEBUG] Tier 2 match found for '{label}' with score {f_score:.2f} >= {MATCH_SCORE_THRESHOLD}. Suppressing alert.")
                     is_actually_missing = False
                     shifted_locations[label] = (fx, fy, w, h)
+                else:
+                    print(f"[DEBUG] Tier 2 match FAILED for '{label}' (score {f_score:.2f} < {MATCH_SCORE_THRESHOLD}). Marking as missing.")
 
         if is_actually_missing:
             consistency_count[label] += 1

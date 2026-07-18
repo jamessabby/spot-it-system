@@ -170,6 +170,14 @@ if ($room_id) {
         ];
     }
 }
+
+// Read current detection mode from detection_mode.json
+$detection_mode = 'testing';
+$dm_file = __DIR__ . '/../detection_mode.json';
+if (file_exists($dm_file)) {
+    $dm = json_decode(file_get_contents($dm_file), true);
+    $detection_mode = $dm['mode'] ?? 'testing';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">

@@ -9,10 +9,10 @@ $active_page = 'dashboard';
 $user_role   = 'admin';
 
 // Live statistics calculations
-$statRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1")->fetchColumn();
-$statMissing = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0")->fetchColumn();
-$statPending = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE validation_status IN ('pending_review', 'needs_review') AND is_removed = 0")->fetchColumn();
-$statToday = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE DATE(detected_at) = CURDATE()")->fetchColumn();
+$statRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND room_id != 'DESK'")->fetchColumn();
+$statMissing = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND room_id != 'DESK' AND is_removed = 0")->fetchColumn();
+$statPending = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE validation_status IN ('pending_review', 'needs_review') AND room_id != 'DESK' AND is_removed = 0")->fetchColumn();
+$statToday = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE DATE(detected_at) = CURDATE() AND room_id != 'DESK'")->fetchColumn();
 
 // Fetch live rooms status list
 $roomStatusStmt = $monitorPdo->prepare("
@@ -25,11 +25,12 @@ $roomStatusStmt = $monitorPdo->prepare("
             SELECT room_id, MAX(detection_id) AS max_id
             FROM detections
             WHERE status IN ('pending','potential','confirmed_missing')
+              AND room_id != 'DESK'
               AND is_removed = 0
             GROUP BY room_id
         ) latest ON d2.detection_id = latest.max_id
     ) d ON r.room_id = d.room_id
-    WHERE r.is_active = 1
+    WHERE r.is_active = 1 AND r.room_id != 'DESK'
     ORDER BY r.floor, r.room_id
 ");
 $roomStatusStmt->execute();
@@ -39,6 +40,7 @@ $liveRooms = $roomStatusStmt->fetchAll();
 $recentEventsStmt = $monitorPdo->query("
     SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status
     FROM detections d
+    WHERE d.room_id != 'DESK'
     ORDER BY d.detected_at DESC LIMIT 5
 ");
 $recentEvents = $recentEventsStmt->fetchAll();
@@ -47,7 +49,7 @@ $recentEvents = $recentEventsStmt->fetchAll();
 $activeAlertsStmt = $monitorPdo->query("
     SELECT d.detection_id, d.room_id, d.object_zone, d.detected_at, d.status
     FROM detections d
-    WHERE d.status IN ('pending','potential','confirmed_missing') AND d.is_removed = 0
+    WHERE d.status IN ('pending','potential','confirmed_missing') AND d.room_id != 'DESK' AND d.is_removed = 0
     ORDER BY d.detected_at DESC LIMIT 5
 ");
 $activeAlerts = $activeAlertsStmt->fetchAll();

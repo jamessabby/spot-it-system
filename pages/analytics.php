@@ -8,14 +8,14 @@ $active_page = 'analytics';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 
 // Live calculations for Analytics
-$activeEventsCount = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0")->fetchColumn();
-$resolvedCount = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('dismissed', 'recovered') AND MONTH(updated_at) = MONTH(CURRENT_DATE()) AND YEAR(updated_at) = YEAR(CURRENT_DATE())")->fetchColumn();
+$activeEventsCount = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND room_id != 'DESK' AND is_removed = 0")->fetchColumn();
+$resolvedCount = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('dismissed', 'recovered') AND room_id != 'DESK' AND MONTH(updated_at) = MONTH(CURRENT_DATE()) AND YEAR(updated_at) = YEAR(CURRENT_DATE())")->fetchColumn();
 $claimsCount = (int)$lfPdo->query("SELECT COUNT(*) FROM claims WHERE MONTH(submitted_at) = MONTH(CURRENT_DATE()) AND YEAR(submitted_at) = YEAR(CURRENT_DATE())")->fetchColumn();
-$avgConfidence = $monitorPdo->query("SELECT ROUND(AVG(confidence_score)) FROM detections WHERE confidence_score IS NOT NULL")->fetchColumn();
+$avgConfidence = $monitorPdo->query("SELECT ROUND(AVG(confidence_score)) FROM detections WHERE room_id != 'DESK' AND confidence_score IS NOT NULL")->fetchColumn();
 $avgConfidence = $avgConfidence !== null ? $avgConfidence . '%' : '0%';
 
 // Room counts
-$roomCountsStmt = $monitorPdo->query("SELECT room_id, COUNT(*) as count FROM detections GROUP BY room_id ORDER BY count DESC");
+$roomCountsStmt = $monitorPdo->query("SELECT room_id, COUNT(*) as count FROM detections WHERE room_id != 'DESK' GROUP BY room_id ORDER BY count DESC");
 $roomCounts = $roomCountsStmt->fetchAll();
 $maxCount = 1;
 foreach ($roomCounts as $rc) {
@@ -25,13 +25,13 @@ foreach ($roomCounts as $rc) {
 }
 
 // Status Breakdown
-$totalDetections = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections")->fetchColumn();
+$totalDetections = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE room_id != 'DESK'")->fetchColumn();
 $cMissing = 0; $cRecovered = 0; $cDismissed = 0; $cPending = 0;
 if ($totalDetections > 0) {
-    $cMissing = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'confirmed_missing'")->fetchColumn() / $totalDetections) * 100);
-    $cRecovered = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'recovered'")->fetchColumn() / $totalDetections) * 100);
-    $cDismissed = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'dismissed'")->fetchColumn() / $totalDetections) * 100);
-    $cPending = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential')")->fetchColumn() / $totalDetections) * 100);
+    $cMissing = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'confirmed_missing' AND room_id != 'DESK'")->fetchColumn() / $totalDetections) * 100);
+    $cRecovered = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'recovered' AND room_id != 'DESK'")->fetchColumn() / $totalDetections) * 100);
+    $cDismissed = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status = 'dismissed' AND room_id != 'DESK'")->fetchColumn() / $totalDetections) * 100);
+    $cPending = round(((int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential') AND room_id != 'DESK'")->fetchColumn() / $totalDetections) * 100);
 }
 ?>
 <!DOCTYPE html>

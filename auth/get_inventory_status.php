@@ -30,7 +30,7 @@ $filterRoom = trim($_GET['room'] ?? '');
 
 try {
     // ── 1. Fetch all active rooms ─────────────────────────────────────────────
-    $roomWhere  = $filterRoom ? "WHERE r.room_id = ?" : "WHERE r.is_active = 1";
+    $roomWhere  = $filterRoom ? "WHERE r.room_id = ?" : "WHERE r.is_active = 1 AND r.room_id != 'DESK'";
     $roomParams = $filterRoom ? [$filterRoom] : [];
 
     $roomStmt = $monitorPdo->prepare(

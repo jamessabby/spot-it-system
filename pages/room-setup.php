@@ -8,7 +8,7 @@ $active_page = 'room_setup';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 
 // Fetch rooms dynamically
-$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 ORDER BY floor, room_id");
+$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY floor, room_id");
 $roomsList = $roomsStmt->fetchAll();
 ?>
 <!DOCTYPE html>

@@ -80,6 +80,21 @@ try {
     // Fallback
 }
 
+// Fetch sandbox detections log
+$sandboxLogs = [];
+try {
+    $logStmt = $monitorPdo->query("
+        SELECT *, 
+               TIMESTAMPDIFF(SECOND, detected_at, COALESCE(updated_at, NOW())) AS duration_seconds
+        FROM detections 
+        WHERE room_id = 'DESK' 
+        ORDER BY detection_id DESC
+    ");
+    $sandboxLogs = $logStmt->fetchAll();
+} catch (PDOException $e) {
+    // Fallback
+}
+
 // 3. Read current tracking mode from detection_mode.json
 $tracking_mode = 'registered';
 $mode_file_path = __DIR__ . '/../detection_mode.json';
@@ -507,6 +522,94 @@ if (file_exists($mode_file_path)) {
 
         </div>
 
+      </div>
+
+      <!-- Sandbox Item Detections Log (Room: DESK) -->
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="card-title"><i class="fa-solid fa-list-check"></i> Sandbox Item Detections Log (Testing)</div>
+          <button class="btn btn-sm" onclick="truncateSandboxDetections()" style="font-size: .72rem; padding: 4px 10px; background: rgba(220,53,69,0.1); border: 1px solid var(--red-main); color: var(--red-main); border-radius: 6px;">
+            <i class="fa-solid fa-trash-can"></i> Clear Sandbox Logs
+          </button>
+        </div>
+        <div style="overflow-x:auto; padding: 0 12px 12px 12px;">
+          <table class="data-table" style="width:100%; border-collapse: collapse; font-size: 0.78rem;">
+            <thead>
+              <tr style="background:var(--bg-base); border-bottom:1px solid var(--border);">
+                <th style="padding:10px;">Timestamp</th>
+                <th style="padding:10px;">Room</th>
+                <th style="padding:10px;">Object</th>
+                <th style="padding:10px;">Zone</th>
+                <th style="padding:10px;">Status</th>
+                <th style="padding:10px;">Duration</th>
+                <th style="padding:10px; text-align:center;">Snapshot A (Missing)</th>
+                <th style="padding:10px; text-align:center;">Snapshot B (Interaction)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (empty($sandboxLogs)): ?>
+              <tr>
+                <td colspan="8" class="text-center py-4" style="color:var(--text-dim); padding: 20px;">No sandbox detections recorded yet.</td>
+              </tr>
+              <?php else: ?>
+              <?php foreach ($sandboxLogs as $log): 
+                $duration = '—';
+                if ($log['status'] === 'dismissed' || $log['status'] === 'recovered') {
+                  $sec = (int)$log['duration_seconds'];
+                  if ($sec < 60) $duration = $sec . 's';
+                  else {
+                    $mins = floor($sec / 60);
+                    $rem = $sec % 60;
+                    $duration = $mins . 'm ' . $rem . 's';
+                  }
+                } else {
+                  $sec = time() - strtotime($log['detected_at']);
+                  if ($sec < 60) $duration = $sec . 's (Ongoing)';
+                  else {
+                    $mins = floor($sec / 60);
+                    $duration = $mins . 'm (Ongoing)';
+                  }
+                }
+                
+                $badgeCls = match($log['status']) {
+                  'confirmed_missing' => 'badge-alert',
+                  'potential' => 'badge-warn',
+                  'recovered' => 'badge-ok',
+                  'dismissed' => 'badge-dim',
+                  default => 'badge-info'
+                };
+              ?>
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:10px; font-family:var(--font-mono);"><?= htmlspecialchars($log['detected_at']) ?></td>
+                <td style="padding:10px; font-weight:700;"><?= htmlspecialchars($log['room_id']) ?></td>
+                <td style="padding:10px; font-weight:600;"><?= htmlspecialchars($log['object_type']) ?></td>
+                <td style="padding:10px; color:var(--text-dim);"><?= htmlspecialchars($log['object_zone']) ?></td>
+                <td style="padding:10px;"><span class="badge <?= $badgeCls ?>"><?= ucfirst(str_replace('_', ' ', $log['status'])) ?></span></td>
+                <td style="padding:10px; font-family:var(--font-mono);"><?= $duration ?></td>
+                <td style="padding:10px; text-align:center;">
+                  <?php if (!empty($log['snapshot_path'])): ?>
+                    <a href="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path']) ?>" target="_blank">
+                      <img src="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path']) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
+                    </a>
+                  <?php else: ?>
+                    <span style="color:var(--text-dim);">—</span>
+                  <?php endif; ?>
+                </td>
+                <td style="padding:10px; text-align:center;">
+                  <?php if (!empty($log['snapshot_path_b'])): ?>
+                    <a href="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path_b']) ?>" target="_blank">
+                      <img src="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path_b']) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
+                    </a>
+                  <?php else: ?>
+                    <span style="color:var(--text-dim);">—</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+              <?php endforeach; ?>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
@@ -968,6 +1071,21 @@ async function saveRoisToSystem() {
     }
   } catch (e) {
     showToast('error', 'Network error saving configurations.');
+  }
+}
+
+async function truncateSandboxDetections() {
+  if (!confirm("Are you sure you want to delete all sandbox test detections? This will clear the table logs.")) return;
+  try {
+    const res = await spotitFetch('../auth/truncate_sandbox.php', { method: 'POST' });
+    if (res && res.success) {
+      showToast('success', 'Sandbox detections cleared!');
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast('error', res?.message || 'Failed to clear sandbox logs.');
+    }
+  } catch (err) {
+    showToast('error', 'Network error.');
   }
 }
 

@@ -28,11 +28,11 @@ if ($user_role !== 'admin' && $user_role !== 'staff') {
 
 // ── 1. Triage stat counts ──────────────────────────────────────────────────────
 $cctvCount = (int)$monitorPdo->query(
-    "SELECT COUNT(*) FROM detections WHERE status IN ('pending','potential') AND is_removed = 0"
+    "SELECT COUNT(*) FROM detections WHERE status IN ('pending','potential') AND room_id != 'DESK' AND is_removed = 0"
 )->fetchColumn();
 
 $missingCount = (int)$monitorPdo->query(
-    "SELECT COUNT(*) FROM detections WHERE status = 'confirmed_missing' AND is_removed = 0"
+    "SELECT COUNT(*) FROM detections WHERE status = 'confirmed_missing' AND room_id != 'DESK' AND is_removed = 0"
 )->fetchColumn();
 
 $claimsCount = (int)$lfPdo->query(
@@ -43,7 +43,7 @@ $totalAlerts = $cctvCount + $missingCount + $claimsCount;
 
 $offlineRoomsStmt = $monitorPdo->query(
     "SELECT room_id, room_name, floor, monitoring_status
-     FROM rooms WHERE is_active = 1 AND monitoring_status != 'active'
+     FROM rooms WHERE is_active = 1 AND room_id != 'DESK' AND monitoring_status != 'active'
      ORDER BY room_id"
 );
 $offlineRooms = $offlineRoomsStmt->fetchAll();
@@ -58,7 +58,7 @@ $detStmt = $monitorPdo->query(
             TIMESTAMPDIFF(MINUTE, d.detected_at, NOW()) AS elapsed_minutes
      FROM detections d
      LEFT JOIN rooms r ON r.room_id = d.room_id
-     WHERE d.status IN ('pending','potential','confirmed_missing') AND d.is_removed = 0
+     WHERE d.status IN ('pending','potential','confirmed_missing') AND d.room_id != 'DESK' AND d.is_removed = 0
      ORDER BY d.detected_at ASC"
 );
 $detections = $detStmt->fetchAll();

@@ -36,6 +36,9 @@ $initials = strtoupper(
     <a href="room-monitor.php" class="sb-item <?= $active==='rooms'?'active':'' ?>">
       <i class="fa-solid fa-video"></i> Room Cameras
     </a>
+    <a href="camera-setup.php" class="sb-item <?= $active==='camerasetup'?'active':'' ?>">
+      <i class="fa-solid fa-camera"></i> Camera Setup
+    </a>
     <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
       <i class="fa-solid fa-flask"></i> Desk Sandbox Test
     </a>

@@ -31,6 +31,7 @@ if ($summary) {
         $confirmed = (int)$monitorPdo->query(
             "SELECT COUNT(*) FROM detections
              WHERE status = 'confirmed_missing'
+               AND room_id != 'DESK'
                AND is_removed = 0"
         )->fetchColumn();
 
@@ -38,6 +39,7 @@ if ($summary) {
         $potential = (int)$monitorPdo->query(
             "SELECT COUNT(*) FROM detections
              WHERE status = 'potential'
+               AND room_id != 'DESK'
                AND is_removed = 0"
         )->fetchColumn();
 
@@ -45,6 +47,7 @@ if ($summary) {
         $pending = (int)$monitorPdo->query(
             "SELECT COUNT(*) FROM detections
              WHERE status = 'pending'
+               AND room_id != 'DESK'
                AND is_removed = 0"
         )->fetchColumn();
 
@@ -91,7 +94,12 @@ $offset  = (int)($_GET['offset'] ?? 0);
 $where  = ['d.is_removed = 0'];
 $params = [];
 
-if ($room_id) { $where[] = 'd.room_id = ?';  $params[] = $room_id; }
+if ($room_id) {
+    $where[] = 'd.room_id = ?';
+    $params[] = $room_id;
+} else {
+    $where[] = "d.room_id != 'DESK'";
+}
 if ($status)  { $where[] = 'd.status = ?';    $params[] = $status; }
 
 $whereSQL = implode(' AND ', $where);

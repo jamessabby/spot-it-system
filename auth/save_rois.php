@@ -42,8 +42,8 @@ try {
 
     // Insert new ones
     $insertStmt = $monitorPdo->prepare("
-        INSERT INTO registered_lab_items (room_id, item_name, roi_label, expected_count, tier, registered_by, registered_at)
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO registered_lab_items (room_id, item_name, roi_label, expected_count, tier, bounding_box, registered_by, registered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
     ");
 
     $registeredBy = $_SESSION['user_id'] ?? null;
@@ -54,12 +54,19 @@ try {
         if (!in_array($tier, ['tier1', 'tier2', 'tier3', 'tier4'], true)) {
             $tier = 'tier1';
         }
+        $bbox = json_encode([
+            'x' => (int)$r['x'],
+            'y' => (int)$r['y'],
+            'w' => (int)$r['w'],
+            'h' => (int)$r['h']
+        ]);
         $insertStmt->execute([
             $roomId,
             $label,
             $label,
             1,
             $tier,
+            $bbox,
             $registeredBy
         ]);
     }
