@@ -45,6 +45,21 @@ if (!$det) {
     ms_json(['success' => false, 'message' => 'Detection event not found.']);
 }
 
+// ── PHYSICAL CAMERA PRESENCE VALIDATION ─────────────────────────────────────────
+if ($new_status === 'recovered') {
+    $roi_state_file = __DIR__ . '/../photos/live_roi_state.json';
+    if (file_exists($roi_state_file)) {
+        $live_state = json_decode(file_get_contents($roi_state_file), true);
+        $zone = $det['object_zone'] ?? $det['object_type'] ?? '';
+        if (is_array($live_state) && isset($live_state[$zone]) && !empty($live_state[$zone]['is_missing'])) {
+            ms_json([
+                'success' => false,
+                'message' => "Cannot mark zone '{$zone}' as Recovered: Physical camera stream detects the item is still missing from the ROI box."
+            ], 400);
+        }
+    }
+}
+
 // ── [G5 FIXED] Update status AND verified_by in detections ────────────────────
 try {
     $appendNote = "\n[" . date('Y-m-d H:i:s') . "] {$actorName}: " . ($notes ?: ucwords(str_replace('_',' ',$new_status)));

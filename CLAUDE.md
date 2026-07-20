@@ -179,6 +179,9 @@ file honest" at the top).
   - **Tier 2/3/4 personal/lost items** (lecture room logic): keep template
     matching + expanding-search-zone logic, since here "where did it move to"
     is genuinely useful info for recovery, not noise.
+  - **Tier 2/3/4 personal/lost items** (backup tracking logic): keep template
+    matching logic, since here "where did it move to" is useful info for recovery.
+  - **Direct search zone matching**: The expanding search zone (`1.5x -> 2x -> full frame`) template matching was removed to keep the pipeline clean, robust, and mathematically defensible. Template matching uses the direct boundaries of the target ROI box.
   - **MobileNetV2 is a secondary validation gate only**, per the thesis's own
     literature-justified constraint: *"ML is allowed ONLY as a secondary
     validation filter (gatekeeper pattern) on top of the classical pipeline,
@@ -186,14 +189,8 @@ file honest" at the top).
     the primary detector — classical absdiff/threshold/contour still does the
     first-pass "did anything change" job; MobileNetV2 only answers "is an
     object still there" on the flagged crop. This framing is what makes the ML
-  use defensible to the panel (disambiguates repositioning from genuine
-  removal; classical pipeline alone cannot).
-- **Expanding search zone** (a panel suggestion, grounded in thesis §3.6.7):
-  when an item isn't found in the original ROI, progressively widen the
-  `cv2.matchTemplate` search area (e.g. 1.5x → 2x → full frame) instead of one
-  fixed tolerance box, and report an approximate found-location instead of a
-  binary in/out result. Useful for personal-item tracking, not required for
-  Tier 1 fixed equipment (which just needs presence, not location).
+    use defensible to the panel (disambiguates repositioning from genuine
+    removal; classical pipeline alone cannot).
 - **System scope honesty (for the defense):** the system does zone-based
   presence detection, not item identity recognition. If Monitor A is swapped
   for Monitor B in the same registered zone, the system correctly reports

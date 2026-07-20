@@ -87,6 +87,8 @@ Run each scenario ≥5 trials per the methodology, recording results as you go:
 
 Keep this short — one line per meaningful change to project direction, newest first.
 
+- **2026-07-21** — Marked all Phase 2 tasks as complete: MobileNetV2 Tier-Aware logic, Snapshot B logic, and Auto-Flood Gate protection are fully implemented and verified in the live `main.py` pipeline.
+- **2026-07-20** — Implemented Left Items (Unregistered Mode) sandbox engine and UI features. Fixed video Full Screen sizing using CSS object-fit contain. Replaced frame-based loop iteration consistency checking with real-world clock time tracking (`time.time()`) for 3.0s Yellow (potential) and 6.0s Red (confirmed_missing) escalation. Added a secondary MobileNetV2 / computer vision texture and edge density gatekeeper to reject shadow false positives. Rewrote Snapshot B triggers to fire reliably upon physical object removal or hand interaction outside the main contour loop. Added JS `resetSystemState` handler to resolve sandbox master resets.
 - **2026-07-15** — Resolved live feed flicker by implementing atomic image replacement (`save_frames_atomic` in `main.py`). Eliminated duplicate notification flood by fixing the status matching logic in `ingest_detection.php` duplicate queries and gating user notifications on `$action === 'inserted'`. Implemented dynamic Testing/Production mode toggle dropdown on the Desk Sandbox dashboard and hot-reloaded values dynamically inside `main.py`.
 - **2026-07-04** — Split roadmap and changelog into a separate `UPDATES.md` file to keep `CLAUDE.md` lightweight.
 - **2026-07-04** — Added §3c: finalized scope/behavior decisions from team discussion.

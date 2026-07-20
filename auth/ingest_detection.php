@@ -102,6 +102,49 @@ if ($action === 'snapshot_b') {
     }
 }
 
+if ($action === 'item_recovered') {
+    $room_id     = trim($_POST['room_id'] ?? 'DESK');
+    $object_zone = trim($_POST['object_zone'] ?? '');
+    
+    if ($object_zone) {
+        try {
+            $monitorPdo = getMonitorDB();
+            $stmt = $monitorPdo->prepare("
+                UPDATE detections 
+                SET status = 'recovered', updated_at = NOW() 
+                WHERE room_id = ? AND object_zone = ? AND status IN ('pending', 'potential', 'confirmed_missing')
+            ");
+            $stmt->execute([$room_id, $object_zone]);
+
+            $monitorPdo->prepare(
+                "INSERT INTO monitoring_logs (room_id, event_type, event_message, triggered_by, logged_at)
+                 VALUES (?, 'item_recovered', ?, 0, NOW())"
+            )->execute([$room_id, "Item '{$object_zone}' automatically detected as physically restored on camera feed."]);
+        } catch (Throwable $e) {
+            // Ignore DB errors
+        }
+    }
+
+    echo json_encode(['success' => true, 'message' => 'Item auto-marked as recovered']);
+    exit();
+}
+
+if ($action === 'escalate_status') {
+    $detection_id = (int)($_POST['detection_id'] ?? 0);
+    $status       = trim($_POST['status'] ?? 'confirmed_missing');
+    if ($detection_id) {
+        try {
+            $monitorPdo = getMonitorDB();
+            $stmt = $monitorPdo->prepare("UPDATE detections SET status = ?, updated_at = NOW() WHERE detection_id = ?");
+            $stmt->execute([$status, $detection_id]);
+        } catch (Throwable $e) {
+            // Ignore DB errors
+        }
+    }
+    echo json_encode(['success' => true]);
+    exit();
+}
+
 if ($action === 'mass_deviation') {
     $room_id = trim($_POST['room_id'] ?? '');
     if (!$room_id) {
@@ -229,14 +272,15 @@ $confidence_factors = json_encode([
     'computed_at' => date('Y-m-d H:i:s'),
 ]);
 
-// ── G1: Duplicate suppression ─────────────────────────────────────────────────
+// ── G1: Strict Duplicate suppression per object zone ──────────────────────────
 try {
     $monitorPdo = getMonitorDB();
-    $existing   = $monitorPdo->prepare(
-        "SELECT detection_id FROM detections
+    // Match any active detection for this zone OR any detection logged in the last 15 minutes
+    $existing = $monitorPdo->prepare(
+        "SELECT detection_id, status FROM detections
          WHERE room_id = ? AND object_zone = ?
-           AND status IN ('pending','potential','confirmed_missing')
-         ORDER BY detected_at DESC LIMIT 1"
+           AND (status IN ('pending','potential','confirmed_missing') OR detected_at >= NOW() - INTERVAL 15 MINUTE)
+         ORDER BY detection_id DESC LIMIT 1"
     );
     $existing->execute([$room_id, $object_zone]);
     $dup = $existing->fetch();
@@ -246,12 +290,18 @@ try {
     exit();
 }
 
-// ── Save snapshot ─────────────────────────────────────────────────────────────
+// ── Save snapshot using standard naming convention ───────────────────────────
 $snapshot_path = null;
 if (!empty($_FILES['snapshot']['tmp_name']) && is_uploaded_file($_FILES['snapshot']['tmp_name'])) {
-    $ext      = pathinfo($_FILES['snapshot']['name'], PATHINFO_EXTENSION) ?: 'jpg';
-    $filename = date('Ymd_His') . '_' . $room_id . '_' . uniqid() . '.' . $ext;
-    $dest     = SNAPSHOT_PATH . $filename;
+    $orig_name = basename($_FILES['snapshot']['name']);
+    // Preserve standard naming convention (e.g. mouse_registered_final.jpg)
+    if (preg_match('/^[a-zA-Z0-9_\-]+\.(jpg|jpeg|png)$/i', $orig_name)) {
+        $filename = $orig_name;
+    } else {
+        $ext      = pathinfo($_FILES['snapshot']['name'], PATHINFO_EXTENSION) ?: 'jpg';
+        $filename = date('Ymd_His') . '_' . $room_id . '_' . uniqid() . '.' . $ext;
+    }
+    $dest = SNAPSHOT_PATH . $filename;
     if (move_uploaded_file($_FILES['snapshot']['tmp_name'], $dest)) {
         $snapshot_path = $filename;
     }
@@ -259,9 +309,10 @@ if (!empty($_FILES['snapshot']['tmp_name']) && is_uploaded_file($_FILES['snapsho
 
 try {
     if ($dup) {
-        // UPDATE — refresh counts, confidence, snapshot
+        // UPDATE existing detection row (prevent duplicate notifications)
         $monitorPdo->prepare(
             "UPDATE detections SET
+               status              = 'confirmed_missing',
                live_count          = ?,
                baseline_count      = ?,
                roi_change_pct      = ?,
@@ -270,17 +321,12 @@ try {
                confidence_score    = ?,
                confidence_grade    = ?,
                confidence_factors  = ?,
-               validation_status   = CASE
-                 WHEN validation_status IN ('pending_review','needs_review') THEN ?
-                 ELSE validation_status
-               END,
                updated_at          = NOW()
              WHERE detection_id = ?"
         )->execute([
             $live_count, $baseline_count, $roi_change_pct, $match_score,
             $snapshot_path,
             $confidence_score, $confidence_grade, $confidence_factors,
-            $validation_status,   // only overwrite if still unvalidated
             $dup['detection_id'],
         ]);
         $detection_id = $dup['detection_id'];

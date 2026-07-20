@@ -4,11 +4,11 @@
  * pages/room-setup.php
  */
 require_once __DIR__ . '/../auth/service_bootstrap.php';
-$active_page = 'room_setup';
+$active_page = 'setup'; // fixed to match _sidebar.php check '$active===\'setup\''
 $user_role   = $_SESSION['user_role'] ?? 'student';
 
-// Fetch rooms dynamically
-$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY floor, room_id");
+// Fetch rooms dynamically (including DESK room for admin control)
+$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 ORDER BY floor, room_id");
 $roomsList = $roomsStmt->fetchAll();
 ?>
 <!DOCTYPE html>
@@ -66,7 +66,7 @@ $roomsList = $roomsStmt->fetchAll();
           <button class="btn btn-primary btn-sm" onclick="openModal('addRoomModal')"><i class="fa-solid fa-plus"></i> Add Room</button>
         </div>
         <table class="data-table">
-          <thead><tr><th>Room ID</th><th>Room Name</th><th>Floor</th><th>Type</th><th>Cameras</th><th>Baseline</th><th>Status</th><th>Last Calibrated</th><th></th></tr></thead>
+          <thead><tr><th>Room ID</th><th>Room Name</th><th>Floor</th><th>Type</th><th>Cameras</th><th>Baseline</th><th>Status</th><th>Last Calibrated</th><th>Actions</th></tr></thead>
           <tbody>
             <?php if (empty($roomsList)): ?>
             <tr>
@@ -86,7 +86,10 @@ $roomsList = $roomsStmt->fetchAll();
               <td style="text-align:center;font-family:var(--font-mono);"><?= (int)$r['baseline_count'] ?></td>
               <td><span class="badge <?= $status==='active'?'badge-ok':'badge-alert' ?>"><?= ucfirst($status) ?></span></td>
               <td style="font-size:.72rem;color:var(--text-dim);font-family:var(--font-mono);"><?= $cal ?></td>
-              <td><button class="btn btn-sm" onclick="showToast('info','Edit room configuration.')"><i class="fa-solid fa-pencil"></i></button></td>
+              <td>
+                <button class="btn btn-sm" onclick="showToast('info','Edit room configuration.')" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                <button class="btn btn-sm btn-alert" onclick="deleteRoom('<?= htmlspecialchars($r['room_id']) ?>')" title="Delete"><i class="fa-solid fa-trash"></i></button>
+              </td>
             </tr>
             <?php endforeach; ?>
             <?php endif; ?>
@@ -97,6 +100,43 @@ $roomsList = $roomsStmt->fetchAll();
     </div>
   </div>
 </div>
+
+<!-- ══════════ ADD ROOM MODAL ══════════ -->
+<div class="modal-overlay" id="addRoomModal" onclick="if(event.target===this)closeModal('addRoomModal')">
+  <div class="modal-box" style="max-width:500px;">
+    <div class="modal-head">
+      <div class="modal-title"><i class="fa-solid fa-plus"></i> Add New Room</div>
+      <div class="modal-close" onclick="closeModal('addRoomModal')"><i class="fa-solid fa-xmark"></i></div>
+    </div>
+    <div class="modal-body">
+      <div class="form-group mb-3">
+        <label class="form-label">Room ID / Code *</label>
+        <input type="text" class="form-control text-uppercase" id="roomAddId" placeholder="e.g. MLH306" required />
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">Room Name *</label>
+        <input type="text" class="form-control" id="roomAddName" placeholder="e.g. Systems & Application Lab" required />
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">Floor *</label>
+        <input type="text" class="form-control" id="roomAddFloor" placeholder="e.g. 3rd Floor MLH" required />
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">Room Type *</label>
+        <input type="text" class="form-control" id="roomAddType" placeholder="e.g. Computer Lab" required />
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">Camera Count *</label>
+        <input type="number" class="form-control" id="roomAddCameras" value="2" min="1" max="10" required />
+      </div>
+      <div class="modal-actions mt-4">
+        <button class="modal-btn dismiss" onclick="closeModal('addRoomModal')"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <button class="modal-btn recover" onclick="submitAddRoom()"><i class="fa-solid fa-plus"></i> Add Room</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Notification Panel -->
 <div class="notif-panel" id="notifPanel">
   <div class="notif-panel-head">
@@ -128,6 +168,70 @@ function toggleNotifPanel() {
   b.classList.toggle('open', window._notifPanelOpen);
   if (window._notifPanelOpen) loadNotifPanel();
 }
+
+async function submitAddRoom() {
+  const roomId = document.getElementById('roomAddId').value.trim();
+  const roomName = document.getElementById('roomAddName').value.trim();
+  const floor = document.getElementById('roomAddFloor').value.trim();
+  const roomType = document.getElementById('roomAddType').value.trim();
+  const cameraCount = document.getElementById('roomAddCameras').value.trim();
+
+  if (!roomId || !roomName || !floor || !roomType || !cameraCount) {
+    showToast('error', 'Please fill in all fields.');
+    return;
+  }
+
+  const btn = document.querySelector('#addRoomModal .modal-btn.recover');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Adding...';
+  }
+
+  const fd = new FormData();
+  fd.append('room_id', roomId);
+  fd.append('room_name', roomName);
+  fd.append('floor', floor);
+  fd.append('room_type', roomType);
+  fd.append('camera_count', cameraCount);
+
+  const data = await spotitFetch('../auth/add_room.php', { method: 'POST', body: fd });
+  
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-plus"></i> Add Room';
+  }
+
+  if (data && data.success) {
+    showToast('success', data.message || 'Room added successfully.');
+    closeModal('addRoomModal');
+    // Clear inputs
+    ['roomAddId', 'roomAddName', 'roomAddFloor', 'roomAddType'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('roomAddCameras').value = '2';
+    // Reload page to update list
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showToast('error', data?.message || 'Failed to add room.');
+  }
+}
+
+async function deleteRoom(roomId) {
+  if (!confirm(`Are you sure you want to delete room "${roomId}"? This will delete all its registered inspection items, logs, and detections. This action cannot be undone.`)) {
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('room_id', roomId);
+
+  const data = await spotitFetch('../auth/delete_room.php', { method: 'POST', body: fd });
+
+  if (data && data.success) {
+    showToast('success', data.message || 'Room deleted successfully.');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showToast('error', data?.message || 'Failed to delete room.');
+  }
+}
 </script>
 </body>
 </html>
+

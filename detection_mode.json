@@ -1,5 +1,7 @@
 {
-    "mode": "production",
+    "mode": "testing",
     "tracking_mode": "registered",
-    "updated_at": "2026-07-18 16:12:29"
+    "reset_paused": true,
+    "reset_timestamp": 1784535591,
+    "updated_at": "2026-07-20 18:13:02"
 }

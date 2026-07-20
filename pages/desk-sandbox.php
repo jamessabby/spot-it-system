@@ -134,14 +134,10 @@ if (file_exists($mode_file_path)) {
   <link rel="stylesheet" href="../assets/css/skeleton.css"/>
   <style>
     .sandbox-grid {
-      display: grid;
-      grid-template-columns: 1fr 340px;
+      display: flex;
+      flex-direction: column;
       gap: 18px;
       margin-top: 18px;
-      align-items: start;
-    }
-    @media (max-width: 992px) {
-      .sandbox-grid { grid-template-columns: 1fr; }
     }
     .metric-card {
       border-radius: var(--radius);
@@ -159,6 +155,61 @@ if (file_exists($mode_file_path)) {
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: .08em;
+      display: flex;
+      align-items: center;
+    }
+    .info-tooltip-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      margin-left: 5px;
+      cursor: pointer;
+    }
+    .info-tooltip-wrap i {
+      color: var(--text-dim);
+      font-size: .72rem;
+      transition: color 0.15s ease;
+    }
+    .info-tooltip-wrap:hover i {
+      color: var(--green-main);
+    }
+    .info-tooltip-box {
+      visibility: hidden;
+      width: 220px;
+      background-color: var(--text-primary);
+      color: #ffffff;
+      text-align: left;
+      border-radius: 8px;
+      padding: 8px 12px;
+      position: absolute;
+      z-index: 1000;
+      bottom: 130%;
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+      font-size: .68rem;
+      font-family: var(--font-body);
+      font-weight: 400;
+      line-height: 1.4;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+      pointer-events: none;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    .info-tooltip-box::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      margin-left: -5px;
+      border-width: 5px;
+      border-style: solid;
+      border-color: var(--text-primary) transparent transparent transparent;
+    }
+    .info-tooltip-wrap:hover .info-tooltip-box {
+      visibility: visible;
+      opacity: 1;
     }
     .metric-value {
       font-size: 2.2rem;
@@ -173,9 +224,12 @@ if (file_exists($mode_file_path)) {
     }
     .matrix-box {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
       margin-top: 14px;
+    }
+    @media (max-width: 768px) {
+      .matrix-box { grid-template-columns: 1fr 1fr; }
     }
     .matrix-cell {
       border: 1px solid var(--border);
@@ -194,7 +248,31 @@ if (file_exists($mode_file_path)) {
       font-weight: 900;
       color: var(--text-primary);
       line-height: 1;
-      margin-bottom: 2px;
+    }
+    
+    /* Full Screen Video Container Fix */
+    #camVideoBox:fullscreen, #camVideoBox:-webkit-full-screen {
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: none !important;
+      max-height: none !important;
+      border-radius: 0 !important;
+      background: #000000 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      z-index: 999999 !important;
+    }
+    #camVideoBox:fullscreen img, #camVideoBox:-webkit-full-screen img {
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      object-fit: contain !important;
+      border-radius: 0 !important;
+    }  margin-bottom: 2px;
     }
     .matrix-cell .lbl {
       font-size: .62rem;
@@ -248,60 +326,97 @@ if (file_exists($mode_file_path)) {
       <!-- Stats row -->
       <div class="stat-grid" style="grid-template-columns: repeat(4, 1fr);">
         <div class="metric-card">
-          <div class="metric-title">Accuracy Rate</div>
-          <div class="metric-value"><?= number_format($accuracy, 1) ?>%</div>
-          <div class="metric-footer">Total trials logged: <?= $totalTrials ?></div>
+          <div class="metric-title">
+            Accuracy Rate
+            <span class="info-tooltip-wrap">
+              <i class="fa-solid fa-circle-info"></i>
+              <span class="info-tooltip-box">Percentage of total correct predictions: (TP + TN) / Total Trials.</span>
+            </span>
+          </div>
+          <div class="metric-value" id="metricAccuracy"><?= number_format($accuracy, 1) ?>%</div>
+          <div class="metric-footer" id="metricTotalTrials">Total trials logged: <?= $totalTrials ?></div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">Precision</div>
-          <div class="metric-value"><?= number_format($precision, 1) ?>%</div>
+          <div class="metric-title">
+            Precision
+            <span class="info-tooltip-wrap">
+              <i class="fa-solid fa-circle-info"></i>
+              <span class="info-tooltip-box">False alarm resistance: TP / (TP + FP). Higher precision means fewer false alarms.</span>
+            </span>
+          </div>
+          <div class="metric-value" id="metricPrecision"><?= number_format($precision, 1) ?>%</div>
           <div class="metric-footer">True Pos / (True Pos + False Pos)</div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">Recall</div>
-          <div class="metric-value"><?= number_format($recall, 1) ?>%</div>
+          <div class="metric-title">
+            Recall
+            <span class="info-tooltip-wrap">
+              <i class="fa-solid fa-circle-info"></i>
+              <span class="info-tooltip-box">Detection sensitivity: TP / (TP + FN). Higher recall means fewer missed items.</span>
+            </span>
+          </div>
+          <div class="metric-value" id="metricRecall"><?= number_format($recall, 1) ?>%</div>
           <div class="metric-footer">True Pos / (True Pos + False Neg)</div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">F1-Score</div>
-          <div class="metric-value"><?= number_format($f1, 1) ?>%</div>
+          <div class="metric-title">
+            F1-Score
+            <span class="info-tooltip-wrap">
+              <i class="fa-solid fa-circle-info"></i>
+              <span class="info-tooltip-box">Harmonic mean balancing Precision &amp; Recall: 2 * (P * R) / (P + R).</span>
+            </span>
+          </div>
+          <div class="metric-value" id="metricF1"><?= number_format($f1, 1) ?>%</div>
           <div class="metric-footer">Harmonic mean of P &amp; R</div>
         </div>
       </div>
 
       <div class="sandbox-grid">
         
-        <!-- LEFT: Logs & Calibration details -->
+        <!-- Full-Width Live CCTV Feed & Calibration -->
         <div style="display:flex;flex-direction:column;gap:18px;">
           
           <!-- Live CCTV Feed -->
-          <div class="card" style="position:relative; overflow:hidden; border:1px solid var(--border); box-shadow:0 8px 30px rgba(0,0,0,0.15);">
+          <div class="card" id="videoFeedCard" style="position:relative; overflow:hidden; border:1px solid var(--border); box-shadow:0 8px 30px rgba(0,0,0,0.15);">
             <div class="card-head" style="border-bottom:1px solid var(--border); flex-wrap:wrap; row-gap:8px;">
               <div class="card-title" style="display:flex; align-items:center; gap:8px;">
                 <i class="fa-solid fa-video" style="color:var(--ok);"></i> 
                 <span>Desk Calibration Feed</span>
               </div>
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                <button class="btn btn-sm" onclick="openRoiEditor()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary);">
+                <button class="btn btn-sm" id="btnSetupRoi" onclick="openRoiEditor()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); transition: opacity 0.2s;" <?= $tracking_mode === 'unregistered' ? 'disabled style="opacity:0.4; cursor:not-allowed;" title="Disabled in Left Items mode"' : '' ?>>
                   <i class="fa-solid fa-pen-ruler"></i> Setup ROI Zones
+                </button>
+                <button class="btn btn-sm" id="btnCaptureBaseline" onclick="captureBaselineFrame()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); font-weight:600;" title="Capture clean reference image of desk">
+                  <i class="fa-solid fa-camera"></i> Capture Baseline
+                </button>
+                <button class="btn btn-sm" id="btnResetSystem" onclick="resetSystemState()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--alert-bg); border:1px solid rgba(220,53,69,0.3); color:var(--alert); font-weight:700;" title="Reset reference image, clear ROIs, and truncate all logs">
+                  <i class="fa-solid fa-rotate-left"></i> Reset System
+                </button>
+                <button class="btn btn-sm" onclick="toggleCamFullScreen()" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); font-weight:600;" title="Full Screen View">
+                  <i class="fa-solid fa-expand"></i> Full Screen
                 </button>
                 <!-- Tracking Mode Toggle -->
                 <div id="trackingModeToggle" style="display:flex; gap:4px; background:var(--bg-base); border:1px solid var(--border); border-radius:8px; padding:3px;">
                   <button id="btnModeRegistered"
                     onclick="switchTrackingMode('registered')"
-                    style="font-size:.65rem; padding:3px 10px; border-radius:6px; border:none; cursor:pointer;
-                           background:<?= $tracking_mode === 'registered' ? 'var(--primary)' : 'transparent' ?>;
-                           color:<?= $tracking_mode === 'registered' ? '#fff' : 'var(--text-dim)' ?>; font-weight:600;">
+                    style="font-size:.7rem; padding:4px 12px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $tracking_mode === 'registered' ? 'var(--green-main)' : 'transparent' ?>;
+                           color:<?= $tracking_mode === 'registered' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
                     <i class="fa-solid fa-box-archive"></i> Registered
                   </button>
                   <button id="btnModeUnregistered"
                     onclick="switchTrackingMode('unregistered')"
-                    style="font-size:.65rem; padding:3px 10px; border-radius:6px; border:none; cursor:pointer;
+                    style="font-size:.7rem; padding:4px 12px; border-radius:6px; border:none; cursor:pointer;
                            background:<?= $tracking_mode === 'unregistered' ? 'var(--warn)' : 'transparent' ?>;
-                           color:<?= $tracking_mode === 'unregistered' ? '#fff' : 'var(--text-dim)' ?>; font-weight:600;">
+                           color:<?= $tracking_mode === 'unregistered' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
                     <i class="fa-solid fa-person-walking-luggage"></i> Left Items
                   </button>
                 </div>
+                <!-- Dismiss Recalibration Alert Button -->
+                <button class="btn btn-sm" id="btnDismissAlert" onclick="dismissRecalibrationAlert('DESK')" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--alert-bg); border:1px solid rgba(220,53,69,0.3); color:var(--alert); font-weight:700;" title="Dismiss Mass Deviation / False Alarm Pause">
+                  <i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert
+                </button>
                 <select id="streamQualitySelect" onchange="toggleQuality(this.value)" class="form-control" style="font-size:.65rem; padding:2px 6px; height:auto; width:auto; border-radius:6px; background:var(--bg-base); border-color:var(--border);">
                   <option value="high">1080p Premium</option>
                   <option value="low">480p Balanced</option>
@@ -312,8 +427,8 @@ if (file_exists($mode_file_path)) {
               </div>
             </div>
             
-            <!-- Video Container -->
-            <div style="position:relative; width:100%; height:auto; max-height: 520px; aspect-ratio: 960/540; background:#050d08; display:flex; justify-content:center; align-items:center; overflow:hidden; border-radius:6px;">
+            <!-- Video Container (Balanced Compact Dimensions with Full Screen Support) -->
+            <div id="camVideoBox" style="position:relative; width:100%; max-width:760px; margin:0 auto; height:380px; aspect-ratio: 16/9; background:#050d08; display:flex; justify-content:center; align-items:center; overflow:hidden; border-radius:6px;">
               <!-- TWO ALTERNATING IMAGES FOR FLICKER-FREE DOM BUFFER SWAPPING -->
               <img id="cam1Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity 0.05s ease; border-radius:6px;" />
               <img id="cam2Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity 0.05s ease; border-radius:6px;" />
@@ -358,35 +473,37 @@ if (file_exists($mode_file_path)) {
             <div style="padding:16px;">
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px;">
                 <div style="padding:12px;background:var(--bg-base);border:1px solid var(--border);border-radius:9px;text-align:center;">
-                  <div style="font-family:var(--font-mono);font-size:1.5rem;font-weight:900;color:var(--text-primary);"><?= $deskExpectedCount ?></div>
-                  <div style="font-size:.65rem;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-top:2px;">Baseline Count</div>
+                  <div style="font-family:var(--font-mono);font-size:1.8rem;font-weight:900;color:var(--text-primary);" id="statBaseline"><?= $tracking_mode === 'unregistered' ? 'N/A' : $deskExpectedCount ?></div>
+                  <div style="font-size:.65rem;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-top:2px;" id="statBaselineLabel"><?= $tracking_mode === 'unregistered' ? 'Clean Baseline' : 'Baseline Count' ?></div>
                 </div>
                 <div style="padding:12px;background:var(--bg-base);border:1px solid var(--border);border-radius:9px;text-align:center;">
-                  <div style="font-family:var(--font-mono);font-size:1.5rem;font-weight:900;color:<?= $deskLiveCount === $deskExpectedCount ? 'var(--ok)' : 'var(--alert)' ?>;"><?= $deskLiveCount ?></div>
-                  <div style="font-size:.65rem;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-top:2px;">Live Count</div>
+                  <div style="font-family:var(--font-mono);font-size:1.8rem;font-weight:900;color:var(--ok);" id="statLiveCount"><?= $deskExpectedCount ?></div>
+                  <div style="font-size:.65rem;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-top:2px;" id="statLiveCountLabel"><?= $tracking_mode === 'unregistered' ? 'Unattended Left Items' : 'Live Count' ?></div>
                 </div>
                 <div style="padding:12px;background:var(--bg-base);border:1px solid var(--border);border-radius:9px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center;">
-                  <span class="badge badge-<?= $deskLiveCount === $deskExpectedCount ? 'ok' : 'alert' ?>" style="font-size:.7rem;padding:4px 10px;">
+                  <span class="badge badge-<?= $deskLiveCount === $deskExpectedCount ? 'ok' : 'alert' ?>" id="statStatusBadge" style="font-size:.75rem;padding:4px 12px;">
                     <span class="bdot"></span><?= $deskLiveCount === $deskExpectedCount ? 'NORMAL' : 'DEVIATION' ?>
                   </span>
                   <div style="font-size:.65rem;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-top:4px;">Status</div>
                 </div>
               </div>
               
-              <?php if ($activeDeviation): ?>
-              <div style="padding:12px 14px;background:var(--alert-bg);border:1px solid rgba(220,53,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:start;gap:9px;font-size:.8rem;color:var(--text-primary);">
-                <i class="fa-solid fa-triangle-exclamation" style="color:var(--alert);margin-top:2px;flex-shrink:0;"></i>
-                <div>
-                  <strong>Active Deviation:</strong> Zone <strong><?= htmlspecialchars($activeDeviation['object_zone']) ?></strong> flagged at <strong><?= date('M j, Y · H:i:s', strtotime($activeDeviation['detected_at'])) ?></strong>.<br/>
-                  Match Score: <code><?= htmlspecialchars($activeDeviation['match_score']) ?></code> &nbsp;·&nbsp; Change %: <code><?= htmlspecialchars($activeDeviation['roi_change_pct']) ?>%</code>.
+              <div id="activeDeviationAlert">
+                <?php if ($activeDeviation): ?>
+                <div style="padding:12px 14px;background:var(--alert-bg);border:1px solid rgba(220,53,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:start;gap:9px;font-size:.8rem;color:var(--text-primary);">
+                  <i class="fa-solid fa-triangle-exclamation" style="color:var(--alert);margin-top:2px;flex-shrink:0;"></i>
+                  <div>
+                    <strong>Active Deviation:</strong> Zone <strong><?= htmlspecialchars($activeDeviation['object_zone']) ?></strong> flagged at <strong><?= date('M j, Y · H:i:s', strtotime($activeDeviation['detected_at'])) ?></strong>.<br/>
+                    Match Score: <code><?= htmlspecialchars($activeDeviation['match_score']) ?></code> &nbsp;·&nbsp; Change %: <code><?= htmlspecialchars($activeDeviation['roi_change_pct']) ?>%</code>.
+                  </div>
                 </div>
+                <?php else: ?>
+                <div style="padding:12px 14px;background:var(--ok-bg);border:1px solid rgba(40,167,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:center;gap:9px;font-size:.8rem;color:var(--text-primary);">
+                  <i class="fa-solid fa-circle-check" style="color:var(--ok);flex-shrink:0;"></i>
+                  <span>All items present on the baseline crop. Camera reporting 100% baseline match.</span>
+                </div>
+                <?php endif; ?>
               </div>
-              <?php else: ?>
-              <div style="padding:12px 14px;background:var(--ok-bg);border:1px solid rgba(40,167,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:center;gap:9px;font-size:.8rem;color:var(--text-primary);">
-                <i class="fa-solid fa-circle-check" style="color:var(--ok);flex-shrink:0;"></i>
-                <span>All items present on the baseline crop. Camera reporting 100% baseline match.</span>
-              </div>
-              <?php endif; ?>
               
               <div style="font-size:.76rem;color:var(--text-muted);border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;align-items:center;">
                 <span>Tapo Stream static IP: <code>192.168.18.11:554</code></span>
@@ -395,125 +512,30 @@ if (file_exists($mode_file_path)) {
             </div>
           </div>
 
-          <!-- Trials log -->
+          <!-- Confusion matrix breakdown card (Moved further down below Camera & Status) -->
           <div class="card">
             <div class="card-head">
-              <div class="card-title"><i class="fa-solid fa-list-check"></i> Accuracy Logs Matrix</div>
-              <button class="btn btn-sm btn-alert" onclick="clearLogs()" style="padding:4px 8px;font-size:.68rem;">
-                <i class="fa-solid fa-trash"></i> Clear Logs
-              </button>
-            </div>
-            <div style="padding:0;">
-              <?php if (empty($trials)): ?>
-              <div style="padding:40px 20px;text-align:center;color:var(--text-dim);font-size:.8rem;">
-                <i class="fa-solid fa-flask" style="font-size:2rem;color:var(--text-dim);margin-bottom:10px;display:block;"></i>
-                No accuracy trials logged yet. Log your first calibration observation on the right panel.
-              </div>
-              <?php else: ?>
-              <table style="width:100%;border-collapse:collapse;font-size:.8rem;">
-                <thead>
-                  <tr style="border-bottom:1px solid var(--border);background:var(--bg-base);">
-                    <th style="padding:10px 14px;text-align:left;font-family:var(--font-display);font-size:.64rem;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Time</th>
-                    <th style="padding:10px 14px;text-align:left;font-family:var(--font-display);font-size:.64rem;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Expected</th>
-                    <th style="padding:10px 14px;text-align:left;font-family:var(--font-display);font-size:.64rem;font-weight:700;color:var(--text-dim);text-transform:uppercase;">System Output</th>
-                    <th style="padding:10px 14px;text-align:center;font-family:var(--font-display);font-size:.64rem;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Classification</th>
-                    <th style="padding:10px 14px;text-align:left;font-family:var(--font-display);font-size:.64rem;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($trials as $t): ?>
-                  <tr style="border-bottom:1px solid var(--border);">
-                    <td style="padding:12px 14px;font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);"><?= date('H:i:s · M j', strtotime($t['trial_timestamp'])) ?></td>
-                    <td style="padding:12px 14px;font-weight:600;color:<?= $t['expected_state']==='absent'?'var(--alert)':'var(--text-primary)' ?>;"><?= ucfirst($t['expected_state']) ?></td>
-                    <td style="padding:12px 14px;font-weight:600;color:<?= $t['detected_state']==='absent'?'var(--alert)':'var(--text-primary)' ?>;"><?= ucfirst($t['detected_state']) ?></td>
-                    <td style="padding:12px 14px;text-align:center;">
-                      <span class="badge-classification badge-<?= $t['classification'] ?>"><?= $t['classification'] ?></span>
-                    </td>
-                    <td style="padding:12px 14px;color:var(--text-muted);font-size:.74rem;"><?= htmlspecialchars($t['notes'] ?: '—') ?></td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-              <?php endif; ?>
-            </div>
-          </div>
-        </div>
-
-        <!-- RIGHT: Matrix controls & calibration tools -->
-        <div style="display:flex;flex-direction:column;gap:18px;">
-          
-          <!-- Log trial card -->
-          <div class="card">
-            <div class="card-head">
-              <div class="card-title"><i class="fa-solid fa-pen-to-square"></i> Record Observation</div>
-            </div>
-            <div style="padding:16px;">
-              <form id="trialForm" onsubmit="submitTrial(event)">
-                <div class="form-group" style="margin-bottom:14px;">
-                  <label class="form-label" style="font-weight:700;">Expected Physical State</label>
-                  <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
-                    <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-primary);cursor:pointer;">
-                      <input type="radio" name="expected" value="present" checked style="accent-color:var(--green-main);"/>
-                      Present (Item is physically on desk)
-                    </label>
-                    <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-primary);cursor:pointer;">
-                      <input type="radio" name="expected" value="absent" style="accent-color:var(--green-main);"/>
-                      Absent (Item has been removed)
-                    </label>
-                  </div>
-                </div>
-
-                <div class="form-group" style="margin-bottom:14px;">
-                  <label class="form-label" style="font-weight:700;">System Detected State</label>
-                  <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
-                    <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-primary);cursor:pointer;">
-                      <input type="radio" name="detected" value="present" <?= !$activeDeviation ? 'checked' : '' ?> style="accent-color:var(--green-main);"/>
-                      Present (No active system deviation)
-                    </label>
-                    <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-primary);cursor:pointer;">
-                      <input type="radio" name="detected" value="absent" <?= $activeDeviation ? 'checked' : '' ?> style="accent-color:var(--green-main);"/>
-                      Absent (System triggers red deviation)
-                    </label>
-                  </div>
-                </div>
-
-                <div class="form-group" style="margin-bottom:16px;">
-                  <label class="form-label">Calibration Notes / Remarks</label>
-                  <input type="text" id="trialNotes" class="form-control" placeholder="e.g. Sunny lighting, high shadow..."/>
-                </div>
-
-                <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;">
-                  <i class="fa-solid fa-floppy-disk"></i> Save &amp; Recalculate
-                </button>
-              </form>
-            </div>
-          </div>
-
-          <!-- Confusion matrix breakdown card -->
-          <div class="card">
-            <div class="card-head">
-              <div class="card-title"><i class="fa-solid fa-chart-pie"></i> Confusion Matrix (Thesis)</div>
+              <div class="card-title"><i class="fa-solid fa-chart-pie"></i> Confusion Matrix Breakdown</div>
             </div>
             <div style="padding:16px;">
               <p style="font-size:.72rem;color:var(--text-muted);line-height:1.5;margin-bottom:10px;">
-                Positive Class = Absent (Missing Event)<br/>
-                Negative Class = Present (Normal)
+                Positive Class = Absent (Missing Deviation Event) &nbsp;·&nbsp; Negative Class = Present (Normal State)
               </p>
               <div class="matrix-box">
                 <div class="matrix-cell tn">
-                  <div class="val"><?= $tn ?></div>
+                  <div class="val" id="cellTN"><?= $tn ?></div>
                   <div class="lbl">True Neg (TN)</div>
                 </div>
                 <div class="matrix-cell fp">
-                  <div class="val"><?= $fp ?></div>
+                  <div class="val" id="cellFP"><?= $fp ?></div>
                   <div class="lbl">False Pos (FP)</div>
                 </div>
                 <div class="matrix-cell fn">
-                  <div class="val"><?= $fn ?></div>
+                  <div class="val" id="cellFN"><?= $fn ?></div>
                   <div class="lbl">False Neg (FN)</div>
                 </div>
                 <div class="matrix-cell tp">
-                  <div class="val"><?= $tp ?></div>
+                  <div class="val" id="cellTP"><?= $tp ?></div>
                   <div class="lbl">True Pos (TP)</div>
                 </div>
               </div>
@@ -532,7 +554,7 @@ if (file_exists($mode_file_path)) {
             <i class="fa-solid fa-trash-can"></i> Clear Sandbox Logs
           </button>
         </div>
-        <div style="overflow-x:auto; padding: 0 12px 12px 12px;">
+        <div style="overflow-x:auto; overflow-y:auto; max-height:360px; padding: 0 12px 12px 12px;">
           <table class="data-table" style="width:100%; border-collapse: collapse; font-size: 0.78rem;">
             <thead>
               <tr style="background:var(--bg-base); border-bottom:1px solid var(--border);">
@@ -544,12 +566,13 @@ if (file_exists($mode_file_path)) {
                 <th style="padding:10px;">Duration</th>
                 <th style="padding:10px; text-align:center;">Snapshot A (Missing)</th>
                 <th style="padding:10px; text-align:center;">Snapshot B (Interaction)</th>
+                <th style="padding:10px; text-align:center;">Actions / Update Status</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="sandboxLogsTbody">
               <?php if (empty($sandboxLogs)): ?>
               <tr>
-                <td colspan="8" class="text-center py-4" style="color:var(--text-dim); padding: 20px;">No sandbox detections recorded yet.</td>
+                <td colspan="9" class="text-center py-4" style="color:var(--text-dim); padding: 20px;">No sandbox detections recorded yet.</td>
               </tr>
               <?php else: ?>
               <?php foreach ($sandboxLogs as $log): 
@@ -579,7 +602,7 @@ if (file_exists($mode_file_path)) {
                   default => 'badge-info'
                 };
               ?>
-              <tr style="border-bottom:1px solid var(--border);">
+              <tr style="border-bottom:1px solid var(--border);" id="det-row-<?= $log['detection_id'] ?>">
                 <td style="padding:10px; font-family:var(--font-mono);"><?= htmlspecialchars($log['detected_at']) ?></td>
                 <td style="padding:10px; font-weight:700;"><?= htmlspecialchars($log['room_id']) ?></td>
                 <td style="padding:10px; font-weight:600;"><?= htmlspecialchars($log['object_type']) ?></td>
@@ -603,6 +626,25 @@ if (file_exists($mode_file_path)) {
                   <?php else: ?>
                     <span style="color:var(--text-dim);">—</span>
                   <?php endif; ?>
+                </td>
+                <td style="padding:10px; text-align:center;">
+                  <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
+                    <?php if ($log['status'] !== 'recovered'): ?>
+                    <button class="btn btn-sm" onclick="changeDetectionStatus(<?= $log['detection_id'] ?>, 'recovered')" style="font-size:.65rem; padding:3px 8px; background:var(--ok-bg); color:var(--ok); border:1px solid var(--ok-border); font-weight:700;" title="Mark Recovered / Resolved">
+                      <i class="fa-solid fa-check"></i> Recovered
+                    </button>
+                    <?php endif; ?>
+                    <?php if ($log['status'] !== 'dismissed'): ?>
+                    <button class="btn btn-sm" onclick="changeDetectionStatus(<?= $log['detection_id'] ?>, 'dismissed')" style="font-size:.65rem; padding:3px 8px; background:var(--alert-bg); color:var(--alert); border:1px solid var(--alert-border); font-weight:700;" title="Dismiss False Alarm">
+                      <i class="fa-solid fa-xmark"></i> Dismiss
+                    </button>
+                    <?php endif; ?>
+                    <?php if ($log['status'] !== 'confirmed_missing'): ?>
+                    <button class="btn btn-sm" onclick="changeDetectionStatus(<?= $log['detection_id'] ?>, 'confirmed_missing')" style="font-size:.65rem; padding:3px 8px; background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn-border); font-weight:700;" title="Confirm Missing">
+                      <i class="fa-solid fa-triangle-exclamation"></i> Flag Missing
+                    </button>
+                    <?php endif; ?>
+                  </div>
                 </td>
               </tr>
               <?php endforeach; ?>
@@ -722,25 +764,108 @@ async function switchTrackingMode(mode) {
       body: new URLSearchParams({ tracking_mode: mode })
     });
     if (res && res.success) {
-      // Update button styles
+      // Update button styles with high contrast
       if (mode === 'registered') {
-        btnReg.style.background   = 'var(--primary)';
-        btnReg.style.color        = '#fff';
+        btnReg.style.background   = 'var(--green-main)';
+        btnReg.style.color        = '#ffffff';
         btnUnreg.style.background = 'transparent';
-        btnUnreg.style.color      = 'var(--text-dim)';
+        btnUnreg.style.color      = 'var(--text-primary)';
       } else {
         btnUnreg.style.background = 'var(--warn)';
-        btnUnreg.style.color      = '#fff';
+        btnUnreg.style.color      = '#ffffff';
         btnReg.style.background   = 'transparent';
-        btnReg.style.color        = 'var(--text-dim)';
+        btnReg.style.color        = 'var(--text-primary)';
       }
       const label = mode === 'registered' ? 'Registered Items' : 'Left Items / Unregistered';
-      showToast('success', `Tracking mode set to: ${label}. Restart python engine to apply.`);
+      showToast('success', `Tracking mode set to: ${label}. Config updated dynamically.`);
     } else {
       showToast('error', res ? res.message : 'Failed to set tracking mode.');
     }
   } catch (e) {
     showToast('error', 'Network error setting tracking mode.');
+  }
+}
+
+/* ══════════════════════════════════════
+   RECALIBRATION ALERT DISMISSAL
+══════════════════════════════════════ */
+async function dismissRecalibrationAlert(roomId = 'DESK') {
+  if (!confirm('Dismiss mass deviation / recalibration alert and unpause live monitoring?')) return;
+  
+  const btn = document.getElementById('btnDismissAlert');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Unpausing...';
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append('room_id', roomId);
+    const res = await spotitFetch('../auth/reset_recalibration.php', { method: 'POST', body: fd });
+    
+    if (res && res.success) {
+      showToast('success', res.message || 'Recalibration alert dismissed! Live monitoring unpaused.');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      showToast('error', res?.message || 'Failed to dismiss recalibration alert.');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert';
+      }
+    }
+  } catch (e) {
+    showToast('error', 'Network error resetting recalibration state.');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert';
+    }
+  }
+}
+
+/* ══════════════════════════════════════
+   FULL SCREEN TOGGLE
+══════════════════════════════════════ */
+function toggleCamFullScreen() {
+  const container = document.getElementById('videoFeedCard');
+  if (!container) return;
+  if (!document.fullscreenElement) {
+    if (container.requestFullscreen) container.requestFullscreen();
+    else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+  }
+}
+
+/* ══════════════════════════════════════
+   MASTER SYSTEM STATE RESET
+══════════════════════════════════════ */
+async function resetSystemState() {
+  if (!confirm('Are you sure you want to RESET the system state?\n\nThis will clear:\n- Reference baseline image (photos/ref_image.jpg)\n- All bounded ROI zones (rois.json)\n- All snapshot image files (uploads/snapshots/)\n- All sandbox detection logs & trial metrics')) return;
+
+  const btn = document.getElementById('btnResetSystem');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';
+  }
+
+  try {
+    const res = await spotitFetch('../auth/reset_system_state.php', { method: 'POST' });
+    if (res && res.success) {
+      showToast('success', res.message || 'System state reset successfully!');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      showToast('error', res?.message || 'Failed to reset system state.');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset System';
+      }
+    }
+  } catch (e) {
+    showToast('error', 'Network error during reset.');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset System';
+    }
   }
 }
 
@@ -1089,8 +1214,269 @@ async function truncateSandboxDetections() {
   }
 }
 
+async function resetSystemState() {
+  if (!confirm("Are you sure you want to RESET the system? This will clear the reference image, bounded ROIs, snapshot images, and database detection logs.")) return;
+  try {
+    const res = await spotitFetch('../auth/reset_system_state.php', { method: 'POST' });
+    if (res && res.success) {
+      showToast('success', 'System reset completed successfully!');
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast('error', res?.message || 'Failed to reset system state.');
+    }
+  } catch (err) {
+    showToast('error', 'Network error resetting system state.');
+  }
+}
+
+function toggleCamFullScreen() {
+  const box = document.getElementById('camVideoBox');
+  if (!box) return;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (box.requestFullscreen) box.requestFullscreen();
+    else if (box.webkitRequestFullscreen) box.webkitRequestFullscreen();
+    else if (box.msRequestFullscreen) box.msRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+
+async function switchTrackingMode(newMode) {
+  try {
+    const fd = new FormData();
+    fd.append('mode', 'testing');
+    fd.append('tracking_mode', newMode);
+    
+    const res = await spotitFetch('../auth/toggle_detection_mode.php', {
+      method: 'POST',
+      body: fd
+    });
+    
+    if (res && res.success) {
+      showToast('success', `Tracking mode updated to: ${newMode.toUpperCase()}`);
+      
+      const btnSetup = document.getElementById('btnSetupRoi');
+      if (btnSetup) {
+        if (newMode === 'unregistered') {
+          btnSetup.disabled = true;
+          btnSetup.style.opacity = '0.4';
+          btnSetup.style.cursor = 'not-allowed';
+          btnSetup.title = 'Disabled in Left Items mode';
+        } else {
+          btnSetup.disabled = false;
+          btnSetup.style.opacity = '1';
+          btnSetup.style.cursor = 'pointer';
+          btnSetup.title = '';
+        }
+      }
+      
+      setTimeout(() => location.reload(), 600);
+    } else {
+      showToast('error', res?.message || 'Failed to toggle mode.');
+    }
+  } catch (err) {
+    showToast('error', 'Network error changing mode.');
+  }
+}
+
+async function relabelItem(detectionId, currentLabel) {
+  const newName = prompt(`Configure item details / Rename label for Detection #${detectionId}:`, currentLabel);
+  if (!newName || newName.trim() === '' || newName.trim() === currentLabel) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('detection_id', detectionId);
+    fd.append('new_name', newName.trim());
+
+    const res = await spotitFetch('../auth/relabel_detection.php', {
+      method: 'POST',
+      body: fd
+    });
+
+    if (res && res.success) {
+      showToast('success', `Item relabeled to: '${newName.trim()}'`);
+      pollDeskLiveStatus();
+    } else {
+      showToast('error', res?.message || 'Failed to relabel item.');
+    }
+  } catch (e) {
+    showToast('error', 'Network error relabeling item.');
+  }
+}
+
+async function changeDetectionStatus(detectionId, newStatus) {
+  try {
+    const fd = new FormData();
+    fd.append('detection_id', detectionId);
+    fd.append('status', newStatus);
+    fd.append('notes', `Status set to ${newStatus} from Sandbox Log`);
+
+    const res = await spotitFetch('../auth/update_event_status.php', {
+      method: 'POST',
+      body: fd
+    });
+
+    if (res && res.success) {
+      showToast('success', `Status updated to: ${newStatus.replace('_', ' ')}`);
+      pollDeskLiveStatus();
+    } else {
+      showToast('error', res?.message || 'Failed to update status.');
+    }
+  } catch (e) {
+    showToast('error', 'Network error updating status.');
+  }
+}
+
+async function pollDeskLiveStatus() {
+  try {
+    const res = await spotitFetch('../auth/get_desk_status.php');
+    if (!res || !res.success) return;
+
+    const baseEl = document.getElementById('statBaseline');
+    const liveEl = document.getElementById('statLiveCount');
+    const badgeEl = document.getElementById('statStatusBadge');
+    const alertBox = document.getElementById('activeDeviationAlert');
+    const tbody = document.getElementById('sandboxLogsTbody');
+
+    // Top Classification Report Metrics
+    const accEl = document.getElementById('metricAccuracy');
+    const precEl = document.getElementById('metricPrecision');
+    const recEl = document.getElementById('metricRecall');
+    const f1El = document.getElementById('metricF1');
+    const totalTrialsEl = document.getElementById('metricTotalTrials');
+
+    if (accEl && res.accuracy !== undefined) accEl.innerText = `${parseFloat(res.accuracy).toFixed(1)}%`;
+    if (precEl && res.precision !== undefined) precEl.innerText = `${parseFloat(res.precision).toFixed(1)}%`;
+    if (recEl && res.recall !== undefined) recEl.innerText = `${parseFloat(res.recall).toFixed(1)}%`;
+    if (f1El && res.f1 !== undefined) f1El.innerText = `${parseFloat(res.f1).toFixed(1)}%`;
+    if (totalTrialsEl && res.total_trials !== undefined) totalTrialsEl.innerText = `Total trials logged: ${res.total_trials}`;
+
+    // Confusion Matrix Breakdown Cells
+    const tnEl = document.getElementById('cellTN');
+    const fpEl = document.getElementById('cellFP');
+    const fnEl = document.getElementById('cellFN');
+    const tpEl = document.getElementById('cellTP');
+
+    if (tnEl && res.tn !== undefined) tnEl.innerText = res.tn;
+    if (fpEl && res.fp !== undefined) fpEl.innerText = res.fp;
+    if (fnEl && res.fn !== undefined) fnEl.innerText = res.fn;
+    if (tpEl && res.tp !== undefined) tpEl.innerText = res.tp;
+
+    const baseLabel = document.getElementById('statBaselineLabel');
+    const liveLabel = document.getElementById('statLiveCountLabel');
+
+    if (res.tracking_mode === 'unregistered') {
+      if (baseLabel) baseLabel.innerText = 'Clean Baseline';
+      if (liveLabel) liveLabel.innerText = 'Unattended Left Items';
+      if (baseEl) baseEl.innerText = 'N/A';
+    } else {
+      if (baseLabel) baseLabel.innerText = 'Baseline Count';
+      if (liveLabel) liveLabel.innerText = 'Live Count';
+      if (baseEl) baseEl.innerText = res.baseline_count;
+    }
+
+    if (liveEl) {
+      liveEl.innerText = res.live_count;
+      liveEl.style.color = (res.status === 'NORMAL') ? 'var(--ok)' : 'var(--alert)';
+    }
+    if (badgeEl) {
+      if (res.status === 'NORMAL') {
+        badgeEl.className = 'badge badge-ok';
+        badgeEl.innerHTML = '<span class="bdot"></span>NORMAL';
+      } else {
+        badgeEl.className = 'badge badge-alert';
+        const stText = res.tracking_mode === 'unregistered' ? 'UNATTENDED DEVIATION' : 'DEVIATION';
+        badgeEl.innerHTML = `<span class="bdot"></span>${stText}`;
+      }
+    }
+
+    if (alertBox) {
+      if (res.active_deviation) {
+        const d = res.active_deviation;
+        alertBox.innerHTML = `
+          <div style="padding:12px 14px;background:var(--alert-bg);border:1px solid rgba(220,53,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:start;gap:9px;font-size:.8rem;color:var(--text-primary);">
+            <i class="fa-solid fa-triangle-exclamation" style="color:var(--alert);margin-top:2px;flex-shrink:0;"></i>
+            <div>
+              <strong>Active Deviation:</strong> Zone <strong>${escapeHtml(d.object_zone)}</strong> flagged at <strong>${escapeHtml(d.detected_at)}</strong>.<br/>
+              Match Score: <code>${escapeHtml(d.match_score || '—')}</code> &nbsp;·&nbsp; Change %: <code>${escapeHtml(d.roi_change_pct || '0')}%</code>.
+            </div>
+          </div>`;
+      } else {
+        alertBox.innerHTML = `
+          <div style="padding:12px 14px;background:var(--ok-bg);border:1px solid rgba(40,167,69,.15);border-radius:9px;margin-bottom:14px;display:flex;align-items:center;gap:9px;font-size:.8rem;color:var(--text-primary);">
+            <i class="fa-solid fa-circle-check" style="color:var(--ok);flex-shrink:0;"></i>
+            <span>All items present on the baseline crop. Camera reporting 100% baseline match.</span>
+          </div>`;
+      }
+    }
+
+    if (tbody && Array.isArray(res.logs)) {
+      if (res.logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4" style="color:var(--text-dim); padding: 20px;">No sandbox detections recorded yet.</td></tr>';
+      } else {
+        tbody.innerHTML = res.logs.map(log => {
+          let badgeCls = 'badge-info';
+          if (log.status === 'confirmed_missing') badgeCls = 'badge-alert';
+          else if (log.status === 'potential') badgeCls = 'badge-warn';
+          else if (log.status === 'recovered') badgeCls = 'badge-ok';
+          else if (log.status === 'dismissed') badgeCls = 'badge-dim';
+
+          let dur = '—';
+          if (log.duration_seconds) {
+            const sec = parseInt(log.duration_seconds);
+            if (log.status === 'dismissed' || log.status === 'recovered') {
+              dur = sec < 60 ? `${sec}s` : `${Math.floor(sec/60)}m ${sec%60}s`;
+            } else {
+              dur = sec < 60 ? `${sec}s (Ongoing)` : `${Math.floor(sec/60)}m (Ongoing)`;
+            }
+          }
+
+          const imgA = log.snapshot_path ? `<a href="../uploads/snapshots/${log.snapshot_path}" target="_blank"><img src="../uploads/snapshots/${log.snapshot_path}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
+          const imgB = log.snapshot_path_b ? `<a href="../uploads/snapshots/${log.snapshot_path_b}" target="_blank"><img src="../uploads/snapshots/${log.snapshot_path_b}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
+
+          const isRec = log.status === 'recovered';
+          const isDis = log.status === 'dismissed';
+          const isMis = log.status === 'confirmed_missing' || log.status === 'pending' || log.status === 'potential';
+
+          const btnRec = `<button class="btn btn-sm" onclick="changeDetectionStatus(${log.detection_id}, 'recovered')" style="font-size:.65rem; padding:3px 8px; background:${isRec ? 'var(--ok)' : 'var(--ok-bg)'}; color:${isRec ? '#fff' : 'var(--ok)'}; border:1px solid var(--ok-border); font-weight:700;" title="Verify item is physically restored"><i class="fa-solid fa-check"></i> ${isRec ? 'Recovered ✓' : 'Recovered'}</button>`;
+          const btnDis = `<button class="btn btn-sm" onclick="changeDetectionStatus(${log.detection_id}, 'dismissed')" style="font-size:.65rem; padding:3px 8px; background:${isDis ? 'var(--alert)' : 'var(--alert-bg)'}; color:${isDis ? '#fff' : 'var(--alert)'}; border:1px solid var(--alert-border); font-weight:700;" title="Dismiss false alarm"><i class="fa-solid fa-xmark"></i> ${isDis ? 'Dismissed ✓' : 'Dismiss'}</button>`;
+          const btnMis = `<button class="btn btn-sm" onclick="changeDetectionStatus(${log.detection_id}, 'confirmed_missing')" style="font-size:.65rem; padding:3px 8px; background:${isMis ? 'var(--warn)' : 'var(--warn-bg)'}; color:${isMis ? '#fff' : 'var(--warn)'}; border:1px solid var(--warn-border); font-weight:700;" title="Confirm item is missing"><i class="fa-solid fa-triangle-exclamation"></i> ${isMis ? 'Missing ✓' : 'Flag Missing'}</button>`;
+          const btnRen = `<button class="btn btn-sm" onclick="relabelItem(${log.detection_id}, '${escapeHtml(log.object_zone)}')" style="font-size:.65rem; padding:3px 8px; background:var(--bg-base); color:var(--text-primary); border:1px solid var(--border); font-weight:700;" title="Configure item details / rename label"><i class="fa-solid fa-pen"></i> Rename</button>`;
+
+          return `
+            <tr style="border-bottom:1px solid var(--border);" id="det-row-${log.detection_id}">
+              <td style="padding:10px; font-family:var(--font-mono);">${escapeHtml(log.detected_at)}</td>
+              <td style="padding:10px; font-weight:700;">${escapeHtml(log.room_id)}</td>
+              <td style="padding:10px; font-weight:600;">${escapeHtml(log.object_type)}</td>
+              <td style="padding:10px; color:var(--text-dim);">${escapeHtml(log.object_zone)}</td>
+              <td style="padding:10px;"><span class="badge ${badgeCls}">${escapeHtml(log.status.replace('_', ' '))}</span></td>
+              <td style="padding:10px; font-family:var(--font-mono);">${dur}</td>
+              <td style="padding:10px; text-align:center;">${imgA}</td>
+              <td style="padding:10px; text-align:center;">${imgB}</td>
+              <td style="padding:10px; text-align:center;">
+                <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
+                  ${btnRec} ${btnDis} ${btnMis} ${btnRen}
+                </div>
+              </td>
+            </tr>`;
+        }).join('');
+      }
+    }
+  } catch (e) {
+    // Silent polling error handling
+  }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initCamera();
+  pollDeskLiveStatus();
+  setInterval(pollDeskLiveStatus, 2500);
 });
 </script>
 </body>

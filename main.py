@@ -22,7 +22,7 @@ SCENE_MOTION_LIMIT         = 0.40        # % of frame stable (was 0.15)
 CONSISTENCY_FRAMES         = 5           # consecutive frames to confirm (was 3)
 RTSP_URL                   = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
 ROTATE_CAMERA              = False       # Set to True for portrait iPhone, False for Tapo CCTV
-MATCH_SCORE_THRESHOLD      = 0.78        # threshold score for template matching (raised from 0.55 for accuracy)
+MATCH_SCORE_THRESHOLD      = 0.55        # threshold score for template matching (calibrated for RTSP stream)
 
 # ── ROOM / API CONFIG ───────────────────────────────────────────────────────
 ROOM_ID           = 'DESK'              # changed to DESK for personal desk testing
@@ -264,12 +264,13 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
             'mini_fan': ['fan', 'blower', 'ventilator'],
             'headphones': ['headphones', 'earphone', 'headset'],
             'tumbler': ['tumbler', 'cup', 'mug', 'bottle', 'water bottle'],
-            'box': ['box', 'carton', 'crate', 'package'],
-            'mouse': ['mouse', 'computer mouse'],
-            'keyboard': ['keyboard', 'computer keyboard'],
+            'box': ['box', 'carton', 'crate', 'package', 'container', 'chest', 'cube', 'block'],
+            'mouse': ['mouse', 'computer mouse', 'pointing device', 'trackball'],
+            'keyboard': ['keyboard', 'computer keyboard', 'typewriter keyboard', 'keypad'],
             'monitor': ['monitor', 'screen', 'television', 'computer monitor', 'display'],
             'pc': ['desktop computer', 'computer', 'screen', 'monitor'],
             'computer': ['desktop computer', 'computer', 'screen', 'monitor'],
+            'watch': ['watch', 'stopwatch', 'digital watch', 'wrist watch', 'wristwatch', 'clock', 'timepiece'],
         }
 
         search_terms = [target]
@@ -407,13 +408,20 @@ consistency_count = {roi['label']: 0 for roi in roi_list}
 active_events     = {roi['label']: False for roi in roi_list}
 
 # Phase 2 Upgrades State
-active_detection_ids = {roi['label']: None for roi in roi_list}
-snapshot_b_triggered = {roi['label']: False for roi in roi_list}
-prev_roi_gray        = {roi['label']: None for roi in roi_list}
-shifted_locations    = {roi['label']: None for roi in roi_list}
-missing_timestamps   = {}
-registered_seq_count = {roi['label']: 0 for roi in roi_list}  # sequential frame counter per Tier 1 item
-monitoring_paused    = False
+active_detection_ids   = {roi['label']: None for roi in roi_list}
+snapshot_b_triggered   = {roi['label']: False for roi in roi_list}
+clean_snapshot_saved   = {roi['label']: False for roi in roi_list}
+seq_completed          = {roi['label']: False for roi in roi_list}
+last_seq_snapshot_time = {roi['label']: 0 for roi in roi_list}
+ok_consistency_count   = {roi['label']: 0 for roi in roi_list}
+prev_roi_gray          = {roi['label']: None for roi in roi_list}
+shifted_locations      = {roi['label']: None for roi in roi_list}
+missing_timestamps     = {}
+registered_seq_count   = {roi['label']: 0 for roi in roi_list}  # unlimited progression frame counter per Tier 1 item
+unreg_first_seen       = {}
+stage2_triggered        = {}
+item_occupied_crops     = {}
+monitoring_paused      = False
 
 last_rois_mtime    = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
 last_ref_mtime     = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
@@ -422,6 +430,27 @@ IS_PRODUCTION_MODE   = False   # updated dynamically from detection_mode.json
 SANDBOX_TRACKING_MODE = 'registered'  # 'registered' | 'unregistered' — updated dynamically
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
+def validate_presence_dnn(crop, label="object"):
+    """
+    Secondary ML / Computer Vision Gatekeeper Filter.
+    Analyzes texture variance and edge density to reject shadows and lighting noise.
+    """
+    if crop is None or crop.shape[0] < 30 or crop.shape[1] < 30:
+        return False, 0.0
+    try:
+        gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        laplacian_var = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
+        edges = cv2.Canny(gray_crop, 40, 120)
+        total_px = float(crop.shape[0] * crop.shape[1])
+        edge_density = cv2.countNonZero(edges) / total_px
+        
+        # Physical objects (boxes, phones, bags) have crisp edges (> 0.03) and texture variance (> 85.0)
+        is_real_object = (laplacian_var >= 85.0) and (edge_density >= 0.03)
+        confidence = min(1.0, (laplacian_var / 250.0) * (edge_density / 0.08))
+        return is_real_object, confidence
+    except Exception:
+        return True, 0.5
+
 def is_scene_stable(frame_blur):
     full_diff   = cv2.absdiff(ref_blur, frame_blur)
     _, full_thr = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)
@@ -615,6 +644,23 @@ def post_mass_deviation():
     except requests.exceptions.RequestException as e:
         print(f"  → Mass Deviation API CONNECTION FAILED: {e}")
 
+def post_item_recovered(label):
+    """
+    POST item_recovered event to auto-resolve detection when item physically returns to ROI.
+    """
+    payload = {
+        'api_key':     API_KEY,
+        'action':      'item_recovered',
+        'room_id':     ROOM_ID,
+        'object_zone': label,
+    }
+    try:
+        response = requests.post(API_URL, data=payload, timeout=5)
+        if response.status_code == 200 and response.json().get('success'):
+            print(f"  → Item Recovered API SUCCESS for '{label}'")
+    except Exception as e:
+        pass
+
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 while True:
     # ── CHECK FOR CONFIG RECALIBRATION CHANGES ────────────────────────────
@@ -634,6 +680,20 @@ while True:
                 mode = mode_data.get('mode', 'testing')
                 IS_PRODUCTION_MODE = (mode == 'production')
                 SANDBOX_TRACKING_MODE = mode_data.get('tracking_mode', 'registered')
+
+                # Unpause monitoring if reset signal is set
+                if mode_data.get('reset_paused', False):
+                    print("[SPOT-IT] Recalibration reset signal received! Unpausing live monitoring...")
+                    monitoring_paused = False
+                    missing_timestamps.clear()
+                    for r in roi_list:
+                        lbl = r['label']
+                        consistency_count[lbl] = 0
+                        active_events[lbl] = False
+                        shifted_locations[lbl] = None
+                        snapshot_b_triggered[lbl] = False
+                        active_detection_ids[lbl] = None
+
                 if IS_PRODUCTION_MODE:
                     print("[SPOT-IT] Production Mode active — flood gate at >50% items missing | Both tiers active")
                 else:
@@ -645,6 +705,8 @@ while True:
     if current_rois_mtime > last_rois_mtime or current_ref_mtime > last_ref_mtime:
         print("[SPOT-IT] Config or reference frame change detected! Reloading parameters dynamically...")
         time.sleep(1.0) # Wait a second for any write operations to fully finish
+        monitoring_paused = False
+        missing_timestamps.clear()
         
         try:
             # 1. Reload ROIs
@@ -659,27 +721,29 @@ while True:
                 ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
                 ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
                 TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
-                
-                # Re-initialize state dictionaries for the new list
-                for roi in roi_list:
-                    lbl = roi['label']
-                    if lbl not in consistency_count: consistency_count[lbl] = 0
-                    if lbl not in active_events: active_events[lbl] = False
-                    if lbl not in active_detection_ids: active_detection_ids[lbl] = None
-                    if lbl not in snapshot_b_triggered: snapshot_b_triggered[lbl] = False
-                    if lbl not in prev_roi_gray: prev_roi_gray[lbl] = None
-                    if lbl not in shifted_locations: shifted_locations[lbl] = None
-                
-                BASELINE_COUNT = len(roi_list)
-                last_rois_mtime = current_rois_mtime
-                last_ref_mtime  = current_ref_mtime
-                # Reinitialize all per-label state for new/changed ROI set
-                for roi in roi_list:
-                    lbl = roi['label']
-                    if lbl not in registered_seq_count: registered_seq_count[lbl] = 0
-                print(f"[SPOT-IT] Successfully reloaded {len(roi_list)} ROIs dynamically!")
             else:
-                print("[SPOT-IT][WARN] Failed to read new reference image. Postponing reload.")
+                print("[SPOT-IT] Reference image cleared or deleted — resetting active ROIs to empty.")
+                roi_list = []
+                ref_bgr = None
+                
+            # Re-initialize state dictionaries for the new list
+            for roi in roi_list:
+                lbl = roi['label']
+                if lbl not in consistency_count: consistency_count[lbl] = 0
+                if lbl not in active_events: active_events[lbl] = False
+                if lbl not in active_detection_ids: active_detection_ids[lbl] = None
+                if lbl not in snapshot_b_triggered: snapshot_b_triggered[lbl] = False
+                if lbl not in prev_roi_gray: prev_roi_gray[lbl] = None
+                if lbl not in shifted_locations: shifted_locations[lbl] = None
+            
+            BASELINE_COUNT = len(roi_list)
+            last_rois_mtime = current_rois_mtime
+            last_ref_mtime  = current_ref_mtime
+            # Reinitialize all per-label state for new/changed ROI set
+            for roi in roi_list:
+                lbl = roi['label']
+                if lbl not in registered_seq_count: registered_seq_count[lbl] = 0
+            print(f"[SPOT-IT] Dynamic reload state updated! Active ROIs: {len(roi_list)}")
         except Exception as reload_err:
             print(f"[SPOT-IT][ERROR] Failed to reload config: {reload_err}")
 
@@ -695,6 +759,17 @@ while True:
     if ROTATE_CAMERA:
         frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
     frame = rescaleFrame(frame)
+
+    # ── AUTO-INITIALIZE REFERENCE FRAME IF MISSING / CLEARED ──────────────
+    if ref_bgr is None:
+        print("[SPOT-IT] Capturing new baseline reference image from live stream...")
+        ref_bgr = frame.copy()
+        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
+        TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
+        os.makedirs(os.path.dirname(REF_IMAGE), exist_ok=True)
+        cv2.imwrite(REF_IMAGE, ref_bgr)
+        last_ref_mtime = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else time.time()
 
     # ── RESIZE REFERENCE FRAME IF SIZES MISMATCH ──────────────────────────
     if frame.shape[:2] != ref_bgr.shape[:2]:
@@ -760,7 +835,132 @@ while True:
             time.sleep(0.03)
         continue
 
-    # ── GATE 2 + 3: ROI CHANGE + FRAME CONSISTENCY ───────────────────────
+    output = frame.copy()
+
+    # ── UNREGISTERED / LEFT ITEMS MODE (Foreground Contour Tracking + ML Gate) ────────
+    if SANDBOX_TRACKING_MODE == 'unregistered':
+        diff_unreg = cv2.absdiff(ref_blur, blur)
+        _, thresh_unreg = cv2.threshold(diff_unreg, 35, 255, cv2.THRESH_BINARY)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        thresh_unreg = cv2.morphologyEx(thresh_unreg, cv2.MORPH_OPEN, kernel)
+        thresh_unreg = cv2.morphologyEx(thresh_unreg, cv2.MORPH_DILATE, kernel)
+
+        contours, _ = cv2.findContours(thresh_unreg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        unreg_count = 0
+        live_left_state = {}
+        now_ts = time.time()
+        current_seen_labels = set()
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area >= 4500: # Filter out small shadow noise (~65x65 px)
+                x, y, w, h = cv2.boundingRect(cnt)
+
+                # Exclude camera edge border reflections
+                if y + h > TARGET_SIZE[1] - 15 or y < 10 or x < 10 or x + w > TARGET_SIZE[0] - 10:
+                    continue
+
+                # Secondary ML Gatekeeper: Objectness & Texture Filter
+                crop = frame[y:y+h, x:x+w]
+                is_real_obj, conf = validate_presence_dnn(crop)
+                if not is_real_obj:
+                    # Flat shadow / lighting noise -> REJECTED by ML gatekeeper!
+                    continue
+
+                unreg_count += 1
+                label = f"object{unreg_count}"
+                current_seen_labels.add(label)
+
+                if label not in unreg_first_seen:
+                    unreg_first_seen[label] = now_ts
+                    active_events[label] = False
+                    stage2_triggered[label] = False
+                    snapshot_b_triggered[label] = False
+
+                elapsed = now_ts - unreg_first_seen[label]
+
+                # Determine Stage Color & Label based on Real Clock Time (time.time())
+                if elapsed >= 6.0:
+                    box_color = (0, 0, 255) # RED
+                    label_text = f"CONFIRMED LOST: {label} ({elapsed:.1f}s)"
+                elif elapsed >= 3.0:
+                    box_color = (0, 215, 255) # YELLOW
+                    label_text = f"UNATTENDED: {label} ({elapsed:.1f}s)"
+                else:
+                    box_color = (255, 255, 0) # CYAN
+                    label_text = f"CHECKING: {label} ({elapsed:.1f}s)"
+
+                # DRAW SQUARE BOUNDING BOX & LABEL
+                cv2.rectangle(output, (x, y), (x+w, y+h), box_color, 2)
+                cv2.putText(output, label_text, (x, y - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, box_color, 2)
+
+                live_left_state[label] = {'is_missing': False, 'tier': 'tier2'}
+
+                # STAGE 1 (Yellow at exactly 3.0 seconds): Log as potential unattended item
+                if elapsed >= 3.0 and not active_events[label]:
+                    active_events[label] = True
+                    snapshot_path = save_snapshot(frame, label, "snapshot_A")
+                    print(f"\n[STAGE 1 (YELLOW 3.0s): UNATTENDED ITEM DETECTED: {label}]")
+                    det_id = post_to_api(label, snapshot_path, float(area) / (TARGET_SIZE[0] * TARGET_SIZE[1]))
+                    active_detection_ids[label] = det_id
+                    try:
+                        item_occupied_crops[label] = cv2.cvtColor(crop.copy(), cv2.COLOR_BGR2GRAY)
+                    except Exception:
+                        pass
+
+                # STAGE 2 (Red at exactly 6.0 seconds): Escalate status to confirmed_missing
+                if elapsed >= 6.0 and active_events[label] and not stage2_triggered.get(label, False):
+                    stage2_triggered[label] = True
+                    print(f"[STAGE 2 (RED 6.0s): CONFIRMED LOST ESCALATION: {label}]")
+                    if active_detection_ids.get(label):
+                        try:
+                            requests.post(API_URL, data={
+                                'api_key': API_KEY,
+                                'action': 'escalate_status',
+                                'detection_id': active_detection_ids[label],
+                                'status': 'confirmed_missing'
+                            }, timeout=3)
+                        except Exception:
+                            pass
+
+        # ── SNAPSHOT B TRIGGER (Item Removal / Hand Interaction Evidence) ────
+        # Checks all active logged left items OUTSIDE the contour loop.
+        # Fires Snapshot B instantly IF:
+        #  1) The item is REMOVED / TAKEN off the desk (contour disappears), OR
+        #  2) Hand motion occurs over the item's occupied position
+        for lbl, was_active in list(active_events.items()):
+            if was_active and not snapshot_b_triggered.get(lbl, False):
+                det_id = active_detection_ids.get(lbl)
+                is_taken = (lbl not in current_seen_labels)
+                
+                if is_taken:
+                    snapshot_b_triggered[lbl] = True
+                    snapshot_b_path = save_snapshot(frame, lbl, "snapshot_B")
+                    print(f"\n[SNAPSHOT B TRIGGERED: Item '{lbl}' TAKEN / REMOVED from desk!]")
+                    print(f"  Evidence Snapshot B: {snapshot_b_path}")
+                    if det_id:
+                        post_snapshot_b(lbl, det_id, snapshot_b_path)
+
+        # Write real-time physical state for PHP polling
+        try:
+            with open('photos/live_roi_state.json', 'w') as sf:
+                json.dump(live_left_state, sf)
+        except Exception:
+            pass
+
+        save_frames_atomic(output, frame)
+
+        if SHOW_GUI:
+            cv2.imshow("S.P.O.T.-IT Live Detection", output)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        else:
+            time.sleep(0.03)
+        continue
+
+    # ── GATE 2 + 3: REGISTERED ROI CHANGE + FRAME CONSISTENCY ───────────────
     missing_count = 0
 
     for roi in roi_list:
@@ -784,68 +984,75 @@ while True:
         is_actually_missing = changed
         if changed:
             if tier == 1:
-                # Fixed Asset -> MobileNetV2 Secondary Presence Validation Gate
-                live_crop = frame[y:y+h, x:x+w]
-                is_present_dnn, dnn_conf = validate_presence_dnn(live_crop, label)
-                
-                if is_present_dnn:
-                    # Still present in zone (nudged or shadowed) -> suppress alert
-                    is_actually_missing = False
-                else:
-                    # DNN returned Absent. Since general-purpose DNNs can fail on custom objects (like boxes),
-                    # we use template matching *locally* inside the ROI as a fallback to prevent false positives.
-                    ref_crop = ref_bgr[y:y+h, x:x+w]
-                    h_f, w_f = frame.shape[:2]
-                    cx, cy = x + w // 2, y + h // 2
-                    sw = int(w * 1.5)
-                    sh = int(h * 1.5)
-                    sx = max(0, cx - sw // 2)
-                    sy = max(0, cy - sh // 2)
-                    if sx + sw > w_f: sw = w_f - sx
-                    if sy + sh > h_f: sh = h_f - sy
-                    
-                    if sw >= w and sh >= h:
-                        search_area = frame[sy:sy+sh, sx:sx+sw]
-                        res = cv2.matchTemplate(search_area, ref_crop, cv2.TM_CCOEFF_NORMED)
-                        _, max_val, _, _ = cv2.minMaxLoc(res)
-                        if max_val >= MATCH_SCORE_THRESHOLD:
-                            # It is still physically there, DNN was just not confident
-                            is_actually_missing = False
-            else:
+                # Registered Asset -> Direct Presence Validation Gate (Template Match + MobileNetV2)
                 ref_crop = ref_bgr[y:y+h, x:x+w]
-                found_match, fx, fy, f_score = find_item_template_match(frame, ref_crop, roi)
-                
-                if found_match:
-                    # Shifted but still in room/zone -> suppress alert, track location
-                    print(f"[DEBUG] Tier 2 match found for '{label}' with score {f_score:.2f} >= {MATCH_SCORE_THRESHOLD}. Suppressing alert.")
+                live_crop = frame[y:y+h, x:x+w]
+                is_present_template = False
+                max_score = 0.0
+                if live_crop.shape[0] >= h and live_crop.shape[1] >= w:
+                    res = cv2.matchTemplate(live_crop, ref_crop, cv2.TM_CCOEFF_NORMED)
+                    _, max_score, _, _ = cv2.minMaxLoc(res)
+                    if max_score >= MATCH_SCORE_THRESHOLD:
+                        is_present_template = True
+
+                if is_present_template:
+                    # Item is physically inside the ROI box -> GREEN OK
                     is_actually_missing = False
-                    shifted_locations[label] = (fx, fy, w, h)
                 else:
-                    print(f"[DEBUG] Tier 2 match FAILED for '{label}' (score {f_score:.2f} < {MATCH_SCORE_THRESHOLD}). Marking as missing.")
+                    # Secondary presence validation gate: MobileNetV2 DNN check
+                    is_present_dnn, dnn_conf = validate_presence_dnn(live_crop, label)
+                    if is_present_dnn:
+                        # DNN confirms object is still present in zone -> GREEN OK
+                        is_actually_missing = False
+            else:
+                # Direct match check for Tier 2/Unregistered items
+                ref_crop = ref_bgr[y:y+h, x:x+w]
+                live_crop = frame[y:y+h, x:x+w]
+                if live_crop.shape[0] >= h and live_crop.shape[1] >= w:
+                    res = cv2.matchTemplate(live_crop, ref_crop, cv2.TM_CCOEFF_NORMED)
+                    _, f_score, _, _ = cv2.minMaxLoc(res)
+                    if f_score >= MATCH_SCORE_THRESHOLD:
+                        is_actually_missing = False
 
         if is_actually_missing:
+            ok_consistency_count[label] = 0
             consistency_count[label] += 1
             if consistency_count[label] == 1:
                 print(f"[SPOT-IT] '{label}' change detected! (change: {change_pct:.1%}). Status: CHECKING ({consistency_count[label]}/{CONSISTENCY_FRAMES})")
             elif consistency_count[label] < CONSISTENCY_FRAMES:
                 print(f"[SPOT-IT] '{label}' checking progress ({consistency_count[label]}/{CONSISTENCY_FRAMES})")
 
-            # ── REGISTERED ITEM (Tier 1): save each checking frame sequentially ───────
-            # These frames show the moment the item starts being moved/removed.
-            if tier == 1 and not active_events[label]:
-                registered_seq_count[label] += 1
-                save_snapshot(frame, label, f"registered_{registered_seq_count[label]}")
+            # ── PROGRESSION SNAPSHOT SEQUENCE (Tier 1 / Registered Items) ──
+            # Captures sequential snapshots (registered_1.jpg to registered_5.jpg max)
+            # as the item is moved/lifted. Throttled to ~200ms intervals.
+            now_ts = time.time()
+            if tier == 1 and not seq_completed[label] and registered_seq_count[label] < 5:
+                if now_ts - last_seq_snapshot_time[label] >= 0.20:
+                    last_seq_snapshot_time[label] = now_ts
+                    registered_seq_count[label] += 1
+                    seq_filename = f"{label}_registered_{registered_seq_count[label]}.jpg"
+                    save_snapshot(frame, label, f"registered_{registered_seq_count[label]}")
+                    print(f"[SPOT-IT] Progression snapshot #{registered_seq_count[label]}/5 saved for '{label}' -> {seq_filename}")
+                    if registered_seq_count[label] >= 5:
+                        seq_completed[label] = True
         else:
-            if consistency_count[label] > 0 or active_events[label]:
-                print(f"[SPOT-IT] '{label}' returned to OK state (change: {change_pct:.1%}).")
             consistency_count[label] = 0
-            active_events[label]     = False
-            active_detection_ids[label] = None
-            snapshot_b_triggered[label] = False
-            shifted_locations[label] = None
-            registered_seq_count[label] = 0
-            if label in missing_timestamps:
-                del missing_timestamps[label]
+            ok_consistency_count[label] += 1
+            # Hysteresis Latching: Require 8 consecutive frames of OK presence before resetting missing state
+            if ok_consistency_count[label] >= 8:
+                if active_events[label]:
+                    print(f"[SPOT-IT] '{label}' confirmed returned to OK state (over 8 consecutive frames). Auto-resolving alert...")
+                    post_item_recovered(label)
+                active_events[label]        = False
+                active_detection_ids[label] = None
+                snapshot_b_triggered[label] = False
+                clean_snapshot_saved[label] = False
+                seq_completed[label]        = False
+                last_seq_snapshot_time[label] = 0
+                shifted_locations[label]    = None
+                registered_seq_count[label] = 0
+                if label in missing_timestamps:
+                    del missing_timestamps[label]
 
         confirmed_missing = (
             consistency_count[label] >= CONSISTENCY_FRAMES
@@ -856,7 +1063,8 @@ while True:
             active_events[label] = True
 
             if tier == 1:
-                snapshot_path = os.path.join(SNAPSHOT_DIR, f"{label}_registered_{registered_seq_count[label]}.jpg")
+                curr_idx = max(1, min(5, registered_seq_count[label]))
+                snapshot_path = os.path.join(SNAPSHOT_DIR, f"{label}_registered_{curr_idx}.jpg")
             else:
                 snapshot_path = save_snapshot(frame, label, "snapshot_A")
 
@@ -888,6 +1096,23 @@ while True:
                 monitoring_paused = True
                 post_mass_deviation()
                 break  # Exit ROI loop immediately
+
+        # ── FINAL POST-REMOVAL FRAME COMPLETION ─────────────────────────────
+        # Once item is confirmed missing, capture ONE final clean frame showing empty ROI after hand leaves
+        if active_events[label] and not clean_snapshot_saved[label]:
+            roi_gray = gray[y:y+h, x:x+w]
+            if prev_roi_gray[label] is not None and prev_roi_gray[label].shape == roi_gray.shape:
+                ftf_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
+                _, ftf_thresh = cv2.threshold(ftf_diff, 15, 255, cv2.THRESH_BINARY)
+                motion_val = cv2.countNonZero(ftf_thresh) / (w * h)
+                
+                # When motion settles below 4%, hand has finished removing item and left ROI
+                if motion_val < 0.04:
+                    clean_snapshot_saved[label] = True
+                    seq_completed[label] = True
+                    final_path = os.path.join(SNAPSHOT_DIR, f"{label}_registered_final.jpg")
+                    cv2.imwrite(final_path, frame)
+                    print(f"[SPOT-IT] Movement finished for '{label}'. Final clean post-removal frame saved (hand left ROI).")
 
         # ── SNAPSHOT B LOGIC (Unregistered / Tier 2 Only) ──────────────────
         # If item is already confirmed missing, watch it for subsequent movement (theft/hand capture)
@@ -946,6 +1171,21 @@ while True:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
         cv2.putText(output, f"Scene motion: {motion_pct:.1%}", (10, TARGET_SIZE[1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+    # ── WRITE REAL-TIME PHYSICAL ROI STATE FOR PHP ENDPOINTS ──────────────
+    try:
+        live_state_map = {}
+        for r in roi_list:
+            lbl = r['label']
+            live_state_map[lbl] = {
+                'is_missing': active_events.get(lbl, False) or (consistency_count.get(lbl, 0) >= CONSISTENCY_FRAMES),
+                'consistency': consistency_count.get(lbl, 0),
+                'tier': r.get('tier', 'tier1')
+            }
+        with open('photos/live_roi_state.json', 'w') as sf:
+            json.dump(live_state_map, sf)
+    except Exception:
+        pass
 
     # Write live stream frame and clean baseline frame for web dashboard
     save_frames_atomic(output, frame)

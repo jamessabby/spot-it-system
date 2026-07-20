@@ -11,13 +11,50 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 - [ ] **Test data initialization:** Need real room records inserted into `spotit_monitor_db.rooms` and `registered_lab_items` beyond the temporary `TESTROOM` desk setup before Table 3.5 scenarios can be run against actual CEAT laboratory rooms.
 - [ ] **First-admin bootstrap setup:** Admin accounts can only be provisioned by an existing admin—but no admin exists on a fresh install.
   - **Resolution path:** Need a one-time SQL seed directly in `spotit_auth_db.users`. Check `services/auth/schema.sql` and `login_handler.php` for the hash format.
-- [ ] **Double snapshot logic in pipeline:** `main.py` needs to implement the secondary camera snapshot (Snapshot B) when an item's empty ROI is physically interacted with or shifted while in the RED/MISSING state.
+- [x] **Double snapshot logic in pipeline:** `main.py` needs to implement the secondary camera snapshot (Snapshot B) when an item's empty ROI is physically interacted with or shifted while in the RED/MISSING state.
 
 ---
 
 ## 2. Past Diagnosed Bugs & Root Causes
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
+
+### Reset System State Failing (Syntax Error & Missing JS)
+*   **Symptom:** Clicking "Reset System" gave a failure toast message.
+*   **Root Cause:**
+    1. A PHP string concatenation syntax error on line 75 of `auth/reset_system_state.php` (`$e.getMessage()` instead of `$e->getMessage()`) triggered a fatal error under exceptions.
+    2. The JS handler `resetSystemState()` was completely missing from `pages/desk-sandbox.php`.
+*   **Resolution:** Corrected the PHP exception syntax, wrapped each database and file deletion step in isolated try-catch blocks to prevent lock crashes, and added the JS `resetSystemState()` function to `desk-sandbox.php`.
+
+### Camera Full Screen View Stuck / White Border padding
+*   **Symptom:** Toggling full screen left a small video box at the top center surrounded by a giant white background.
+*   **Root Cause:** The HTML5 fullscreen API scaled the container box, but the video element inside lacked styles to occupy the layout.
+*   **Resolution:** Added `#camVideoBox:fullscreen` and img child CSS rule: `width: 100vw; height: 100vh; object-fit: contain; background: #000;`.
+
+### 404 Not Found on toggle_detection_mode.php
+*   **Symptom:** Changing tracking modes back to Registered failed with a console 404 error.
+*   **Root Cause:** The browser requested `auth/toggle_detection_mode.php` which was missing from the server.
+*   **Resolution:** Created `auth/toggle_detection_mode.php` to handle writing both `tracking_mode` and `mode` to `detection_mode.json`.
+
+### Instant Stage Escalation in Loop
+*   **Symptom:** Setting Stage 1 (Potential) to 9 frames and Stage 2 (Red) to 18 frames triggered them nearly simultaneously.
+*   **Root Cause:** The Python frame processing loop executes at 30+ FPS, taking less than 0.6 seconds to iterate 18 times.
+*   **Resolution:** Switched from loop counting to clock-time tracking (`time.time() - unreg_first_seen[label]`), enforcing Stage 1 at exactly 3.0s (Yellow) and Stage 2 at exactly 6.0s (Red).
+
+### Shadow False Positives on Table Border (object2, object3 noise)
+*   **Symptom:** Compression noise and shadow changes on table borders generated false-positive left item alerts.
+*   **Root Cause:** The area threshold was too low (2000 px) and lacked secondary texture/edge validation.
+*   **Resolution:** Increased minimum contour area threshold to `4500` pixels, filtered out border edge noise, and implemented a secondary MobileNetV2 / computer vision texture and edge density gatekeeper filter (`validate_presence_dnn`).
+
+### Snapshot B Fired Immediately on Item Placement
+*   **Symptom:** Snapshot B was captured instantly on item placement, looking identical to Snapshot A (showing the box sitting still with no hand).
+*   **Root Cause:** Snapshot B compared the crop difference against the *empty desk* baseline, which was constantly different while the item sat there.
+*   **Resolution:** Saved a reference gray crop of the occupied item position (`item_occupied_crops`) at Stage 1, checking difference against it when hand moves/lifts it.
+
+### Snapshot B Skipped on Fast Removal
+*   **Symptom:** Taking the box off the desk skipped Snapshot B entirely.
+*   **Root Cause:** The Snapshot B check was located *inside* the contour loop. When the item contour disappeared from the desk, the loop for that label was skipped entirely.
+*   **Resolution:** Moved the Snapshot B check *outside* the contour loop to evaluate every single frame, instantly capturing Snapshot B whenever `lbl not in current_seen_labels` evaluates to `True`.
 
 ### Fatal "Call to Undefined Function" `ms_detection_stage()`
 *   **Symptom:** `ingest_detection.php` (called by `main.py`) crashed with a 500 fatal error.
