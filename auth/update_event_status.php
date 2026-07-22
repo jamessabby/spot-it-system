@@ -83,6 +83,17 @@ try {
          WHERE detection_id = ?"
     )->execute([$new_status, $actorId, $actorId, $newValidation, $appendNote, $detection_id]);
 
+    // Signal main.py to clear active events memory when item is marked recovered or dismissed
+    if (in_array($new_status, ['recovered', 'dismissed'], true)) {
+        $mode_file = __DIR__ . '/../detection_mode.json';
+        if (file_exists($mode_file)) {
+            $mode_data = @json_decode(file_get_contents($mode_file), true) ?: [];
+            $mode_data['reset_paused'] = true;
+            $mode_data['updated_at']   = date('Y-m-d H:i:s');
+            @file_put_contents($mode_file, json_encode($mode_data, JSON_PRETTY_PRINT));
+        }
+    }
+
 } catch (PDOException $e) {
     ms_json(['success' => false, 'message' => 'Failed to update detection status.'], 500);
 }

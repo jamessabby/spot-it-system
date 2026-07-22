@@ -421,6 +421,7 @@ registered_seq_count   = {roi['label']: 0 for roi in roi_list}  # unlimited prog
 unreg_first_seen       = {}
 stage2_triggered        = {}
 item_occupied_crops     = {}
+unreg_absence_count     = {}
 monitoring_paused      = False
 
 last_rois_mtime    = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
@@ -683,9 +684,13 @@ while True:
 
                 # Unpause monitoring if reset signal is set
                 if mode_data.get('reset_paused', False):
-                    print("[SPOT-IT] Recalibration reset signal received! Unpausing live monitoring...")
+                    print("[SPOT-IT] Recalibration / status reset signal received! Unpausing live monitoring...")
                     monitoring_paused = False
                     missing_timestamps.clear()
+                    unreg_first_seen.clear()
+                    stage2_triggered.clear()
+                    item_occupied_crops.clear()
+                    unreg_absence_count.clear()
                     for r in roi_list:
                         lbl = r['label']
                         consistency_count[lbl] = 0
@@ -693,6 +698,7 @@ while True:
                         shifted_locations[lbl] = None
                         snapshot_b_triggered[lbl] = False
                         active_detection_ids[lbl] = None
+                    active_events.clear()
 
                 if IS_PRODUCTION_MODE:
                     print("[SPOT-IT] Production Mode active — flood gate at >50% items missing | Both tiers active")
@@ -733,8 +739,13 @@ while True:
                 if lbl not in active_events: active_events[lbl] = False
                 if lbl not in active_detection_ids: active_detection_ids[lbl] = None
                 if lbl not in snapshot_b_triggered: snapshot_b_triggered[lbl] = False
+                if lbl not in clean_snapshot_saved: clean_snapshot_saved[lbl] = False
+                if lbl not in seq_completed: seq_completed[lbl] = False
+                if lbl not in last_seq_snapshot_time: last_seq_snapshot_time[lbl] = 0
+                if lbl not in ok_consistency_count: ok_consistency_count[lbl] = 0
                 if lbl not in prev_roi_gray: prev_roi_gray[lbl] = None
                 if lbl not in shifted_locations: shifted_locations[lbl] = None
+                if lbl not in registered_seq_count: registered_seq_count[lbl] = 0
             
             BASELINE_COUNT = len(roi_list)
             last_rois_mtime = current_rois_mtime
@@ -925,23 +936,36 @@ while True:
                         except Exception:
                             pass
 
-        # ── SNAPSHOT B TRIGGER (Item Removal / Hand Interaction Evidence) ────
+        # ── SNAPSHOT B TRIGGER & STATE CLEANUP (Item Removal Evidence & Reset) ────
         # Checks all active logged left items OUTSIDE the contour loop.
-        # Fires Snapshot B instantly IF:
-        #  1) The item is REMOVED / TAKEN off the desk (contour disappears), OR
-        #  2) Hand motion occurs over the item's occupied position
-        for lbl, was_active in list(active_events.items()):
-            if was_active and not snapshot_b_triggered.get(lbl, False):
-                det_id = active_detection_ids.get(lbl)
-                is_taken = (lbl not in current_seen_labels)
+        # 1) Fires Snapshot B when item is taken
+        # 2) Resets timer & tracking state when item is removed from desk (>10 frames absence)
+        known_unreg_labels = list(set(list(unreg_first_seen.keys()) + list(active_events.keys())))
+        for lbl in known_unreg_labels:
+            if lbl in current_seen_labels:
+                unreg_absence_count[lbl] = 0
+            else:
+                unreg_absence_count[lbl] = unreg_absence_count.get(lbl, 0) + 1
                 
-                if is_taken:
+                # Check Snapshot B trigger if item was active and just taken
+                if active_events.get(lbl, False) and not snapshot_b_triggered.get(lbl, False):
                     snapshot_b_triggered[lbl] = True
                     snapshot_b_path = save_snapshot(frame, lbl, "snapshot_B")
+                    det_id = active_detection_ids.get(lbl)
                     print(f"\n[SNAPSHOT B TRIGGERED: Item '{lbl}' TAKEN / REMOVED from desk!]")
                     print(f"  Evidence Snapshot B: {snapshot_b_path}")
                     if det_id:
                         post_snapshot_b(lbl, det_id, snapshot_b_path)
+                
+                # Reset item state after ~10 frames of complete absence so new/replaced items start timer fresh from 0.0s
+                if unreg_absence_count[lbl] >= 10:
+                    unreg_first_seen.pop(lbl, None)
+                    active_events.pop(lbl, None)
+                    stage2_triggered.pop(lbl, None)
+                    snapshot_b_triggered.pop(lbl, None)
+                    active_detection_ids.pop(lbl, None)
+                    item_occupied_crops.pop(lbl, None)
+                    unreg_absence_count.pop(lbl, None)
 
         # Write real-time physical state for PHP polling
         try:

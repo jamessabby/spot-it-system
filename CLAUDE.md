@@ -199,12 +199,7 @@ file honest" at the top).
   which computer is which" — don't try to make the system do something it
   isn't designed to do.
 
-**Status check needed:** the most recently uploaded `main.py` in this repo is
-still the *tolerance-only* version (no MobileNetV2 gate, no tier split). The
-tier-aware + MobileNetV2 version was drafted in a prior chat but may not be the
-version currently deployed — verify by checking for `mobilenet`/`dnn`/`tier` in
-`main.py` before assuming it's live. If missing, that's the next real coding
-task, not already-done.
+**Status update:** `main.py` is fully updated with the MobileNetV2 ONNX gatekeeper, real clock-time stage tracking (`time.time()`), Snapshot A/B evidence capture, and unregistered state cleanup.
 
 ### 3c. Finalized scope & behavior decisions (2026-07-04 discussion with team)
 

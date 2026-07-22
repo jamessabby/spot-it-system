@@ -26,6 +26,21 @@ Refer to this log so you do not waste time re-investigating previously solved pr
     2. The JS handler `resetSystemState()` was completely missing from `pages/desk-sandbox.php`.
 *   **Resolution:** Corrected the PHP exception syntax, wrapped each database and file deletion step in isolated try-catch blocks to prevent lock crashes, and added the JS `resetSystemState()` function to `desk-sandbox.php`.
 
+### KeyError on Reloading ROIs in main.py
+*   **Symptom:** Reloading active ROIs triggered `KeyError: 'mouse'` at `ok_consistency_count[label] += 1`.
+*   **Root Cause:** The dynamic reload block in `main.py` did not re-initialize the newly added Phase 2 tracking dictionaries (`ok_consistency_count`, `seq_completed`, `last_seq_snapshot_time`, `registered_seq_count`, etc.) for new labels.
+*   **Resolution:** Updated the reload loop in `main.py` to initialize all per-label tracking dictionaries upon config reload.
+
+### Left Item Timer Retained Previous Count Upon Replacement
+*   **Symptom:** Placing a left item back on the desk after removal immediately escalated to Red (`CONFIRMED LOST (45.1s)`).
+*   **Root Cause:** `unreg_first_seen['object1']` was never cleared from Python memory when the contour disappeared from the camera view.
+*   **Resolution:** Added `unreg_absence_count` in `main.py` to monitor item absence. If an unregistered item contour is absent for >10 frames (~0.3s), its timestamp and state dictionaries are automatically popped and cleared, allowing replaced items to start fresh from `0.0s`.
+
+### Recovered Button Clicked on Dashboard Did Not Allow Item Re-detection
+*   **Symptom:** Clicking "Recovered" on the dashboard updated the database, but `main.py` ignored the item when placed down again.
+*   **Root Cause:** `main.py` kept `active_events['object1'] = True` stored in its internal Python memory, preventing new Stage 1/2 alerts from firing.
+*   **Resolution:** Updated `auth/update_event_status.php` to write a reset signal to `detection_mode.json` when status is marked `recovered` or `dismissed`, and updated `main.py` to clear `active_events` and unregistered state dictionaries upon receiving the signal.
+
 ### Camera Full Screen View Stuck / White Border padding
 *   **Symptom:** Toggling full screen left a small video box at the top center surrounded by a giant white background.
 *   **Root Cause:** The HTML5 fullscreen API scaled the container box, but the video element inside lacked styles to occupy the layout.

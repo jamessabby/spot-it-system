@@ -2,6 +2,7 @@
     "mode": "testing",
     "tracking_mode": "registered",
     "reset_paused": true,
-    "reset_timestamp": 1784535591,
-    "updated_at": "2026-07-20 18:13:02"
+    "reset_rois": true,
+    "reset_timestamp": 1784734164,
+    "updated_at": "2026-07-22 23:29:24"
 }
