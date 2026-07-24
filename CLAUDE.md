@@ -156,8 +156,7 @@ MATCH_SCORE_THRESHOLD ≈ 0.55 (tune 0.45–0.65 as needed)
 TOLERANCE_MARGIN ≈ 0.25 for Tier 1 fixed lab equipment (tighter than the 0.6
   default — lab equipment shouldn't drift far), wider for personal items.
 ```
-These are tuned for the iPhone/OctoStream desk-test setup, not the final Dahua
-CCTV hardware. Expect to re-tune once real cameras are deployed (see §5, Phase 3).
+These are tuned for the Tapo TC65 camera setup. Expect to re-tune if camera placement or lighting changes (see §5, Phase 3).
 
 ### 3a. Open design decision — DO NOT re-litigate from scratch, just implement
 
@@ -314,20 +313,15 @@ snapshot files on disk.
   and snapshot files are archived or deleted. (Not yet built — Phase 5+
   scope.)
 
-#### Camera hardware (TBD — pending team clarification)
+#### Camera Hardware — TP-Link Tapo TC65
 
-- **Planned:** Dahua 5MP Full-color Eyeball CCTV — but the specific model
-  listed is analog (coaxial output). The system needs an **IP camera** that
-  serves RTSP natively, or an analog camera connected through a DVR/NVR
-  that outputs RTSP. Team is clarifying this.
-- **Budget:** 2 cameras total. Prototyping with 1 camera first; once the
-  system works with 1, the second camera is added.
-- **Cannot access school CCTV** — project buys its own hardware regardless
-  of whether DLSU-D CEAT has existing cameras.
-- **Current desk-test stand-in:** iPhone + OctoStream RTSP app. This works
-  fine for development and will continue to be used until real hardware is
-  procured. Tuning values will need adjustment when switching (see §3,
-  closing note).
+- **Deployed Camera:** **TP-Link Tapo TC65 (2K / 3MP Ultra-HD)**
+  - **Resolution:** 2304 × 1296 pixels (3MP), ~44% more detail than 1080p. Excellent for distant small object / ROI tracking.
+  - **Lens & FOV:** 1/2.7" sensor, F1.6 super-aperture lens, ~85°–90° horizontal field of view (ideal for 8m × 10m CEAT lab rooms).
+  - **RTSP Native Stream:** Native RTSP streaming (`rtsp://username:password@<ip>:554/stream1` at 2304x1296 15-20fps, or `/stream2` at 640x360).
+  - **Night Vision & Lighting:** 98 ft / 30 m IR night vision, F1.6 aperture handles dimmed lab light during projector presentations.
+- **Quantity:** Deployed in laboratory rooms.
+- **RTSP Feed:** Serves direct RTSP over campus Wi-Fi / local network to `main.py`.
 
 #### MobileNetV2 A/B Accuracy Comparison
 
@@ -429,13 +423,8 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
 - **Don't silently reintroduce Node.js/Express.** An earlier session scaffolded
   a Node.js/Express backend layer; the project has since pivoted fully to
   PHP/XAMPP/phpMyAdmin. Node.js is not part of the current stack anywhere.
-- **RTSP source is an iPhone via the OctoStream app** acting as a stand-in
-  CCTV camera for desk-scale testing (`rtsp://<phone-ip>/stream`, IP changes
-  with WiFi network — always confirm current IP before assuming the old one is
-  valid). The eventual real deployment target is a Dahua 5MP IP CCTV camera per
-  the thesis hardware spec — don't assume iPhone-specific quirks (portrait
-  rotation, OctoStream compression artifacts) apply to the final hardware.
-  See §3c "Camera hardware" for current procurement status.
+- **RTSP source is a TP-Link Tapo TC65 2K/3MP IP camera** serving native RTSP
+  over the local network to `main.py`.
 - **Deployment target is Hostinger Cloud Startup** (₱409/mo, 100 GB NVMe),
   not localhost/XAMPP. The defense demo will run against the hosted URL.
   `main.py` will POST to the hosted `ingest_detection.php` instead of

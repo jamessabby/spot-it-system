@@ -17,10 +17,17 @@ try {
     $roi_file = __DIR__ . '/../rois.json';
     @file_put_contents($roi_file, json_encode([], JSON_PRETTY_PRINT));
 
-    // 2. Remove reference image
-    $ref_image = __DIR__ . '/../photos/ref_image.jpg';
-    if (file_exists($ref_image)) {
-        @unlink($ref_image);
+    // 2. Remove reference image & live frames in photos/
+    $photos_dir = __DIR__ . '/../photos';
+    if (is_dir($photos_dir)) {
+        $pfiles = @glob($photos_dir . '/*');
+        if (is_array($pfiles)) {
+            foreach ($pfiles as $pf) {
+                if (is_file($pf)) {
+                    @unlink($pf);
+                }
+            }
+        }
     }
 
     // 3. Remove snapshot image files in uploads/snapshots/
@@ -34,6 +41,13 @@ try {
                 }
             }
         }
+    }
+
+    // 4. Copy clean standby placeholder to active snapshot paths
+    $standby_svg = __DIR__ . '/../assets/img/standby_placeholder.svg';
+    if (file_exists($standby_svg)) {
+        @copy($standby_svg, __DIR__ . '/../uploads/snapshots/clean_DESK.jpg');
+        @copy($standby_svg, __DIR__ . '/../photos/ref_image.jpg');
     }
 
     // 4. Truncate database records for DESK safely

@@ -1,6 +1,6 @@
 <?php
 /**
- * S.P.O.T.-IT — Desk Sandbox Testing Page
+ * S.P.O.T.-IT — Live Sandbox Testing Page
  * pages/desk-sandbox.php
  *
  * Dedicated sandbox testing environment to verify Tapo CCTV camera accuracy.
@@ -109,7 +109,7 @@ if (file_exists($mode_file_path)) {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Desk Sandbox Test — S.P.O.T.-IT</title>
+  <title>Live Sandbox Test — S.P.O.T.-IT</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <style>
@@ -309,7 +309,7 @@ if (file_exists($mode_file_path)) {
     <div class="topbar">
       <button class="tb-btn tb-hamburger" id="hamburgerBtn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
       <div>
-        <span class="topbar-title">Desk Sandbox Test</span>
+        <span class="topbar-title">Live Sandbox Test</span>
         <span class="topbar-sub">— Tapo CCTV Accuracy Calibration &amp; Analysis</span>
       </div>
       <div class="live-pill"><div class="live-dot"></div>SANDBOX</div>

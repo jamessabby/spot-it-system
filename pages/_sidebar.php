@@ -40,7 +40,7 @@ $initials = strtoupper(
       <i class="fa-solid fa-camera"></i> Camera Setup
     </a>
     <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
-      <i class="fa-solid fa-flask"></i> Desk Sandbox Test
+      <i class="fa-solid fa-flask"></i> Live Sandbox Test
     </a>
     <a href="alerts.php" class="sb-item <?= $active==='alerts'?'active':'' ?>">
       <i class="fa-solid fa-triangle-exclamation"></i> Alerts

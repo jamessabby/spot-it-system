@@ -15,7 +15,7 @@ a tier-aware pipeline, a MobileNetV2 presence gatekeeper, dual-snapshot evidence
 capture, and a flood-gate safety cutoff — POSTing over an API-key-authenticated
 endpoint into a 5-database PHP/MySQL backend with a cron-based escalation timer
 — surfaced across ~27 role-based dashboard pages. What's **not** done is almost
-entirely physical/logistical, not code: real Dahua cameras, real CEAT room data,
+entirely physical/logistical, not code: Tapo TC65 camera placement, real CEAT room data,
 a working web-based recalibration UI, and the S1–S8 test runs. That's a very
 different risk profile than "half-built system," and the plan below is built
 around that.
@@ -51,10 +51,9 @@ around that.
   your Chapter 4 accuracy comparison, per plan.
 
 **Not done / still fake:**
-- `RTSP_URL` and `ROOM_ID = 'DESK'` in `main.py` are still your personal Tapo
-  camera at a desk (`rois.json` currently holds `keyboard`, `cup`, `mouse` —
-  not lab equipment). No Dahua camera, no CEAT room, no lab-item ROIs exist
-  yet anywhere in the system.
+- `RTSP_URL` and `ROOM_ID = 'DESK'` in `main.py` are configured for your Tapo
+  TC65 camera (`rois.json` currently holds `keyboard`, `cup`, `mouse` —
+  desk-scale testing). CEAT room lab-item ROIs will be registered for deployment.
 - `API_KEY` in `main.py` is still the literal placeholder string
   `'CHANGE_ME_DETECTION_KEY'` — check whether `config/env.php`'s
   `SPOTIT_DETECTION_KEY` has actually been changed from its own placeholder
@@ -117,8 +116,8 @@ hand-editing `rois.json`.
 
 1. **Cron verification** — confirm `escalate_detections.php` is actually
    scheduled. Zero code changes needed, just server configuration + a test.
-2. **Real camera + real ROI data** — even a single Dahua camera (or continued
-   Tapo stand-in) pointed at an actual CEAT room, with `rois.json`/
+2. **Real camera + real ROI data** — the Tapo TC65 2K/3MP camera
+   pointed at an actual CEAT room, with `rois.json`/
    `registered_lab_items` populated for real lab equipment instead of
    keyboard/cup/mouse on your desk. This is deployment work, not coding.
 3. **API key hygiene** — `main.py`'s `API_KEY` and `env.php`'s
@@ -152,8 +151,7 @@ hand-editing `rois.json`.
   greenfield work with no ambiguity about what exists already.
 
 **Needs the physical room / hardware, can't be coded around:**
-- Procure/borrow the Dahua camera (or continue with Tapo as the documented
-  stand-in) and get it pointed at an actual CEAT lab.
+- Position the Tapo TC65 camera and get it pointed at an actual CEAT lab.
 - Populate `rooms`/`registered_lab_items` with real equipment and re-run
   `register_roi.py` (or the new Canvas tool once built) on that live feed.
 - Re-tune `THRESHOLD`/`SCENE_MOTION_LIMIT`/`MATCH_SCORE_THRESHOLD` against the

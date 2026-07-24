@@ -89,6 +89,15 @@ if (file_exists($targetRef) && filesize($targetRef) > 1000) {
         // Ignore DB update error
     }
 
+    $mode_file = __DIR__ . '/../detection_mode.json';
+    if (file_exists($mode_file)) {
+        $m = json_decode(file_get_contents($mode_file), true) ?: [];
+        $m['reset_paused'] = false;
+        $m['reset_rois'] = false;
+        $m['updated_at'] = date('Y-m-d H:i:s');
+        @file_put_contents($mode_file, json_encode($m, JSON_PRETTY_PRINT));
+    }
+
     ms_json([
         'success' => true,
         'message' => $usedLive ? 'Baseline cloned from active stream!' : 'Reference frame captured successfully!',

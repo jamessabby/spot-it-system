@@ -57,7 +57,7 @@ Phases are sequenced by dependency, not calendar time — treat this as a checkl
 - [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms actually being tested (see thesis Table 3.2 for list)
 - [ ] Physically deploy the prototype IP camera stream inside the laboratory test environment
 - [ ] Perform live ROI calibration on the final CCTV stream using the newly built Canvas dashboard tool
-- [ ] Re-tune `THRESHOLD`, `SCENE_MOTION_LIMIT`, and `MATCH_SCORE_THRESHOLD` on the physical Dahua camera stream (due to changes in lighting/compression)
+- [ ] Re-tune `THRESHOLD`, `SCENE_MOTION_LIMIT`, and `MATCH_SCORE_THRESHOLD` on the physical Tapo TC65 camera stream (due to changes in lighting/compression)
 
 ### Phase 4 — Controlled testing (thesis §3.5, Table 3.5)
 Run each scenario ≥5 trials per the methodology, recording results as you go:
@@ -87,6 +87,7 @@ Run each scenario ≥5 trials per the methodology, recording results as you go:
 
 Keep this short — one line per meaningful change to project direction, newest first.
 
+- **2026-07-23** — Transitioned S.P.O.T.-IT to Production Level Multi-Room Camera Monitoring. Added Speed Mode Toggle (**Testing Speed 3s/6s** vs **Production Speed 30m/1hr**) on `pages/room-monitor.php`. Enabled dual simultaneous tracking (Registered assets + Unregistered left items) in `main.py` when Production Mode is active. Created `auth/get_room_status.php` API endpoint for multi-room polling, updated `pages/alerts.php` to display alerts across all active user-created rooms, and aggregated `pages/dashboard-admin.php` stats across all monitored rooms.
 - **2026-07-22** — Fixed per-label state dictionary initialization in `main.py` on ROI reloads to prevent `KeyError`. Implemented `unreg_absence_count` state cleanup when left items are removed from the desk (>10 frames absence), ensuring replaced objects start timer counting cleanly from 0.0s. Wired `auth/update_event_status.php` to signal `detection_mode.json` on status recovery/dismissal, syncing Python memory in real-time. Created interactive testing/presentation guide artifact `sandbox_demo_guide.md`.
 - **2026-07-21** — Marked all Phase 2 tasks as complete: MobileNetV2 Tier-Aware logic, Snapshot B logic, and Auto-Flood Gate protection are fully implemented and verified in the live `main.py` pipeline.
 - **2026-07-20** — Implemented Left Items (Unregistered Mode) sandbox engine and UI features. Fixed video Full Screen sizing using CSS object-fit contain. Replaced frame-based loop iteration consistency checking with real-world clock time tracking (`time.time()`) for 3.0s Yellow (potential) and 6.0s Red (confirmed_missing) escalation. Added a secondary MobileNetV2 / computer vision texture and edge density gatekeeper to reject shadow false positives. Rewrote Snapshot B triggers to fire reliably upon physical object removal or hand interaction outside the main contour loop. Added JS `resetSystemState` handler to resolve sandbox master resets.

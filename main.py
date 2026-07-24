@@ -470,6 +470,17 @@ def check_roi(roi, thresh_mask):
 
 def save_frames_atomic(output_frame, clean_frame):
     try:
+        # Check if reset state is active in detection_mode.json
+        mode_file = os.path.join(BASE_DIR, "detection_mode.json")
+        if os.path.exists(mode_file):
+            try:
+                with open(mode_file, 'r') as f:
+                    mdata = json.load(f)
+                    if mdata.get('reset_paused') is True or mdata.get('reset_rois') is True:
+                        return
+            except Exception:
+                pass
+
         live_path = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
         live_tmp  = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}_tmp.jpg")
         cv2.imwrite(live_tmp, output_frame)
@@ -681,6 +692,12 @@ while True:
                 mode = mode_data.get('mode', 'testing')
                 IS_PRODUCTION_MODE = (mode == 'production')
                 SANDBOX_TRACKING_MODE = mode_data.get('tracking_mode', 'registered')
+                TIMER_MODE = mode_data.get('timer_mode', 'testing_speed')
+                ROOM_ID = mode_data.get('room_id', 'DESK').upper()
+
+                # Dynamic timer threshold selection
+                STAGE1_THRESH = 1800.0 if TIMER_MODE == 'production_speed' else 3.0
+                STAGE2_THRESH = 3600.0 if TIMER_MODE == 'production_speed' else 6.0
 
                 # Unpause monitoring if reset signal is set
                 if mode_data.get('reset_paused', False):
@@ -701,10 +718,10 @@ while True:
                     active_events.clear()
 
                 if IS_PRODUCTION_MODE:
-                    print("[SPOT-IT] Production Mode active — flood gate at >50% items missing | Both tiers active")
+                    print(f"[SPOT-IT] Production Mode active for Room '{ROOM_ID}' — Timer Speed: {TIMER_MODE} (S1:{STAGE1_THRESH}s / S2:{STAGE2_THRESH}s) | Dual Tracking Active")
                 else:
                     tracking_label = 'Registered Items' if SANDBOX_TRACKING_MODE == 'registered' else 'Unregistered/Left Items'
-                    print(f"[SPOT-IT] Testing Mode active — flood gate at 100% | Tracking: {tracking_label}")
+                    print(f"[SPOT-IT] Testing Mode active for Room '{ROOM_ID}' — Timer Speed: {TIMER_MODE} (S1:{STAGE1_THRESH}s / S2:{STAGE2_THRESH}s) | Tracking: {tracking_label}")
         except Exception as me:
             print(f"[SPOT-IT][ERROR] Failed to load detection mode: {me}")
     
@@ -849,7 +866,7 @@ while True:
     output = frame.copy()
 
     # ── UNREGISTERED / LEFT ITEMS MODE (Foreground Contour Tracking + ML Gate) ────────
-    if SANDBOX_TRACKING_MODE == 'unregistered':
+    if SANDBOX_TRACKING_MODE == 'unregistered' or IS_PRODUCTION_MODE:
         diff_unreg = cv2.absdiff(ref_blur, blur)
         _, thresh_unreg = cv2.threshold(diff_unreg, 35, 255, cv2.THRESH_BINARY)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
@@ -891,11 +908,11 @@ while True:
 
                 elapsed = now_ts - unreg_first_seen[label]
 
-                # Determine Stage Color & Label based on Real Clock Time (time.time())
-                if elapsed >= 6.0:
+                # Determine Stage Color & Label based on Real Clock Time (time.time()) & Speed Mode
+                if elapsed >= STAGE2_THRESH:
                     box_color = (0, 0, 255) # RED
                     label_text = f"CONFIRMED LOST: {label} ({elapsed:.1f}s)"
-                elif elapsed >= 3.0:
+                elif elapsed >= STAGE1_THRESH:
                     box_color = (0, 215, 255) # YELLOW
                     label_text = f"UNATTENDED: {label} ({elapsed:.1f}s)"
                 else:
@@ -909,11 +926,11 @@ while True:
 
                 live_left_state[label] = {'is_missing': False, 'tier': 'tier2'}
 
-                # STAGE 1 (Yellow at exactly 3.0 seconds): Log as potential unattended item
-                if elapsed >= 3.0 and not active_events[label]:
+                # STAGE 1 (Yellow at STAGE1_THRESH): Log as potential unattended item
+                if elapsed >= STAGE1_THRESH and not active_events[label]:
                     active_events[label] = True
                     snapshot_path = save_snapshot(frame, label, "snapshot_A")
-                    print(f"\n[STAGE 1 (YELLOW 3.0s): UNATTENDED ITEM DETECTED: {label}]")
+                    print(f"\n[STAGE 1 (YELLOW {STAGE1_THRESH}s): UNATTENDED ITEM DETECTED: {label}]")
                     det_id = post_to_api(label, snapshot_path, float(area) / (TARGET_SIZE[0] * TARGET_SIZE[1]))
                     active_detection_ids[label] = det_id
                     try:
@@ -921,10 +938,10 @@ while True:
                     except Exception:
                         pass
 
-                # STAGE 2 (Red at exactly 6.0 seconds): Escalate status to confirmed_missing
-                if elapsed >= 6.0 and active_events[label] and not stage2_triggered.get(label, False):
+                # STAGE 2 (Red at STAGE2_THRESH): Escalate status to confirmed_missing
+                if elapsed >= STAGE2_THRESH and active_events[label] and not stage2_triggered.get(label, False):
                     stage2_triggered[label] = True
-                    print(f"[STAGE 2 (RED 6.0s): CONFIRMED LOST ESCALATION: {label}]")
+                    print(f"[STAGE 2 (RED {STAGE2_THRESH}s): CONFIRMED LOST ESCALATION: {label}]")
                     if active_detection_ids.get(label):
                         try:
                             requests.post(API_URL, data={
