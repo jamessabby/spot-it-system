@@ -19,6 +19,16 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
 
+### Room Monitor Unknown Column 'floor_level' Fatal Error
+*   **Symptom:** Clicking "Room Cameras" (`pages/room-monitor.php`) or polling `auth/get_room_status.php` threw a fatal PDOException: `Unknown column 'floor_level' in 'field list'`.
+*   **Root Cause:** The SQL query queried `floor_level`, whereas the schema column in database table `rooms` is `floor`.
+*   **Resolution:** Updated `pages/room-monitor.php` and `auth/get_room_status.php` to query `floor`.
+
+### System Reset Live Frame Persistence
+*   **Symptom:** Clicking "Reset System" cleared database logs, but the live camera feed snapshot remained on screen without clearing.
+*   **Root Cause:** `auth/reset_system_state.php` unlinked files, but `main.py`'s background `save_frames_atomic()` loop kept continuously overwriting `uploads/snapshots/clean_DESK.jpg` every 500ms without checking if reset was in progress.
+*   **Resolution:** Created SVG standby artwork (`assets/img/standby_placeholder.svg`), updated `auth/reset_system_state.php` to copy the standby placeholder into snapshot paths, and updated `main.py`'s `save_frames_atomic()` to check `reset_paused` in `detection_mode.json` to pause writing clean frames until a new baseline snapshot is captured via `auth/capture_frame.php`.
+
 ### Reset System State Failing (Syntax Error & Missing JS)
 *   **Symptom:** Clicking "Reset System" gave a failure toast message.
 *   **Root Cause:**
@@ -103,4 +113,36 @@ Refer to this log so you do not waste time re-investigating previously solved pr
 *   **Symptom:** A single missing item fires countless duplicate notifications in the event log and alerts page.
 *   **Root Cause:** The duplicate suppression check in `ingest_detection.php` only matched detections with states `pending` or `potential`. Once an event escalated to `confirmed_missing`, it dropped out of the check, causing the system to insert new duplicate rows. Additionally, the notification block was fired unconditionally on every request.
 *   **Resolution:** Added `confirmed_missing` to the duplicate SQL search and wrapped the notification dispatcher so it only triggers on new inserts (`$action === 'inserted'`).
+
+### False-Positive Background Template Matches on Dark Items (Umbrella)
+*   **Symptom:** Taking the umbrella off the desk left its ROI box green, failing to trigger the missing state.
+*   **Root Cause:** The template match search area padding (`PAD=75`) was too large. When the dark umbrella was removed, the template matcher compared the baseline crop (containing the dark umbrella) against a wide search area on the empty table and found a false positive match on the dark wood-grain bed frame border (correlation score ~0.66). Since the match threshold was `0.55`, it evaluated to present.
+*   **Resolution:** Raised `MATCH_SCORE_THRESHOLD` to `0.70` (and later unified to `0.60` with a tighter `PAD=30` window) to reject background texture correlations.
+
+### DNN False Negatives for Small CCTV Crops (Umbrella)
+*   **Symptom:** Putting the umbrella back inside the ROI did not turn it green; it remained stuck in RED/MISSING.
+*   **Root Cause:** When the template matching score fell below the threshold, the system fell back to the MobileNetV2 ONNX classifier. Due to low resolution, camera noise, and CCTV angles, the classifier could not match the umbrella crop with standard ImageNet classes, returning false negatives and locking the item to red.
+*   **Resolution:** Unified the presence logic by removing the fragile DNN check fallback for custom/small objects. Instead, the system uses a robust shift-tolerant template search window (±30px) as the single primary gate. If the item's pattern is found anywhere in that window with a score of `≥ 0.60`, it is marked as present.
+
+### Person in ROI Triggering False Missing Alarm
+*   **Symptom:** A person walking past or standing in front of the table immediately turned the ROI boxes RED.
+*   **Root Cause:** A person occluding the ROI changed almost 80–100% of the pixels, bypassing the motion-stability filter, which triggered the classical check change percent threshold and flagged the item missing.
+*   **Resolution:** Added a **Transient Motion Guard** that checks if the ROI's changed pixel area exceeds 65% in a single frame. If it does, it's flagged as transient occlusion (e.g. a person or body part passing through), and the missing state escalation is skipped.
+
+### Watch Stays Green When Hand Occluding ROI (Brightness Check Flaw)
+*   **Symptom:** Removing the watch from the desk kept it green when the user's hand/arm held it.
+*   **Root Cause:** The temporary brightness check expected the mean brightness to rise when the dark item was removed. However, a person's hand or sleeve entering the ROI is also dark, causing `live_mean < ref_mean` and fooling the brightness check.
+*   **Resolution:** Replaced the brightness-only gate with structural template matching in a tight shift window, which evaluates fine-grained pixel structures rather than average brightness.
+
+### Positional Deviation Mismatch / Undefined Threshold Crash
+*   **Symptom:** The watch stayed red after being returned to the desk, and the console crashed.
+*   **Root Cause:**
+    1. The code referenced `MATCH_SCORE_THRESHOLD` which was undefined in the fallback path, causing a NameError.
+    2. The recovery logic required `is_genuinely_shifted = True` (dx > 8 or dy > 8), meaning placing the item back in its exact baseline position (0px shift) failed the shift check and fell back to missing.
+*   **Resolution:** Removed the shift requirement for recovery. If the template match score anywhere in the padded search area is `≥ 0.60`, the item is marked present (whether shifted or exactly in place).
+
+### FileNotFoundError on API Upload of registered_N.jpg
+*   **Symptom:** The detector engine crashed with a `FileNotFoundError` when trying to ingest a missing sequential snapshot.
+*   **Root Cause:** If the frame sequence count and the actual saved filenames fell out of sync or failed to write due to disk/write lock issues, the script tried to read a non-existent file path.
+*   **Resolution:** Ensured proper fallback checks in the snapshot sequence logic, logging error messages rather than causing a main loop crash.
 

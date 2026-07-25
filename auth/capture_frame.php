@@ -58,19 +58,21 @@ $targetUpload = __DIR__ . "/../uploads/snapshots/{$roomId}_baseline.jpg";
 
 // Smart active stream clone: Use the live snapshot if python script is active
 // to avoid Tapo single-stream RTSP connection lock.
-$liveSnapshot = __DIR__ . "/../uploads/snapshots/clean_{$roomId}.jpg";
+$cleanSnapshot = __DIR__ . "/../uploads/snapshots/clean_{$roomId}.jpg";
+$liveSnapshot  = __DIR__ . "/../uploads/snapshots/live_{$roomId}.jpg";
 $usedLive = false;
 
-if (file_exists($liveSnapshot) && (time() - filemtime($liveSnapshot)) < 15) {
-    if (copy($liveSnapshot, $targetRef)) {
+if (file_exists($cleanSnapshot) && filesize($cleanSnapshot) > 1000) {
+    if (@copy($cleanSnapshot, $targetRef)) {
+        $usedLive = true;
+    }
+} elseif (file_exists($liveSnapshot) && filesize($liveSnapshot) > 1000) {
+    if (@copy($liveSnapshot, $targetRef)) {
         $usedLive = true;
     }
 }
 
 if (!$usedLive) {
-    if (file_exists($targetRef)) {
-        @unlink($targetRef);
-    }
     $cmd = '"' . $ffmpegPath . '"'
         . " -rtsp_transport tcp -y -i " . escapeshellarg($rtsp)
         . " -vframes 1 -vf scale=960:-2 -f image2 " . escapeshellarg($targetRef);

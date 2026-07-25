@@ -1,8 +1,8 @@
 {
-    "mode": "testing",
-    "tracking_mode": "registered",
-    "reset_paused": true,
-    "reset_rois": true,
-    "reset_timestamp": 1784883572,
-    "updated_at": "2026-07-24 16:59:32"
+  "mode": "testing",
+  "tracking_mode": "registered",
+  "reset_paused": false,
+  "reset_rois": false,
+  "reset_timestamp": 1784976266,
+  "updated_at": "2026-07-25 18:44:26"
 }

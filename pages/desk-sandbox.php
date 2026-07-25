@@ -427,11 +427,11 @@ if (file_exists($mode_file_path)) {
               </div>
             </div>
             
-            <!-- Video Container (Balanced Compact Dimensions with Full Screen Support) -->
-            <div id="camVideoBox" style="position:relative; width:100%; max-width:760px; margin:0 auto; height:380px; aspect-ratio: 16/9; background:#050d08; display:flex; justify-content:center; align-items:center; overflow:hidden; border-radius:6px;">
+            <!-- Video Container (Balanced Compact Dimensions for 100% Zoom) -->
+            <div id="camVideoBox" style="position:relative; width:100%; max-width:840px; max-height:472px; margin:0 auto; aspect-ratio:16/9; background:#000000; display:flex; justify-content:center; align-items:center; overflow:hidden; border-radius:8px;">
               <!-- TWO ALTERNATING IMAGES FOR FLICKER-FREE DOM BUFFER SWAPPING -->
-              <img id="cam1Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity 0.05s ease; border-radius:6px;" />
-              <img id="cam2Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity 0.05s ease; border-radius:6px;" />
+              <img id="cam1Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; z-index:1; border-radius:8px;" />
+              <img id="cam2Stream" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; z-index:1; border-radius:8px;" />
               
               <!-- Live HUD Overlay -->
               <div id="liveHudOverlay" style="position:absolute; inset:0; pointer-events:none; display:flex; flex-direction:column; justify-content:space-between; padding:16px; box-sizing:border-box; display:none; z-index:5;">
@@ -939,6 +939,7 @@ async function initCamera() {
       // Fetch initial frame
       img1.src = `../uploads/snapshots/live_${ROOM_ID}.jpg?t=${Date.now()}`;
       img1.onload = () => {
+        img1.style.zIndex = 2;
         img1.style.opacity = 1;
       };
 
@@ -950,8 +951,12 @@ async function initCamera() {
         const currentImg = document.getElementById(activeImgId === 1 ? 'cam1Stream' : 'cam2Stream');
         
         targetImg.onload = () => {
+          targetImg.style.zIndex = 2;
           targetImg.style.opacity = 1;
+          
+          currentImg.style.zIndex = 1;
           currentImg.style.opacity = 0;
+          
           activeImgId = (activeImgId === 1) ? 2 : 1;
           livePollInterval = setTimeout(pollNext, 120);
         };
@@ -1211,21 +1216,6 @@ async function truncateSandboxDetections() {
     }
   } catch (err) {
     showToast('error', 'Network error.');
-  }
-}
-
-async function resetSystemState() {
-  if (!confirm("Are you sure you want to RESET the system? This will clear the reference image, bounded ROIs, snapshot images, and database detection logs.")) return;
-  try {
-    const res = await spotitFetch('../auth/reset_system_state.php', { method: 'POST' });
-    if (res && res.success) {
-      showToast('success', 'System reset completed successfully!');
-      setTimeout(() => location.reload(), 900);
-    } else {
-      showToast('error', res?.message || 'Failed to reset system state.');
-    }
-  } catch (err) {
-    showToast('error', 'Network error resetting system state.');
   }
 }
 

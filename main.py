@@ -22,7 +22,7 @@ SCENE_MOTION_LIMIT         = 0.40        # % of frame stable (was 0.15)
 CONSISTENCY_FRAMES         = 5           # consecutive frames to confirm (was 3)
 RTSP_URL                   = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
 ROTATE_CAMERA              = False       # Set to True for portrait iPhone, False for Tapo CCTV
-MATCH_SCORE_THRESHOLD      = 0.55        # threshold score for template matching (calibrated for RTSP stream)
+MATCH_SCORE_THRESHOLD      = 0.60        # threshold score for template matching (calibrated for RTSP stream)
 
 # ── ROOM / API CONFIG ───────────────────────────────────────────────────────
 ROOM_ID           = 'DESK'              # changed to DESK for personal desk testing
@@ -76,30 +76,11 @@ print(f"[SPOT-IT] Loaded {len(roi_list)} ROIs: {[r['label'] for r in roi_list]}"
 
 BASELINE_COUNT = len(roi_list)  # all items present = baseline
 
-# ── LOAD REFERENCE FRAME ──────────────────────────────────────────────────
-ref_bgr = cv2.imread(REF_IMAGE)
-if ref_bgr is None:
-    print(f"[SPOT-IT] Reference image missing! Auto-capturing baseline from stream...")
-    cap_temp = cv2.VideoCapture(RTSP_URL)
-    ret_temp, frame_temp = cap_temp.read()
-    if ret_temp:
-        width = int(frame_temp.shape[1] * STREAM_SCALE)
-        height = int(frame_temp.shape[0] * STREAM_SCALE)
-        resized_temp = cv2.resize(frame_temp, (width, height), interpolation=cv2.INTER_AREA)
-        os.makedirs(os.path.dirname(REF_IMAGE), exist_ok=True)
-        cv2.imwrite(REF_IMAGE, resized_temp)
-        print(f"[SPOT-IT] Successfully captured and saved new baseline: {REF_IMAGE}")
-        ref_bgr = resized_temp
-    else:
-        print(f"[ERROR] Failed to connect to stream to capture baseline. Check IP/Network.")
-        exit()
-    cap_temp.release()
-ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
-TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
-print(f"[SPOT-IT] Reference frame loaded — size: {TARGET_SIZE}")
-
-print(f"[DEBUG] Reference size: {ref_bgr.shape}")
+# ── REFERENCE FRAME VARIABLES ──────────────────────────────────────────────
+ref_bgr  = None
+ref_gray = None
+ref_blur = None
+TARGET_SIZE = (960, 540)
 
 # ── MOBILENETV2 DNN GATEKEEPER — DOWNLOAD + INIT ──────────────────────────
 def _download_with_fallback(urls, dest_path, min_size_bytes=1024, description="file"):
@@ -271,6 +252,7 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
             'pc': ['desktop computer', 'computer', 'screen', 'monitor'],
             'computer': ['desktop computer', 'computer', 'screen', 'monitor'],
             'watch': ['watch', 'stopwatch', 'digital watch', 'wrist watch', 'wristwatch', 'clock', 'timepiece'],
+            'umbrella': ['umbrella', 'parasol', 'brolly'],
         }
 
         search_terms = [target]
@@ -305,10 +287,11 @@ def validate_presence_dnn(roi_crop, target_label, top_k=DNN_TOP_K,
 import threading
 
 class VideoStream:
-    STALE_TIMEOUT_SEC = 8  # reconnect if stream goes dead for 8 seconds
+    STALE_TIMEOUT_SEC = 15  # reconnect if stream goes dead for 15 seconds
 
     def __init__(self, src):
         self.src = src
+        self.fallback_src = src.replace('/stream1', '/stream2') if '/stream1' in src else src
         self.cap = None
         self.ret = False
         self.frame = None
@@ -321,26 +304,48 @@ class VideoStream:
         threading.Thread(target=self._watchdog, args=(), daemon=True).start()
         return self
 
+    def _try_open(self, url):
+        try:
+            temp_cap = cv2.VideoCapture(url)
+            temp_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if temp_cap.isOpened():
+                r, f = temp_cap.read()
+                if r and f is not None:
+                    return temp_cap, r, f
+            temp_cap.release()
+        except Exception:
+            pass
+        return None, False, None
+
     def update(self):
-        # Asynchronously connect in the background to avoid startup hang
-        new_cap = cv2.VideoCapture(self.src)
-        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        with self.lock:
-            self.cap = new_cap
-            self.last_good_frame_at = time.time()
+        # Try main stream1 first; fallback to stream2 if stream1 is locked
+        cap_obj, r, f = self._try_open(self.src)
+        if cap_obj is None and self.fallback_src != self.src:
+            print(f"[SPOT-IT][VideoStream] Main stream locked — attempting fallback to {self.fallback_src}...")
+            cap_obj, r, f = self._try_open(self.fallback_src)
+
+        if cap_obj is not None:
+            with self.lock:
+                self.cap = cap_obj
+                self.ret = r
+                self.frame = f
+                self.last_good_frame_at = time.time()
 
         while not self.stopped:
-            if self.cap is None:
+            if self.cap is None or not self.cap.isOpened():
                 time.sleep(0.5)
                 continue
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.ret = ret
-                    self.frame = frame
-                    self.last_good_frame_at = time.time()
-            else:
-                time.sleep(0.1)
+            try:
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    with self.lock:
+                        self.ret = ret
+                        self.frame = frame
+                        self.last_good_frame_at = time.time()
+                else:
+                    time.sleep(0.1)
+            except Exception:
+                time.sleep(0.2)
 
     def _reconnect(self):
         print(f"[SPOT-IT][WATCHDOG] Dead stream detected. Reconnecting RTSP...")
@@ -354,17 +359,25 @@ class VideoStream:
             except Exception:
                 pass
                 
-        new_cap = cv2.VideoCapture(self.src)
-        new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        with self.lock:
-            self.cap = new_cap
-            self.last_good_frame_at = time.time()
-        print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
+        cap_obj, r, f = self._try_open(self.src)
+        if cap_obj is None and self.fallback_src != self.src:
+            cap_obj, r, f = self._try_open(self.fallback_src)
+
+        if cap_obj is not None:
+            with self.lock:
+                self.cap = cap_obj
+                self.ret = r
+                self.frame = f
+                self.last_good_frame_at = time.time()
+            print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
+        else:
+            print("[SPOT-IT][WATCHDOG] Reconnect attempt failed.")
 
     def _watchdog(self):
         while not self.stopped:
-            time.sleep(2)
-            if self.cap is not None:
+            time.sleep(3)
+            # Only trigger watchdog if stream was opened and has gone stale
+            if self.cap is not None and self.ret:
                 if time.time() - self.last_good_frame_at > self.STALE_TIMEOUT_SEC:
                     self._reconnect()
 
@@ -374,7 +387,7 @@ class VideoStream:
 
     def isOpened(self):
         with self.lock:
-            return self.cap is not None and self.cap.isOpened()
+            return self.cap is not None and self.cap.isOpened() and self.ret
 
     def release(self):
         self.stopped = True
@@ -389,9 +402,9 @@ class VideoStream:
 print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
 cap = VideoStream(RTSP_URL).start()
 
-# Wait up to 10 seconds for the background connection to resolve
+# Wait up to 15 seconds for the background connection to resolve
 start_wait = time.time()
-while not cap.isOpened() and time.time() - start_wait < 10.0:
+while not cap.isOpened() and time.time() - start_wait < 15.0:
     time.sleep(0.5)
 
 if not cap.isOpened():
@@ -402,6 +415,32 @@ if not cap.isOpened():
 
 print("[SPOT-IT] Stream connected. Starting detection loop...")
 print("[SPOT-IT] Press Q to quit.\n")
+
+# ── LOAD / AUTO-CAPTURE REFERENCE FRAME ──────────────────────────────────
+ref_bgr = cv2.imread(REF_IMAGE)
+if ref_bgr is None or ref_bgr.shape[0] < 50:
+    print(f"[SPOT-IT] Reference image missing or invalid! Capturing baseline directly from VideoStream...")
+    ref_wait_start = time.time()
+    ret_ref, frame_ref = cap.read()
+    while (not ret_ref or frame_ref is None) and (time.time() - ref_wait_start < 10.0):
+        time.sleep(0.2)
+        ret_ref, frame_ref = cap.read()
+    
+    if ret_ref and frame_ref is not None:
+        width = int(frame_ref.shape[1] * STREAM_SCALE)
+        height = int(frame_ref.shape[0] * STREAM_SCALE)
+        ref_bgr = cv2.resize(frame_ref, (width, height), interpolation=cv2.INTER_AREA)
+        os.makedirs(os.path.dirname(REF_IMAGE), exist_ok=True)
+        cv2.imwrite(REF_IMAGE, ref_bgr)
+        print(f"[SPOT-IT] Successfully captured and saved new baseline image: {REF_IMAGE}")
+    else:
+        print(f"[ERROR] Could not read valid frame from VideoStream to auto-capture baseline.")
+        exit()
+
+ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
+TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
+print(f"[SPOT-IT] Reference frame loaded — size: {TARGET_SIZE} | Baseline items count: {BASELINE_COUNT}")
 
 # ── PER-ROI STATE ─────────────────────────────────────────────────────────
 consistency_count = {roi['label']: 0 for roi in roi_list}
@@ -431,7 +470,7 @@ IS_PRODUCTION_MODE   = False   # updated dynamically from detection_mode.json
 SANDBOX_TRACKING_MODE = 'registered'  # 'registered' | 'unregistered' — updated dynamically
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
-def validate_presence_dnn(crop, label="object"):
+def validate_presence_classical(crop, label="object"):
     """
     Secondary ML / Computer Vision Gatekeeper Filter.
     Analyzes texture variance and edge density to reject shadows and lighting noise.
@@ -470,26 +509,22 @@ def check_roi(roi, thresh_mask):
 
 def save_frames_atomic(output_frame, clean_frame):
     try:
-        # Check if reset state is active in detection_mode.json
-        mode_file = os.path.join(BASE_DIR, "detection_mode.json")
-        if os.path.exists(mode_file):
-            try:
-                with open(mode_file, 'r') as f:
-                    mdata = json.load(f)
-                    if mdata.get('reset_paused') is True or mdata.get('reset_rois') is True:
-                        return
-            except Exception:
-                pass
-
-        live_path = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
-        live_tmp  = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}_tmp.jpg")
-        cv2.imwrite(live_tmp, output_frame)
-        os.replace(live_tmp, live_path)
-
+        live_path  = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
+        live_tmp   = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}_tmp.jpg")
         clean_path = os.path.join(SNAPSHOT_DIR, f"clean_{ROOM_ID}.jpg")
         clean_tmp  = os.path.join(SNAPSHOT_DIR, f"clean_{ROOM_ID}_tmp.jpg")
-        cv2.imwrite(clean_tmp, clean_frame)
-        os.replace(clean_tmp, clean_path)
+
+        res_live, buf_live = cv2.imencode('.jpg', output_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if res_live:
+            with open(live_tmp, 'wb') as f:
+                f.write(buf_live.tobytes())
+            os.replace(live_tmp, live_path)
+
+        res_clean, buf_clean = cv2.imencode('.jpg', clean_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if res_clean:
+            with open(clean_tmp, 'wb') as f:
+                f.write(buf_clean.tobytes())
+            os.replace(clean_tmp, clean_path)
     except Exception:
         pass
 
@@ -590,16 +625,16 @@ def post_to_api(label, snapshot_path, change_pct):
             result = response.json()
             if result.get('success'):
                 detection_id = result.get('detection_id')
-                print(f"  → API SUCCESS: detection_id={detection_id}, "
+                print(f"  -> API SUCCESS: detection_id={detection_id}, "
                       f"deviation={result.get('deviation')}, stage={result.get('stage')}")
                 return detection_id
             else:
-                print(f"  → API ERROR: {result.get('message')}")
+                print(f"  -> API ERROR: {result.get('message')}")
         else:
-            print(f"  → API HTTP ERROR: {response.status_code} — {response.text[:200]}")
+            print(f"  -> API HTTP ERROR: {response.status_code} — {response.text[:200]}")
 
     except requests.exceptions.RequestException as e:
-        print(f"  → API CONNECTION FAILED: {e}")
+        print(f"  -> API CONNECTION FAILED: {e}")
     return None
 
 def post_snapshot_b(label, detection_id, snapshot_path_b):
@@ -624,14 +659,14 @@ def post_snapshot_b(label, detection_id, snapshot_path_b):
         if response.status_code == 200:
             result = response.json()
             if result.get('success'):
-                print(f"  → Snapshot B API SUCCESS for Detection #{detection_id}")
+                print(f"  -> Snapshot B API SUCCESS for Detection #{detection_id}")
             else:
-                print(f"  → Snapshot B API ERROR: {result.get('message')}")
+                print(f"  -> Snapshot B API ERROR: {result.get('message')}")
         else:
-            print(f"  → Snapshot B API HTTP ERROR: {response.status_code}")
+            print(f"  -> Snapshot B API HTTP ERROR: {response.status_code}")
 
     except requests.exceptions.RequestException as e:
-        print(f"  → Snapshot B API CONNECTION FAILED: {e}")
+        print(f"  -> Snapshot B API CONNECTION FAILED: {e}")
 
 def post_mass_deviation():
     """
@@ -648,13 +683,13 @@ def post_mass_deviation():
         if response.status_code == 200:
             result = response.json()
             if result.get('success'):
-                print(f"  → Mass Deviation API SUCCESS: Room monitoring paused.")
+                print(f"  -> Mass Deviation API SUCCESS: Room monitoring paused.")
             else:
-                print(f"  → Mass Deviation API ERROR: {result.get('message')}")
+                print(f"  -> Mass Deviation API ERROR: {result.get('message')}")
         else:
-            print(f"  → Mass Deviation API HTTP ERROR: {response.status_code}")
+            print(f"  -> Mass Deviation API HTTP ERROR: {response.status_code}")
     except requests.exceptions.RequestException as e:
-        print(f"  → Mass Deviation API CONNECTION FAILED: {e}")
+        print(f"  -> Mass Deviation API CONNECTION FAILED: {e}")
 
 def post_item_recovered(label):
     """
@@ -669,7 +704,7 @@ def post_item_recovered(label):
     try:
         response = requests.post(API_URL, data=payload, timeout=5)
         if response.status_code == 200 and response.json().get('success'):
-            print(f"  → Item Recovered API SUCCESS for '{label}'")
+            print(f"  -> Item Recovered API SUCCESS for '{label}'")
     except Exception as e:
         pass
 
@@ -700,7 +735,7 @@ while True:
                 STAGE2_THRESH = 3600.0 if TIMER_MODE == 'production_speed' else 6.0
 
                 # Unpause monitoring if reset signal is set
-                if mode_data.get('reset_paused', False):
+                if mode_data.get('reset_paused', False) or mode_data.get('reset_rois', False):
                     print("[SPOT-IT] Recalibration / status reset signal received! Unpausing live monitoring...")
                     monitoring_paused = False
                     missing_timestamps.clear()
@@ -715,7 +750,15 @@ while True:
                         shifted_locations[lbl] = None
                         snapshot_b_triggered[lbl] = False
                         active_detection_ids[lbl] = None
-                    active_events.clear()
+                    
+                    # Clear reset flags in detection_mode.json
+                    try:
+                        mode_data['reset_paused'] = False
+                        mode_data['reset_rois'] = False
+                        with open(mode_file, 'w') as mf_out:
+                            json.dump(mode_data, mf_out, indent=2)
+                    except Exception:
+                        pass
 
                 if IS_PRODUCTION_MODE:
                     print(f"[SPOT-IT] Production Mode active for Room '{ROOM_ID}' — Timer Speed: {TIMER_MODE} (S1:{STAGE1_THRESH}s / S2:{STAGE2_THRESH}s) | Dual Tracking Active")
@@ -788,16 +831,25 @@ while True:
         frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
     frame = rescaleFrame(frame)
 
-    # ── AUTO-INITIALIZE REFERENCE FRAME IF MISSING / CLEARED ──────────────
+    # ── CHECK REFERENCE FRAME IF MISSING / CLEARED ──────────────
     if ref_bgr is None:
-        print("[SPOT-IT] Capturing new baseline reference image from live stream...")
-        ref_bgr = frame.copy()
-        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-        ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
-        TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
-        os.makedirs(os.path.dirname(REF_IMAGE), exist_ok=True)
-        cv2.imwrite(REF_IMAGE, ref_bgr)
-        last_ref_mtime = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else time.time()
+        # Draw a warning overlay on the feed indicating no baseline is loaded
+        output = frame.copy()
+        cv2.putText(output, "NO BASELINE CAPTURED — calibration required.",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
+        for roi in roi_list:
+            x, y, w, h = roi['x'], roi['y'], roi['w'], roi['h']
+            cv2.rectangle(output, (x, y), (x+w, y+h), (0, 165, 255), 1)
+            cv2.putText(output, roi['label'], (x, y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
+        save_frames_atomic(output, frame)
+        if SHOW_GUI:
+            cv2.imshow("S.P.O.T.-IT Live Detection", output)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        else:
+            time.sleep(0.05)
+        continue
 
     # ── RESIZE REFERENCE FRAME IF SIZES MISMATCH ──────────────────────────
     if frame.shape[:2] != ref_bgr.shape[:2]:
@@ -1009,6 +1061,18 @@ while True:
         label      = roi['label']
         base_tier  = get_roi_tier(roi)
 
+        # Safety guard: Ensure all state dictionaries contain 'label'
+        if label not in active_events: active_events[label] = False
+        if label not in consistency_count: consistency_count[label] = 0
+        if label not in ok_consistency_count: ok_consistency_count[label] = 0
+        if label not in active_detection_ids: active_detection_ids[label] = None
+        if label not in snapshot_b_triggered: snapshot_b_triggered[label] = False
+        if label not in clean_snapshot_saved: clean_snapshot_saved[label] = False
+        if label not in seq_completed: seq_completed[label] = False
+        if label not in last_seq_snapshot_time: last_seq_snapshot_time[label] = 0
+        if label not in shifted_locations: shifted_locations[label] = None
+        if label not in registered_seq_count: registered_seq_count[label] = 0
+
         # ── SANDBOX TRACKING MODE OVERRIDE ──────────────────────────────────
         # In production, use actual ROI tier from JSON/keywords (full pipeline).
         # In sandbox testing:
@@ -1024,36 +1088,56 @@ while True:
         changed, change_pct = check_roi(roi, thresh)
         is_actually_missing = changed
         if changed:
-            if tier == 1:
-                # Registered Asset -> Direct Presence Validation Gate (Template Match + MobileNetV2)
-                ref_crop = ref_bgr[y:y+h, x:x+w]
-                live_crop = frame[y:y+h, x:x+w]
-                is_present_template = False
-                max_score = 0.0
-                if live_crop.shape[0] >= h and live_crop.shape[1] >= w:
-                    res = cv2.matchTemplate(live_crop, ref_crop, cv2.TM_CCOEFF_NORMED)
-                    _, max_score, _, _ = cv2.minMaxLoc(res)
-                    if max_score >= MATCH_SCORE_THRESHOLD:
-                        is_present_template = True
-
-                if is_present_template:
-                    # Item is physically inside the ROI box -> GREEN OK
-                    is_actually_missing = False
-                else:
-                    # Secondary presence validation gate: MobileNetV2 DNN check
-                    is_present_dnn, dnn_conf = validate_presence_dnn(live_crop, label)
-                    if is_present_dnn:
-                        # DNN confirms object is still present in zone -> GREEN OK
-                        is_actually_missing = False
+            # ── TRANSIENT MOTION GUARD ──────────────────────────────────────────
+            # If >65% of the ROI changed in a single frame it's almost certainly
+            # a person walking past (large occlusion), NOT item removal.
+            # Item removal causes 15-50% change; a person covering causes 70-100%.
+            if change_pct > 0.65:
+                is_actually_missing = False
             else:
-                # Direct match check for Tier 2/Unregistered items
-                ref_crop = ref_bgr[y:y+h, x:x+w]
-                live_crop = frame[y:y+h, x:x+w]
-                if live_crop.shape[0] >= h and live_crop.shape[1] >= w:
-                    res = cv2.matchTemplate(live_crop, ref_crop, cv2.TM_CCOEFF_NORMED)
-                    _, f_score, _, _ = cv2.minMaxLoc(res)
-                    if f_score >= MATCH_SCORE_THRESHOLD:
-                        is_actually_missing = False
+                ref_crop      = ref_bgr[y:y+h, x:x+w]
+                orig_live_crop = frame[y:y+h, x:x+w]
+
+                # ── SHIFT-SEARCH MATCH GATE (works for dark + light items) ──────
+                # Find the best match of ref_crop (item at baseline) anywhere in a
+                # ±30px search window around the original ROI position.
+                #
+                # Score interpretation (TM_CCOEFF_NORMED):
+                #   ≥ 0.60  →  item found at or near baseline position  → PRESENT
+                #   < 0.60  →  item not found (removed or body blocking) → MISSING
+                #
+                # Why shift-search instead of exact-position:
+                #   Exact match drops to 0.40-0.65 with even 3-5px positional error.
+                #   The padded search window tolerates realistic placement variation.
+                PAD = 30
+                x1 = max(0, x - PAD)
+                y1 = max(0, y - PAD)
+                x2 = min(frame.shape[1], x + w + PAD)
+                y2 = min(frame.shape[0], y + h + PAD)
+                live_search_area = frame[y1:y2, x1:x2]
+
+                max_score = 0.0
+                best_loc  = (PAD, PAD)
+                if live_search_area.shape[0] >= h and live_search_area.shape[1] >= w:
+                    res = cv2.matchTemplate(live_search_area, ref_crop, cv2.TM_CCOEFF_NORMED)
+                    _, max_score, _, max_loc = cv2.minMaxLoc(res)
+                    best_loc = max_loc
+
+                PRESENCE_SCORE_THRESHOLD = 0.60  # min score to confirm item is present
+
+                if max_score >= PRESENCE_SCORE_THRESHOLD:
+                    # Item found at or near its baseline position
+                    is_actually_missing = False
+                    sx = x1 + best_loc[0]
+                    sy = y1 + best_loc[1]
+                    if abs(sx - x) > 8 or abs(sy - y) > 8:
+                        shifted_locations[label] = (sx, sy, w, h)
+                    else:
+                        shifted_locations[label] = None
+                else:
+                    # Item not found anywhere in search window → truly missing
+                    is_actually_missing = True
+                    shifted_locations[label] = None
 
         if is_actually_missing:
             ok_consistency_count[label] = 0
@@ -1080,7 +1164,7 @@ while True:
             consistency_count[label] = 0
             ok_consistency_count[label] += 1
             # Hysteresis Latching: Require 8 consecutive frames of OK presence before resetting missing state
-            if ok_consistency_count[label] >= 8:
+            if ok_consistency_count[label] >= 3:
                 if active_events[label]:
                     print(f"[SPOT-IT] '{label}' confirmed returned to OK state (over 8 consecutive frames). Auto-resolving alert...")
                     post_item_recovered(label)
@@ -1106,6 +1190,8 @@ while True:
             if tier == 1:
                 curr_idx = max(1, min(5, registered_seq_count[label]))
                 snapshot_path = os.path.join(SNAPSHOT_DIR, f"{label}_registered_{curr_idx}.jpg")
+                if not os.path.exists(snapshot_path):
+                    snapshot_path = save_snapshot(frame, label, f"registered_{curr_idx}")
             else:
                 snapshot_path = save_snapshot(frame, label, "snapshot_A")
 
@@ -1188,12 +1274,12 @@ while True:
             cv2.putText(output, f"CHECKING: {label} ({consistency_count[label]}/{CONSISTENCY_FRAMES})",
                         (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
         elif shifted_locations[label] is not None:
-            # Draw original box in yellow-green and shifted template match location in orange
+            # Draw original boundary in thin green and the shifted position in solid green OK
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 255, 0), 1, lineType=cv2.LINE_AA)
             sx, sy, sw, sh = shifted_locations[label]
-            cv2.rectangle(output, (sx, sy), (sx+sw, sy+sh), (0, 165, 255), 2)
-            cv2.putText(output, f"SHIFTED: {label}", (sx, sy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+            cv2.rectangle(output, (sx, sy), (sx+sw, sy+sh), (0, 255, 0), 2)
+            cv2.putText(output, f"OK: {label}", (sx, sy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         else:
             cv2.rectangle(output, (x, y), (x+w, y+h), (0, 255, 0), 2)
             cv2.putText(output, f"OK: {label}", (x, y - 10),
@@ -1203,13 +1289,9 @@ while True:
     if not monitoring_paused:
         if missing_count > 0:
             status_text  = f"ALERT: {missing_count} item(s) missing"
-            status_color = (0, 0, 255)
-        else:
-            status_text  = "All items present"
-            status_color = (0, 255, 0)
-
-        cv2.putText(output, status_text, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+            cv2.putText(output, status_text, (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+        
         cv2.putText(output, f"Scene motion: {motion_pct:.1%}", (10, TARGET_SIZE[1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 

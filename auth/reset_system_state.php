@@ -38,16 +38,20 @@ try {
             foreach ($files as $file) {
                 if (is_file($file)) {
                     @unlink($file);
+                    if (file_exists($file)) {
+                        // Windows fallback: if file is locked, truncate it to 0 bytes
+                        @file_put_contents($file, '');
+                    }
                 }
             }
         }
     }
 
-    // 4. Copy clean standby placeholder to active snapshot paths
-    $standby_svg = __DIR__ . '/../assets/img/standby_placeholder.svg';
-    if (file_exists($standby_svg)) {
-        @copy($standby_svg, __DIR__ . '/../uploads/snapshots/clean_DESK.jpg');
-        @copy($standby_svg, __DIR__ . '/../photos/ref_image.jpg');
+    // 4. Clear reference image so main.py auto-captures clean baseline frame
+    $ref_file = __DIR__ . '/../photos/ref_image.jpg';
+    @unlink($ref_file);
+    if (file_exists($ref_file)) {
+        @file_put_contents($ref_file, '');
     }
 
     // 4. Truncate database records for DESK safely
