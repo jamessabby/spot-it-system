@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  spotit-detector:
+    build: .
+    container_name: spotit_detector_service
+    restart: always
+    network_mode: host # Allows container to directly access cameras on local WiFi network
+    environment:
+      - API_URL=http://localhost/spotit/auth/ingest_detection.php
+      - API_KEY=CHANGE_ME_DETECTION_KEY
+    volumes:
+      # Mount snapshots directory so output images are visible to the web server
+      - C:/xampp/htdocs/spotit/uploads/snapshots:/app/uploads/snapshots
+      - C:/xampp/htdocs/spotit/photos:/app/photos
+      - ./detection_mode.json:/app/detection_mode.json
+      # Support dynamic room ROIs
+      - .:/app/shared_config:ro

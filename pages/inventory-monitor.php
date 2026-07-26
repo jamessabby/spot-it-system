@@ -276,8 +276,17 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                     'recent_log'        => $logsByRoom[$rid] ?? [['ok', '08:00:00 · Monitoring active']],
                 ];
             }
+
+            $allDetectionsStmt = $monitorPdo->query("
+                SELECT detection_id, room_id, object_type, object_zone, detected_at, snapshot_path, snapshot_path_b, baseline_count, live_count, deviation, roi_change_pct, match_score, status, notes
+                FROM detections
+                ORDER BY detection_id DESC
+                LIMIT 200
+            ");
+            $allDetections = $allDetectionsStmt ? $allDetectionsStmt->fetchAll(PDO::FETCH_ASSOC) : [];
         } catch (Throwable $e) {
             $rooms = [];
+            $allDetections = [];
         }
 
         // ── Status helpers ──
@@ -573,6 +582,98 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
         </div>
       </div><!-- /table view -->
 
+      <!-- ══════════ DETAILED DETECTION LOG RECORDS TABLE (PHPMYADMIN STYLE) ══════════ -->
+      <div class="card mt-4" id="detRecordsCard" style="margin-top:24px;">
+        <div class="card-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div class="card-title"><i class="fa-solid fa-list-check"></i> Inventory Detection Log Records</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <input type="text" class="form-control form-control-sm" id="searchDetInput" onkeyup="filterDetTable()" placeholder="Search item, room, zone..." style="width:180px; font-size:.74rem;"/>
+            <select class="form-control form-control-sm" id="filterDetRoom" onchange="filterDetTable()" style="width:130px; font-size:.74rem;">
+              <option value="">All Rooms</option>
+              <?php if (!empty($dbRooms)): ?>
+                <?php foreach ($dbRooms as $dr): ?>
+                  <option value="<?= htmlspecialchars($dr['room_id']) ?>"><?= htmlspecialchars($dr['room_id']) ?></option>
+                <?php endforeach; ?>
+              <?php endif; ?>
+            </select>
+            <select class="form-control form-control-sm" id="filterDetStatus" onchange="filterDetTable()" style="width:140px; font-size:.74rem;">
+              <option value="">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="potential">Potential</option>
+              <option value="confirmed_missing">Confirmed Missing</option>
+              <option value="dismissed">Dismissed</option>
+              <option value="recovered">Recovered</option>
+            </select>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="inv-table" id="detLogTable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Room</th>
+                <th>Object Type</th>
+                <th>Object Zone</th>
+                <th>Detected At</th>
+                <th>Snapshots</th>
+                <th>B / L / Dev</th>
+                <th>Change %</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (empty($allDetections)): ?>
+              <tr>
+                <td colspan="11" class="text-center py-4" style="color:var(--text-dim);">No detection log records found.</td>
+              </tr>
+              <?php else: ?>
+              <?php foreach ($allDetections as $d):
+                $badge = match($d['status']) {
+                  'confirmed_missing' => 'inv-badge-missing',
+                  'potential'         => 'inv-badge-potential',
+                  'recovered'         => 'inv-badge-normal',
+                  'dismissed'         => 'inv-badge-offline',
+                  default             => 'inv-badge-calibrating',
+                };
+                $dev = (int)$d['deviation'];
+                $devSign  = $dev < 0 ? '−' . abs($dev) : ($dev > 0 ? '+' . $dev : '0');
+              ?>
+              <tr class="det-row" data-room="<?= htmlspecialchars($d['room_id']) ?>" data-status="<?= htmlspecialchars($d['status']) ?>">
+                <td><span style="font-family:var(--font-mono);font-weight:800;font-size:.75rem;">#<?= (int)$d['detection_id'] ?></span></td>
+                <td><span style="font-family:var(--font-mono);font-weight:700;"><?= htmlspecialchars($d['room_id']) ?></span></td>
+                <td><strong><?= htmlspecialchars($d['object_type']) ?></strong></td>
+                <td><span style="font-size:.76rem;color:var(--text-dim);"><?= htmlspecialchars($d['object_zone'] ?: '—') ?></span></td>
+                <td><span style="font-family:var(--font-mono);font-size:.72rem;color:var(--text-muted);"><?= date('Y-m-d H:i:s', strtotime($d['detected_at'])) ?></span></td>
+                <td>
+                  <div style="display:flex;gap:4px;">
+                    <?php if ($d['snapshot_path']): ?>
+                    <button class="btn btn-sm" onclick="previewImage('../uploads/snapshots/<?= htmlspecialchars(basename($d['snapshot_path'])) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot A">Snap A</button>
+                    <?php endif; ?>
+                    <?php if ($d['snapshot_path_b']): ?>
+                    <button class="btn btn-sm" onclick="previewImage('../uploads/snapshots/<?= htmlspecialchars(basename($d['snapshot_path_b'])) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot B">Snap B</button>
+                    <?php endif; ?>
+                    <?php if (!$d['snapshot_path'] && !$d['snapshot_path_b']): ?>
+                    <span style="color:var(--text-dim);font-size:.7rem;">—</span>
+                    <?php endif; ?>
+                  </div>
+                </td>
+                <td style="font-family:var(--font-mono);font-size:.78rem;">
+                  <?= (int)$d['baseline_count'] ?> / <?= (int)$d['live_count'] ?> / <span class="inv-dev-chip <?= $dev < 0 ? 'neg' : ($dev > 0 ? 'pos' : 'zero') ?>" style="padding:1px 5px;font-size:.65rem;"><?= $devSign ?></span>
+                </td>
+                <td><span style="font-family:var(--font-mono);font-size:.75rem;"><?= $d['roi_change_pct'] !== null ? number_format((float)$d['roi_change_pct'], 1).'%' : '—' ?></span></td>
+                <td><span style="font-family:var(--font-mono);font-size:.75rem;"><?= $d['match_score'] !== null ? number_format((float)$d['match_score'], 3) : '—' ?></span></td>
+                <td><span class="inv-status-badge <?= $badge ?>"><span class="sb-dot"></span><?= htmlspecialchars($d['status']) ?></span></td>
+                <td style="font-size:.72rem;color:var(--text-muted);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="<?= htmlspecialchars($d['notes'] ?: '') ?>"><?= htmlspecialchars($d['notes'] ?: '—') ?></td>
+              </tr>
+              <?php endforeach; ?>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div><!-- /page-body -->
   </div><!-- /main-content -->
 </div><!-- /app-shell -->
@@ -644,6 +745,29 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
 <script src="../assets/js/spotit.js"></script>
 <script>
 startLiveClock('liveClock');
+
+function filterDetTable() {
+  const query = (document.getElementById('searchDetInput')?.value || '').toLowerCase();
+  const roomFilter = document.getElementById('filterDetRoom')?.value || '';
+  const statusFilter = document.getElementById('filterDetStatus')?.value || '';
+  
+  const rows = document.querySelectorAll('#detLogTable tbody tr.det-row');
+  rows.forEach(row => {
+    const text = row.innerText.toLowerCase();
+    const room = row.getAttribute('data-room') || '';
+    const status = row.getAttribute('data-status') || '';
+    
+    const matchesSearch = !query || text.includes(query);
+    const matchesRoom = !roomFilter || room === roomFilter;
+    const matchesStatus = !statusFilter || status === statusFilter;
+    
+    row.style.display = (matchesSearch && matchesRoom && matchesStatus) ? '' : 'none';
+  });
+}
+
+function previewImage(url) {
+  window.open(url, '_blank');
+}
 
 /* ══════════════════════════════════════
    DATA — populated from PHP (demo values)

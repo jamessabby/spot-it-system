@@ -460,5 +460,7 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
 
 ## 9. Change Log & Project History
 
+- **2026-07-26 (Dynamic Room & Camera DB Integration + Crash-Proof Threading):** Added DB-driven camera credentials (`camera_ip`, `camera_user`, `camera_pass`) in `spotit_monitor_db.rooms`, created [`auth/get_room_camera.php`](file:///c:/xampp/htdocs/spotit/auth/get_room_camera.php), dynamic auto-switching RTSP reader in `main.py` (zero terminal restarts), thread-safe `VideoStream` locking to prevent C++ FFmpeg crashes, auto-heal logic in `save_rois.php` for `DESK` system room (prevents FK 1452), auto-sync of `detection_mode.json` on room navigation, and Docker deployment artifacts (`Dockerfile`, `docker-compose.yml`, `requirements.txt`, `FUTURE_SCALING_GUIDE.md`).
+
 The historical change log documenting past development sessions and pivots has been moved to the end of [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook focused. Refer to that file to trace past modifications.
 

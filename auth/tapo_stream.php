@@ -46,29 +46,35 @@ $camNum  = (int)($_GET['cam']    ?? 1);
 $quality = (($_GET['quality'] ?? '') === 'high') ? 'stream1' : 'stream2';
 
 // ── Camera configuration ───────────────────────────────────────────────────────
-// In production: load from DB or config file per room
-// Tapo cameras must be on same local network as the PHP server (or accessible via VPN)
-$cameraConfig = [
-    'MLH306' => [
-        1 => ['ip' => getenv('TAPO_MLH306_CAM1_IP') ?: '192.168.1.101', 'user' => 'admin', 'pass' => getenv('TAPO_MLH306_CAM1_PASS') ?: ''],
-        2 => ['ip' => getenv('TAPO_MLH306_CAM2_IP') ?: '192.168.1.102', 'user' => 'admin', 'pass' => getenv('TAPO_MLH306_CAM2_PASS') ?: ''],
-    ],
-    'MLH305' => [
-        1 => ['ip' => getenv('TAPO_MLH305_CAM1_IP') ?: '192.168.1.103', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM1_PASS') ?: ''],
-        2 => ['ip' => getenv('TAPO_MLH305_CAM2_IP') ?: '192.168.1.104', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM2_PASS') ?: ''],
-    ],
-    'DESK' => [
-        1 => ['ip' => '192.168.18.11', 'user' => 'SpotItCamera', 'pass' => 'spotittapo232'],
-    ],
-];
+// Dynamic fetch from DB if configured, otherwise fallback to hardcoded
+$stmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass FROM rooms WHERE room_id = ? LIMIT 1");
+$stmt->execute([$roomId]);
+$dbRoom = $stmt->fetch();
 
-if (!isset($cameraConfig[$roomId][$camNum])) {
-    header('Content-Type: application/json');
-    echo json_encode(['status' => 'offline', 'reason' => 'Camera not configured for this room']);
-    exit();
+if ($dbRoom && !empty($dbRoom['camera_ip'])) {
+    $cam = [
+        'ip'   => $dbRoom['camera_ip'],
+        'user' => $dbRoom['camera_user'] ?: 'admin',
+        'pass' => $dbRoom['camera_pass'] ?: ''
+    ];
+} else {
+    $cameraConfig = [
+        'MLH306' => [
+            1 => ['ip' => getenv('TAPO_MLH306_CAM1_IP') ?: '192.168.1.101', 'user' => 'admin', 'pass' => getenv('TAPO_MLH306_CAM1_PASS') ?: ''],
+            2 => ['ip' => getenv('TAPO_MLH306_CAM2_IP') ?: '192.168.1.102', 'user' => 'admin', 'pass' => getenv('TAPO_MLH306_CAM2_PASS') ?: ''],
+        ],
+        'MLH305' => [
+            1 => ['ip' => getenv('TAPO_MLH305_CAM1_IP') ?: '192.168.1.103', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM1_PASS') ?: ''],
+            2 => ['ip' => getenv('TAPO_MLH305_CAM2_IP') ?: '192.168.1.104', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM2_PASS') ?: ''],
+        ],
+        'DESK' => [
+            1 => ['ip' => '192.168.18.11', 'user' => 'SpotItCamera', 'pass' => 'spotittapo232'],
+        ],
+    ];
+    $camRoomId = isset($cameraConfig[$roomId][$camNum]) ? $roomId : 'DESK';
+    $cam = $cameraConfig[$camRoomId][$camNum];
 }
 
-$cam = $cameraConfig[$roomId][$camNum];
 $rtsp = "rtsp://{$cam['user']}:{$cam['pass']}@{$cam['ip']}:554/{$quality}";
 
 // ── Camera status check ───────────────────────────────────────────────────────

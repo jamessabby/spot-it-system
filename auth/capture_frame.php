@@ -22,11 +22,10 @@ $cameraConfig = [
     ],
 ];
 
-if (!isset($cameraConfig[$roomId][1])) {
-    ms_json(['success' => false, 'message' => 'Camera not configured for this room.']);
-}
-
-$cam = $cameraConfig[$roomId][1];
+// If the room doesn't have a specific camera configured (e.g. dynamic testing rooms like ROOM_1),
+// fall back to the DESK camera configuration so local sandbox testing still works.
+$camRoomId = isset($cameraConfig[$roomId][1]) ? $roomId : 'DESK';
+$cam = $cameraConfig[$camRoomId][1];
 $rtsp = "rtsp://{$cam['user']}:{$cam['pass']}@{$cam['ip']}:554/stream1";
 
 $ffmpegPath = '';

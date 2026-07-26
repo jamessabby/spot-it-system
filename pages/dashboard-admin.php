@@ -106,9 +106,11 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
           <div class="card" id="tourRoomTable">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-door-open"></i> Room Status — All Monitored Rooms</div>
-              <a href="room-monitor.php" class="card-action"><i class="fa-solid fa-expand"></i> Full View</a>
+              <button class="card-action" onclick="toggleFullRoomsView()" id="btnFullRoomsToggle" style="background:none;border:none;cursor:pointer;color:var(--green-main);font-family:var(--font-display);font-size:.72rem;font-weight:700;">
+                <i class="fa-solid fa-expand"></i> <span id="fullRoomsLabel">Full View</span>
+              </button>
             </div>
-            <div style="overflow-x:auto;">
+            <div id="roomTableWrap" style="overflow-x:auto;max-height:350px;transition:max-height 0.3s ease;">
               <table class="data-table">
                 <thead><tr><th>Room</th><th>Live / Baseline</th><th>Deviation</th><th>Status</th><th>Timer</th><th>Last Event</th><th></th></tr></thead>
                 <tbody>
@@ -740,6 +742,23 @@ function toggleNotifPanel() {
     loadNotifPanel();
     document.getElementById('notifPanelTs').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-PH', {hour12:true});
+  }
+}
+
+function toggleFullRoomsView() {
+  const wrap = document.getElementById('roomTableWrap');
+  const label = document.getElementById('fullRoomsLabel');
+  const icon = document.querySelector('#btnFullRoomsToggle i');
+  if (!wrap) return;
+  const isExpanded = wrap.classList.toggle('expanded-view');
+  if (isExpanded) {
+    wrap.style.maxHeight = 'none';
+    if (label) label.textContent = 'Compact View';
+    if (icon) icon.className = 'fa-solid fa-compress';
+  } else {
+    wrap.style.maxHeight = '350px';
+    if (label) label.textContent = 'Full View';
+    if (icon) icon.className = 'fa-solid fa-expand';
   }
 }
 </script>

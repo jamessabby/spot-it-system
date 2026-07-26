@@ -141,8 +141,27 @@ Refer to this log so you do not waste time re-investigating previously solved pr
     2. The recovery logic required `is_genuinely_shifted = True` (dx > 8 or dy > 8), meaning placing the item back in its exact baseline position (0px shift) failed the shift check and fell back to missing.
 *   **Resolution:** Removed the shift requirement for recovery. If the template match score anywhere in the padded search area is `≥ 0.60`, the item is marked present (whether shifted or exactly in place).
 
-### FileNotFoundError on API Upload of registered_N.jpg
-*   **Symptom:** The detector engine crashed with a `FileNotFoundError` when trying to ingest a missing sequential snapshot.
-*   **Root Cause:** If the frame sequence count and the actual saved filenames fell out of sync or failed to write due to disk/write lock issues, the script tried to read a non-existent file path.
-*   **Resolution:** Ensured proper fallback checks in the snapshot sequence logic, logging error messages rather than causing a main loop crash.
+### OpenCV FFmpeg Thread Assertion Crash (`pthread_frame.c:173 async_lock failed`)
+*   **Symptom:** `main.py` crashed in the terminal with `Assertion fctx->async_lock failed at libavcodec/pthread_frame.c:173` or `sps_id 0 out of range`.
+*   **Root Cause:** The `update()` thread in `VideoStream` was calling `self.cap.read()` outside of lock guards while another thread (`_reconnect()` or `release()`) called `self.cap.release()`, causing C++ level data races inside FFmpeg's multi-threaded H.264 decoder.
+*   **Resolution:** Refactored `VideoStream` in `main.py` with synchronized lock guards (`threading.Lock()`). Reading frame references and tearing down capture handles are now executed safely without C++ memory corruption.
+
+### Room Setup Persistence Failure & Camera IP Disappearing
+*   **Symptom:** Entering camera IP/credentials in Room Setup and clicking "Save Changes" showed "Failed to update room." and reset the IP to `None`.
+*   **Root Cause:**
+    1. The SQL query in `pages/room-setup.php` was missing `camera_ip`, `camera_user`, and `camera_pass` from the `SELECT` list, causing `room.camera_ip` to evaluate as empty in JS.
+    2. `auth/edit_room.php` called `ms_require_role('admin')`, which issued an HTML redirect to `login.php?error=unauthorized` for normalized user roles (`staff`). The JS frontend failed to parse HTML as JSON and threw a failure toast.
+    3. Blank password fields sent empty strings, which overwrote existing database passwords with `NULL`.
+*   **Resolution:** Added camera columns to `room-setup.php`'s `SELECT` query, updated `auth/edit_room.php` to accept `admin` and `staff` roles with proper JSON status codes, and preserved existing database passwords when form password fields are left blank.
+
+### Foreign Key Integrity Constraint Violation (Error 1452) on Saving ROIs
+*   **Symptom:** Saving ROI inspection zones in `desk-sandbox.php` threw `Database error: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails`.
+*   **Root Cause:** Deleting the `DESK` system room from the `rooms` table broke the Foreign Key constraint `registered_lab_items_ibfk_1` (`FOREIGN KEY (room_id) REFERENCES rooms(room_id)`).
+*   **Resolution:** Restored and auto-healed the `DESK` system room in `spotit_monitor_db.rooms`, added auto-heal logic to `auth/save_rois.php` to verify/create room entries before inserting ROI items, and excluded the `DESK` system room from the Room Setup management list to prevent accidental deletion.
+
+### Sandbox Feed Stealing & Production Navigation Syncing
+*   **Symptom:** Visiting `Live Sandbox Test` permanently locked `main.py` to `DESK`, causing `camera-setup.php` and `room-monitor.php` to show `STANDBY` / `OFFLINE`.
+*   **Root Cause:** Navigating away from `desk-sandbox.php` did not update `detection_mode.json` to the target production room, and dropdown room switches in `camera-setup.php` lacked an event handler to update `detection_mode.json`.
+*   **Resolution:** Added auto-sync of `detection_mode.json` on page load in `room-monitor.php` and `camera-setup.php`, added the missing `switchRoom()` dropdown handler to `camera-setup.php`, and excluded `DESK` from production room selectors. Navigating away from the Sandbox now automatically releases the `DESK` camera and starts production room monitoring instantly.
+
 

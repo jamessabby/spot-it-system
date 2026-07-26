@@ -22,6 +22,10 @@ $floor       = trim($_POST['floor'] ?? '');
 $roomType    = trim($_POST['room_type'] ?? '');
 $cameraCount = isset($_POST['camera_count']) ? (int)$_POST['camera_count'] : 2;
 
+$cameraIp    = trim($_POST['camera_ip'] ?? '');
+$cameraUser  = trim($_POST['camera_user'] ?? '');
+$cameraPass  = trim($_POST['camera_pass'] ?? '');
+
 if (!$roomId || !$roomName || !$floor || !$roomType) {
     ms_json(['success' => false, 'message' => 'All fields (Room ID, Name, Floor, Type) are required.']);
 }
@@ -43,19 +47,19 @@ try {
             // Reactivate soft-deleted room
             $updateStmt = $monitorPdo->prepare("
                 UPDATE rooms 
-                SET room_name = ?, floor = ?, room_type = ?, camera_count = ?, is_active = 1, monitoring_status = 'inactive'
+                SET room_name = ?, floor = ?, room_type = ?, camera_count = ?, camera_ip = ?, camera_user = ?, camera_pass = ?, is_active = 1, monitoring_status = 'inactive'
                 WHERE room_id = ?
             ");
-            $updateStmt->execute([$roomName, $floor, $roomType, $cameraCount, $roomId]);
+            $updateStmt->execute([$roomName, $floor, $roomType, $cameraCount, $cameraIp ?: null, $cameraUser ?: null, $cameraPass ?: null, $roomId]);
             ms_json(['success' => true, 'message' => 'Room reactivated and updated successfully.']);
         }
     } else {
         // Insert new room
         $insertStmt = $monitorPdo->prepare("
-            INSERT INTO rooms (room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, is_active)
-            VALUES (?, ?, ?, ?, ?, 0, 'inactive', 1)
+            INSERT INTO rooms (room_id, room_name, floor, room_type, camera_count, camera_ip, camera_user, camera_pass, baseline_count, monitoring_status, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'inactive', 1)
         ");
-        $insertStmt->execute([$roomId, $roomName, $floor, $roomType, $cameraCount]);
+        $insertStmt->execute([$roomId, $roomName, $floor, $roomType, $cameraCount, $cameraIp ?: null, $cameraUser ?: null, $cameraPass ?: null]);
         ms_json(['success' => true, 'message' => 'Room added successfully.']);
     }
 } catch (PDOException $e) {

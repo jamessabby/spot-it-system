@@ -30,6 +30,19 @@ foreach ($prodRooms as $r) {
     }
 }
 
+// Auto-sync selected room to detection_mode.json so main.py immediately switches to it
+$dm_file = __DIR__ . '/../detection_mode.json';
+if (file_exists($dm_file) && $selectedRoomId !== '') {
+    $dm = json_decode(file_get_contents($dm_file), true) ?: [];
+    if (($dm['room_id'] ?? '') !== $selectedRoomId) {
+        $dm['room_id'] = $selectedRoomId;
+        $dm['reset_paused'] = true;
+        $dm['reset_rois'] = true;
+        $dm['updated_at'] = date('Y-m-d H:i:s');
+        @file_put_contents($dm_file, json_encode($dm, JSON_PRETTY_PRINT));
+    }
+}
+
 // 3. Fetch registered ROIs for selected room
 $roisList = [];
 if ($selectedRoomId !== '') {
@@ -166,32 +179,29 @@ if ($selectedRoomId !== '') {
       <div class="setup-grid">
         <!-- Main Calibration Feed Column -->
         <div>
-          <div class="card">
-            <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
-              <div class="card-title"><i class="fa-solid fa-video"></i> Baseline Calibration Frame</div>
-              <div style="display:flex; gap:8px;">
-                <button class="btn btn-sm" onclick="recaptureBaseline()" style="background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary);">
+          <div class="card" id="setupFeedCard">
+            <div class="card-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div class="card-title"><i class="fa-solid fa-video"></i> Live Calibration Feed</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <button class="btn btn-sm" onclick="recaptureBaseline()" style="background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); font-size:.72rem;">
                   <i class="fa-solid fa-arrows-rotate"></i> Recapture Baseline
                 </button>
-                <button class="btn btn-primary btn-sm" onclick="openRoiEditor()">
+                <button class="btn btn-primary btn-sm" onclick="openRoiEditor()" style="font-size:.72rem;">
                   <i class="fa-solid fa-pen-ruler"></i> Setup ROI Zones
+                </button>
+                <button class="btn btn-sm" id="btnResetSystemSetup" onclick="resetSystemSetup()" style="font-size:.72rem; background:var(--alert-bg); border:1px solid rgba(220,53,69,0.3); color:var(--alert); font-weight:700;" title="Reset ROIs and detection logs for this room">
+                  <i class="fa-solid fa-rotate-left"></i> Reset System
+                </button>
+                <button class="btn btn-sm" onclick="toggleSetupFullScreen()" style="font-size:.72rem; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary);" title="Full Screen View">
+                  <i class="fa-solid fa-expand"></i> Full Screen
                 </button>
               </div>
             </div>
             <div style="padding:16px;">
-              <div class="baseline-preview-container" id="previewContainer" style="aspect-ratio: 16/9; max-width: 100%;">
-                <?php if ($baselineImg): ?>
-                  <img src="<?= htmlspecialchars($baselineImg) ?>?t=<?= time() ?>" id="baselineImg" style="width:100%; height:100%; object-fit:contain;" onload="initPreviewCanvas()"/>
-                  <canvas id="previewCanvas" class="baseline-preview-canvas"></canvas>
-                <?php else: ?>
-                  <div class="text-center py-5" style="color:var(--text-dim);">
-                    <i class="fa-solid fa-image-portrait" style="font-size:2.5rem; margin-bottom:12px; opacity:0.5;"></i>
-                    <div>No baseline frame captured yet.</div>
-                    <button class="btn btn-primary btn-sm mt-3" onclick="recaptureBaseline()">
-                      <i class="fa-solid fa-camera"></i> Capture Baseline Frame
-                    </button>
-                  </div>
-                <?php endif; ?>
+              <!-- Live double-buffered stream container -->
+              <div id="setupVideoBox" style="position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center;">
+                <!-- Canvas overlay for ROI boxes -->
+                <canvas id="previewCanvas" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:10;"></canvas>
               </div>
             </div>
           </div>
@@ -311,6 +321,7 @@ if ($selectedRoomId !== '') {
 
 <div class="toast-stack" id="toastStack"></div>
 <script src="../assets/js/spotit.js"></script>
+<script src="../assets/js/stream-viewer.js"></script>
 <script>
 startLiveClock && startLiveClock('liveClock');
 
@@ -338,35 +349,66 @@ async function recaptureBaseline() {
   }
 }
 
-// Draw ROIs on static preview baseline canvas
+// Draw ROIs on the overlay canvas (over the live video)
 function initPreviewCanvas() {
-  const img = document.getElementById('baselineImg');
+  const box = document.getElementById('setupVideoBox');
   const canvas = document.getElementById('previewCanvas');
-  if (!img || !canvas) return;
+  if (!box || !canvas) return;
 
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  
+  // Use 960x540 (the live frame resolution from main.py STREAM_SCALE=0.5 of 1920x1080)
+  canvas.width = 960;
+  canvas.height = 540;
+
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   rois.forEach((roi) => {
     ctx.strokeStyle = '#28a745';
     ctx.lineWidth = 3;
     ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
-    
-    // label
+
     ctx.fillStyle = 'rgba(40,167,69,0.85)';
     ctx.font = 'bold 16px "Outfit", sans-serif';
     const txtWidth = ctx.measureText(roi.label).width;
     ctx.fillRect(roi.x, roi.y - 25, txtWidth + 12, 25);
-    
+
     ctx.fillStyle = '#fff';
     ctx.fillText(roi.label, roi.x + 6, roi.y - 7);
   });
 }
 
-window.addEventListener('resize', initPreviewCanvas);
+function toggleSetupFullScreen() {
+  const card = document.getElementById('setupFeedCard');
+  if (!card) return;
+  if (!document.fullscreenElement) {
+    if (card.requestFullscreen) card.requestFullscreen();
+    else if (card.webkitRequestFullscreen) card.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+  }
+}
+
+async function resetSystemSetup() {
+  if (!confirm(`Reset system state for room ${ROOM_ID}?\n\nThis will clear ROI zones and detection logs.`)) return;
+  const btn = document.getElementById('btnResetSystemSetup');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting...'; }
+  try {
+    const res = await spotitFetch('../auth/reset_room_state.php', {
+      method: 'POST',
+      body: new URLSearchParams({ room_id: ROOM_ID })
+    });
+    if (res && res.success) {
+      showToast('success', res.message || 'Room reset successfully!');
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast('error', res?.message || 'Reset failed.');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset System'; }
+    }
+  } catch (e) {
+    showToast('error', 'Network error during reset.');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Reset System'; }
+  }
+}
 
 // ── WEB ROI CANVAS EDITOR ───────────────────────────────────────────────────
 function openRoiEditor() {
@@ -449,11 +491,21 @@ function setupCanvasDragging() {
 
     if (rw > 10 && rh > 10) {
       const label = `zone_${editorRois.length + 1}`;
-      editorRois.push({ label, x: rx, y: ry, w: rw, h: rh, tier: 'tier1' });
+      const tier = detectRoiTier(label);
+      editorRois.push({ label, x: rx, y: ry, w: rw, h: rh, tier: tier });
       renderRoiList();
       redrawEditorCanvas();
     }
   });
+}
+
+function detectRoiTier(label) {
+  const l = label.toLowerCase();
+  const tier1Keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'computer', 'ups'];
+  if (tier1Keywords.some(kw => l.includes(kw))) {
+    return 'tier1';
+  }
+  return 'tier2';
 }
 
 function redrawEditorCanvas(drawPreview = false) {
@@ -515,7 +567,10 @@ function renderRoiList() {
 }
 
 function updateEditorRoiLabel(idx, val) {
-  editorRois[idx].label = val.trim().replace(/\s+/g, '_');
+  const cleanLabel = val.trim().replace(/\s+/g, '_');
+  editorRois[idx].label = cleanLabel;
+  editorRois[idx].tier = detectRoiTier(cleanLabel);
+  renderRoiList();
   redrawEditorCanvas();
 }
 
@@ -553,6 +608,24 @@ async function saveRoisToSystem() {
     showToast('error', 'Network error saving configurations.');
   }
 }
+
+async function switchRoom(newRoomId) {
+  try {
+    const fd = new FormData();
+    fd.append('room_id', newRoomId);
+    await spotitFetch('../auth/toggle_detection_mode.php', { method: 'POST', body: fd });
+    window.location.href = `camera-setup.php?room=${newRoomId}`;
+  } catch (err) {
+    window.location.href = `camera-setup.php?room=${newRoomId}`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Start the same seamless double-buffered live stream used in desk-sandbox.php
+  initLiveFrameStream('setupVideoBox', ROOM_ID);
+  // Draw ROI overlay on top of the live stream
+  initPreviewCanvas();
+});
 </script>
 </body>
 </html>

@@ -10,6 +10,34 @@
   display: flex; height: 100vh; overflow: hidden;
 }
 
+/* High-Density Responsive Layout (Optimized for 100% Default Chrome Zoom) */
+@media (min-width: 1024px) {
+  :root {
+    --sidebar-w: 215px;
+    --topbar-h: 50px;
+  }
+  .page-body {
+    padding: 16px 20px;
+  }
+  .stat-grid {
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    padding: 12px 14px;
+    border-radius: var(--radius);
+  }
+  .stat-num {
+    font-size: 1.45rem;
+  }
+  .card {
+    padding: 14px 16px;
+  }
+  .data-table th, .data-table td {
+    padding: 8px 12px;
+  }
+}
+
 /* ══════════════════════════════════════════
    SIDEBAR
 ══════════════════════════════════════════ */

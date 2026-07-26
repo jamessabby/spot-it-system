@@ -3,8 +3,8 @@ require_once __DIR__ . '/../auth/service_bootstrap.php';
 $active_page = 'rooms'; 
 $user_role = $_SESSION['user_role'] ?? 'admin';
 
-// Fetch all active rooms from DB
-$activeRooms = $monitorPdo->query("SELECT room_id, room_name, baseline_count, floor FROM rooms WHERE is_active = 1 ORDER BY room_id")->fetchAll();
+// Fetch all active production rooms from DB (excluding system DESK room)
+$activeRooms = $monitorPdo->query("SELECT room_id, room_name, baseline_count, floor FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY room_id")->fetchAll();
 $room_ids = array_column($activeRooms, 'room_id');
 
 // Read detection_mode.json state
@@ -14,9 +14,19 @@ if (file_exists($dm_file)) {
     $dm = json_decode(file_get_contents($dm_file), true) ?: [];
 }
 
-$room_id = strtoupper(trim($_GET['room'] ?? $dm['room_id'] ?? 'DESK'));
-if (!in_array($room_id, $room_ids) && !empty($room_ids)) {
-    $room_id = $room_ids[0];
+$default_room = !empty($room_ids) ? $room_ids[0] : 'ROOM_1';
+$room_id = strtoupper(trim($_GET['room'] ?? ''));
+if (!$room_id || !in_array($room_id, $room_ids, true)) {
+    $room_id = $default_room;
+}
+
+// Auto-sync selected room to detection_mode.json so main.py immediately switches to it
+if (($dm['room_id'] ?? '') !== $room_id) {
+    $dm['room_id'] = $room_id;
+    $dm['reset_paused'] = true;
+    $dm['reset_rois'] = true;
+    $dm['updated_at'] = date('Y-m-d H:i:s');
+    @file_put_contents($dm_file, json_encode($dm, JSON_PRETTY_PRINT));
 }
 
 // Selected room details
@@ -102,16 +112,18 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
                 </span>
               </div>
 
-              <!-- Top Camera Controls Header (Setup ROIs, Capture Baseline, Reset System, Full Screen) -->
-              <div style="display:flex;gap:6px;align-items:center;margin-left:auto;">
-                <button class="btn btn-sm" id="btnSetupRoi" onclick="openRoiEditor()" style="font-size:.72rem;font-weight:700;background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border);">
-                  <i class="fa-solid fa-vector-square"></i> Setup ROI Zones
+              <!-- Top Camera Controls Header -->
+              <div style="display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap;">
+                <?php if ($user_role === 'admin'): ?>
+                <a href="camera-setup.php?room=<?= urlencode($room_id) ?>" class="btn btn-sm" style="font-size:.72rem;font-weight:700;background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border);text-decoration:none;">
+                  <i class="fa-solid fa-sliders"></i> Calibrate in Camera Setup
+                </a>
+                <?php endif; ?>
+                <button class="btn btn-sm" id="btnDismissRecal" onclick="dismissRecalibrationAlert()" style="font-size:.72rem;font-weight:700;background:var(--alert-bg);border:1px solid rgba(220,53,69,0.3);color:var(--alert);" title="Dismiss mass deviation / false alarm pause">
+                  <i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert
                 </button>
-                <button class="btn btn-sm" onclick="captureBaseline()" style="font-size:.72rem;font-weight:700;background:var(--bg-base);border:1px solid var(--border);">
-                  <i class="fa-solid fa-camera"></i> Capture Baseline
-                </button>
-                <button class="btn btn-sm" onclick="resetSystemState()" style="font-size:.72rem;font-weight:700;background:var(--alert-bg);color:var(--alert);border:1px solid var(--alert-border);">
-                  <i class="fa-solid fa-rotate-left"></i> Reset System
+                <button class="btn btn-sm" id="btnDismissAlerts" onclick="dismissAlerts()" style="font-size:.72rem;font-weight:700;background:var(--warn-bg);border:1px solid rgba(255,193,7,0.3);color:var(--warn);" title="Dismiss all active alert detections for this room">
+                  <i class="fa-solid fa-bell-slash"></i> Dismiss Alerts
                 </button>
                 <button class="btn btn-sm" onclick="toggleCamFullScreen()" style="font-size:.72rem;font-weight:700;background:var(--bg-base);border:1px solid var(--border);">
                   <i class="fa-solid fa-expand"></i> Full Screen
@@ -121,12 +133,9 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
 
             <!-- Video Player Box -->
             <div id="camVideoBox" style="position:relative;background:#000;border-radius:0 0 12px 12px;overflow:hidden;min-height:420px;display:flex;align-items:center;justify-content:center;">
-              <img id="camFeedImg" src="../uploads/snapshots/clean_<?= htmlspecialchars($room_id) ?>.jpg?t=<?= time() ?>" 
-                   style="width:100%;height:100%;object-fit:contain;display:block;" 
-                   onerror="this.src='../photos/ref_image.jpg';"/>
               
               <!-- Stream Overlay Badge -->
-              <div style="position:absolute;top:12px;left:12px;display:flex;gap:8px;align-items:center;">
+              <div style="position:absolute;top:12px;left:12px;display:flex;gap:8px;align-items:center;z-index:6;">
                 <span class="badge badge-ok" style="font-size:.65rem;padding:4px 10px;background:rgba(0,0,0,.65);color:#00ff88;border:1px solid rgba(0,255,136,.3);backdrop-filter:blur(4px);">
                   <span class="bdot" style="background:#00ff88;"></span> LIVE STREAM
                 </span>
@@ -335,6 +344,49 @@ async function captureBaseline() {
   }
 }
 
+async function dismissRecalibrationAlert() {
+  if (!confirm(`Dismiss mass deviation / recalibration alert for ${currentRoomId} and unpause monitoring?`)) return;
+  const btn = document.getElementById('btnDismissRecal');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Unpausing...'; }
+  try {
+    const fd = new FormData();
+    fd.append('room_id', currentRoomId);
+    const res = await spotitFetch('../auth/reset_recalibration.php', { method: 'POST', body: fd });
+    if (res && res.success) {
+      showToast('success', res.message || 'Recalibration alert dismissed!');
+      setTimeout(() => location.reload(), 800);
+    } else {
+      showToast('error', res?.message || 'Failed to dismiss.');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert'; }
+    }
+  } catch (e) {
+    showToast('error', 'Network error.');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert'; }
+  }
+}
+
+async function dismissAlerts() {
+  if (!confirm(`Dismiss all active alerts for room ${currentRoomId}? This will mark them as recovered.`)) return;
+  const btn = document.getElementById('btnDismissAlerts');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Clearing...'; }
+  try {
+    const res = await spotitFetch('../auth/dismiss_alerts.php', {
+      method: 'POST',
+      body: new URLSearchParams({ room_id: currentRoomId })
+    });
+    if (res && res.success) {
+      showToast('success', res.message || 'Alerts dismissed!');
+      setTimeout(() => location.reload(), 800);
+    } else {
+      showToast('error', res?.message || 'Failed to dismiss alerts.');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
+    }
+  } catch (e) {
+    showToast('error', 'Network error.');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
+  }
+}
+
 async function resetSystemState() {
   if (!confirm(`Are you sure you want to RESET system state for room ${currentRoomId}? This clears baseline images, ROIs, and detection logs.`)) return;
   try {
@@ -354,6 +406,17 @@ async function resetSystemState() {
   }
 }
 
+async function switchRoom(newRoomId) {
+  try {
+    const fd = new FormData();
+    fd.append('room_id', newRoomId);
+    await spotitFetch('../auth/toggle_detection_mode.php', { method: 'POST', body: fd });
+    window.location.href = `room-monitor.php?room=${newRoomId}`;
+  } catch (err) {
+    window.location.href = `room-monitor.php?room=${newRoomId}`;
+  }
+}
+
 function openRoiEditor() {
   window.location.href = `room-setup.php?room_id=${currentRoomId}`;
 }
@@ -367,10 +430,13 @@ function toggleCamFullScreen() {
     document.exitFullscreen();
   }
 }
-
+</script>
+<script src="../assets/js/stream-viewer.js"></script>
+<script>
 document.addEventListener('DOMContentLoaded', () => {
   pollRoomStatus();
   setInterval(pollRoomStatus, 2000);
+  initLiveFrameStream('camVideoBox', currentRoomId);
 });
 </script>
 </body>

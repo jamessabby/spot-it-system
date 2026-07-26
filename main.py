@@ -5,17 +5,35 @@ import time
 # Must be set before cv2 is imported so OpenCV's backend respects this variable!
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;5000000'
 
+import sys
 import cv2
 import json
 import numpy as np
 import requests
 from datetime import datetime
 
+# ── ROOM / API CONFIG ───────────────────────────────────────────────────────
+ROOM_ID           = 'DESK'              # default
+CLI_ROOM_ID       = None                # set if room was provided via command line
+if len(sys.argv) > 1:
+    ROOM_ID = sys.argv[1].upper()
+    CLI_ROOM_ID = ROOM_ID               # lock — detection_mode.json polling won't override this
+
+API_URL           = os.environ.get('API_URL', 'http://localhost/spotit/auth/ingest_detection.php')
+API_KEY           = os.environ.get('API_KEY', 'CHANGE_ME_DETECTION_KEY')   # must match env.php / DETECTION_API_KEY
+SHOW_GUI          = False                # Set to False to run headless (no floating window)
+BASELINE_COUNT    = None                # set below from number of ROIs
+
 # ── CONFIG ───────────────────────────────────────────────────────────────
 STREAM_SCALE              = 0.50
-ROI_FILE                   = 'rois.json'
-REF_IMAGE                  = 'photos/ref_image.jpg'
-SNAPSHOT_DIR               = 'C:/xampp/htdocs/spotit/uploads/snapshots'
+ROI_FILE                  = 'rois.json' if ROOM_ID == 'DESK' else f'rois_{ROOM_ID}.json'
+REF_IMAGE                 = 'photos/ref_image.jpg' if ROOM_ID == 'DESK' else f'photos/ref_image_{ROOM_ID}.jpg'
+
+# Dynamic path resolution for snapshots directory
+SNAPSHOT_DIR = os.environ.get('SNAPSHOT_DIR', 'C:/xampp/htdocs/spotit/uploads/snapshots')
+if not os.path.exists('C:/xampp') or os.name == 'posix':
+    SNAPSHOT_DIR = 'uploads/snapshots'
+
 THRESHOLD                  = 25          # delta needed to count as changed (was 10)
 MIN_CHANGE_PERCENT         = 0.08
 SCENE_MOTION_LIMIT         = 0.40        # % of frame stable (was 0.15)
@@ -23,13 +41,6 @@ CONSISTENCY_FRAMES         = 5           # consecutive frames to confirm (was 3)
 RTSP_URL                   = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
 ROTATE_CAMERA              = False       # Set to True for portrait iPhone, False for Tapo CCTV
 MATCH_SCORE_THRESHOLD      = 0.60        # threshold score for template matching (calibrated for RTSP stream)
-
-# ── ROOM / API CONFIG ───────────────────────────────────────────────────────
-ROOM_ID           = 'DESK'              # changed to DESK for personal desk testing
-API_URL           = 'http://localhost/spotit/auth/ingest_detection.php'
-API_KEY           = 'CHANGE_ME_DETECTION_KEY'   # must match env.php / DETECTION_API_KEY
-SHOW_GUI          = False                # Set to False to run headless (no floating window)
-BASELINE_COUNT    = None                # set below from number of ROIs
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── MOBILENETV2 DNN GATEKEEPER CONFIG (Phase 2, Step 2.1) ──────────────────
@@ -70,6 +81,10 @@ def rescaleFrame(frame, scale=STREAM_SCALE):
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # ── LOAD ROIs ─────────────────────────────────────────────────────────────
+if not os.path.exists(ROI_FILE):
+    with open(ROI_FILE, 'w') as f:
+        json.dump([], f)
+
 with open(ROI_FILE, 'r') as f:
     roi_list = json.load(f)
 print(f"[SPOT-IT] Loaded {len(roi_list)} ROIs: {[r['label'] for r in roi_list]}")
@@ -324,62 +339,70 @@ class VideoStream:
             print(f"[SPOT-IT][VideoStream] Main stream locked — attempting fallback to {self.fallback_src}...")
             cap_obj, r, f = self._try_open(self.fallback_src)
 
-        if cap_obj is not None:
-            with self.lock:
+        with self.lock:
+            if cap_obj is not None:
                 self.cap = cap_obj
                 self.ret = r
                 self.frame = f
                 self.last_good_frame_at = time.time()
 
         while not self.stopped:
-            if self.cap is None or not self.cap.isOpened():
+            with self.lock:
+                current_cap = self.cap
+
+            if current_cap is None or not current_cap.isOpened():
                 time.sleep(0.5)
                 continue
+
             try:
-                ret, frame = self.cap.read()
+                ret, frame = current_cap.read()
                 if ret and frame is not None:
                     with self.lock:
                         self.ret = ret
                         self.frame = frame
                         self.last_good_frame_at = time.time()
                 else:
-                    time.sleep(0.1)
+                    time.sleep(0.05)
             except Exception:
-                time.sleep(0.2)
+                time.sleep(0.1)
 
     def _reconnect(self):
+        if self.stopped:
+            return
         print(f"[SPOT-IT][WATCHDOG] Dead stream detected. Reconnecting RTSP...")
         with self.lock:
             old_cap = self.cap
             self.cap = None
-        
+
         if old_cap is not None:
             try:
                 old_cap.release()
             except Exception:
                 pass
-                
+
         cap_obj, r, f = self._try_open(self.src)
         if cap_obj is None and self.fallback_src != self.src:
             cap_obj, r, f = self._try_open(self.fallback_src)
 
-        if cap_obj is not None:
-            with self.lock:
+        with self.lock:
+            if cap_obj is not None:
                 self.cap = cap_obj
                 self.ret = r
                 self.frame = f
                 self.last_good_frame_at = time.time()
-            print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
-        else:
-            print("[SPOT-IT][WATCHDOG] Reconnect attempt failed.")
+                print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
+            else:
+                print("[SPOT-IT][WATCHDOG] Reconnect attempt failed.")
 
     def _watchdog(self):
         while not self.stopped:
-            time.sleep(3)
-            # Only trigger watchdog if stream was opened and has gone stale
-            if self.cap is not None and self.ret:
-                if time.time() - self.last_good_frame_at > self.STALE_TIMEOUT_SEC:
-                    self._reconnect()
+            time.sleep(4)
+            with self.lock:
+                is_alive = (self.cap is not None and self.ret)
+                last_time = self.last_good_frame_at
+
+            if is_alive and (time.time() - last_time > self.STALE_TIMEOUT_SEC):
+                self._reconnect()
 
     def read(self):
         with self.lock:
@@ -392,11 +415,15 @@ class VideoStream:
     def release(self):
         self.stopped = True
         with self.lock:
-            if self.cap is not None:
-                try:
-                    self.cap.release()
-                except Exception:
-                    pass
+            old_cap = self.cap
+            self.cap = None
+            self.ret = False
+
+        if old_cap is not None:
+            try:
+                old_cap.release()
+            except Exception:
+                pass
 
 # ── CONNECT TO RTSP STREAM ────────────────────────────────────────────────
 print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
@@ -708,8 +735,69 @@ def post_item_recovered(label):
     except Exception as e:
         pass
 
+def get_camera_rtsp_url(room_id):
+    """
+    Query get_room_camera.php dynamically to fetch camera credentials and RTSP URL for the given room.
+    """
+    try:
+        # Build URL dynamically from API_URL to support localhost or production server domain
+        base_url = API_URL.split('/auth/')[0]
+        url = f"{base_url}/auth/get_room_camera.php?room_id={room_id}&api_key={API_KEY}"
+        
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success') and data.get('configured'):
+                rtsp_url = data.get('rtsp_url')
+                print(f"[SPOT-IT] Retrieved camera RTSP url for room '{room_id}' dynamically.")
+                return rtsp_url
+            else:
+                print(f"[SPOT-IT][INFO] Room '{room_id}' has NO camera configured in database.")
+                if room_id == 'DESK':
+                    return 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
+                return None
+        else:
+            print(f"[SPOT-IT][WARN] Failed to contact get_room_camera.php, status: {response.status_code}")
+    except Exception as e:
+        print(f"[SPOT-IT][ERROR] Error fetching dynamic camera credentials: {e}")
+        
+    if room_id == 'DESK':
+        return 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1'
+    return None
+
+# ── INITIALIZE RUNNING STATE FOR DYNAMIC ROOM MONITORING ──────────────────
+current_running_room = ROOM_ID
+CURRENT_RTSP_URL = get_camera_rtsp_url(ROOM_ID)
+
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 while True:
+    # ── CHECK FOR DYNAMIC ROOM SWITCH ─────────────────────────────────────
+    if CLI_ROOM_ID is None and ROOM_ID != current_running_room:
+        print(f"\n[SPOT-IT] Dynamic room switch detected! Swapped from '{current_running_room}' -> '{ROOM_ID}'")
+        current_running_room = ROOM_ID
+        
+        # 1. Update dynamic file paths
+        ROI_FILE  = 'rois.json' if ROOM_ID == 'DESK' else f'rois_{ROOM_ID}.json'
+        REF_IMAGE = 'photos/ref_image.jpg' if ROOM_ID == 'DESK' else f'photos/ref_image_{ROOM_ID}.jpg'
+        
+        # 2. Get the new RTSP URL
+        new_rtsp_url = get_camera_rtsp_url(ROOM_ID)
+        if new_rtsp_url != CURRENT_RTSP_URL:
+            print(f"[SPOT-IT] Camera stream source updated for '{ROOM_ID}': {new_rtsp_url or 'UNASSIGNED'}")
+            CURRENT_RTSP_URL = new_rtsp_url
+            if cap is not None:
+                cap.release()
+                cap = None
+            time.sleep(1)
+            if CURRENT_RTSP_URL:
+                cap = VideoStream(CURRENT_RTSP_URL).start()
+                start_wait = time.time()
+                while not cap.isOpened() and time.time() - start_wait < 5.0:
+                    time.sleep(0.5)
+        
+        # 3. Force reload of ROIs and reference images on next frame
+        last_rois_mtime = -1
+        last_ref_mtime = -1
     # ── CHECK FOR CONFIG RECALIBRATION CHANGES ────────────────────────────
     current_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
     current_ref_mtime  = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
@@ -728,7 +816,9 @@ while True:
                 IS_PRODUCTION_MODE = (mode == 'production')
                 SANDBOX_TRACKING_MODE = mode_data.get('tracking_mode', 'registered')
                 TIMER_MODE = mode_data.get('timer_mode', 'testing_speed')
-                ROOM_ID = mode_data.get('room_id', 'DESK').upper()
+                # Only accept room_id from JSON if NOT launched with a CLI room argument
+                if CLI_ROOM_ID is None:
+                    ROOM_ID = mode_data.get('room_id', 'DESK').upper()
 
                 # Dynamic timer threshold selection
                 STAGE1_THRESH = 1800.0 if TIMER_MODE == 'production_speed' else 3.0
@@ -818,13 +908,21 @@ while True:
         except Exception as reload_err:
             print(f"[SPOT-IT][ERROR] Failed to reload config: {reload_err}")
 
+    if CURRENT_RTSP_URL is None or cap is None:
+        # Standby mode for unassigned room — write a clean status frame
+        placeholder = np.zeros((540, 960, 3), dtype=np.uint8)
+        cv2.putText(placeholder, f"STANDBY: NO CAMERA ASSIGNED TO '{ROOM_ID}'", (120, 260),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 165, 255), 2)
+        cv2.putText(placeholder, "Go to Room Setup to assign a CCTV camera IP.", (170, 300),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+        save_frames_atomic(placeholder, placeholder)
+        time.sleep(1.0)
+        continue
+
     ret, frame = cap.read()
 
-    if not ret:
-        print("[WARN] Frame read failed — retrying connection...")
-        cap.release()
-        time.sleep(2)
-        cap = VideoStream(RTSP_URL).start()
+    if not ret or frame is None:
+        time.sleep(0.1)
         continue
 
     if ROTATE_CAMERA:

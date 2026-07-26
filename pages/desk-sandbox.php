@@ -99,8 +99,16 @@ try {
 $tracking_mode = 'registered';
 $mode_file_path = __DIR__ . '/../detection_mode.json';
 if (file_exists($mode_file_path)) {
-    $mdata = json_decode(file_get_contents($mode_file_path), true);
+    $mdata = json_decode(file_get_contents($mode_file_path), true) ?: [];
     $tracking_mode = $mdata['tracking_mode'] ?? 'registered';
+    if (($mdata['room_id'] ?? '') !== 'DESK') {
+        $mdata['room_id'] = 'DESK';
+        $mdata['reset_paused'] = true;
+        $mdata['reset_rois'] = true;
+        $mdata['reset_timestamp'] = time();
+        $mdata['updated_at'] = date('Y-m-d H:i:s');
+        @file_put_contents($mode_file_path, json_encode($mdata, JSON_PRETTY_PRINT));
+    }
 }
 
 ?>
@@ -136,20 +144,20 @@ if (file_exists($mode_file_path)) {
     .sandbox-grid {
       display: flex;
       flex-direction: column;
-      gap: 18px;
-      margin-top: 18px;
+      gap: 10px;
+      margin-top: 10px;
     }
     .metric-card {
-      border-radius: var(--radius);
-      padding: 16px;
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      justify-content: center;
     }
     .metric-title {
-      font-size: .75rem;
+      font-size: .65rem;
       color: var(--text-dim);
       font-family: var(--font-display);
       font-weight: 700;
@@ -212,15 +220,17 @@ if (file_exists($mode_file_path)) {
       opacity: 1;
     }
     .metric-value {
-      font-size: 2.2rem;
+      font-size: 1.25rem;
       font-weight: 900;
       font-family: var(--font-display);
-      margin: 8px 0;
+      margin: 2px 0;
+      line-height: 1;
       color: var(--text-primary);
     }
     .metric-footer {
-      font-size: .7rem;
+      font-size: .62rem;
       color: var(--text-muted);
+      line-height: 1.1;
     }
     .matrix-box {
       display: grid;
@@ -955,7 +965,10 @@ async function initCamera() {
           targetImg.style.opacity = 1;
           
           currentImg.style.zIndex = 1;
-          currentImg.style.opacity = 0;
+          // Hold the old image visible for 50ms to ensure the browser has fully painted the new image
+          setTimeout(() => {
+            currentImg.style.opacity = 0;
+          }, 50);
           
           activeImgId = (activeImgId === 1) ? 2 : 1;
           livePollInterval = setTimeout(pollNext, 120);

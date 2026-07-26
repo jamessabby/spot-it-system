@@ -4,11 +4,11 @@
  * pages/room-setup.php
  */
 require_once __DIR__ . '/../auth/service_bootstrap.php';
-$active_page = 'setup'; // fixed to match _sidebar.php check '$active===\'setup\''
+$active_page = 'setup';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 
-// Fetch rooms dynamically (including DESK room for admin control)
-$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 ORDER BY floor, room_id");
+// Fetch rooms dynamically (excluding DESK system room from management list)
+$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated, camera_ip, camera_user, camera_pass FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY floor, room_id");
 $roomsList = $roomsStmt->fetchAll();
 ?>
 <!DOCTYPE html>
@@ -66,16 +66,17 @@ $roomsList = $roomsStmt->fetchAll();
           <button class="btn btn-primary btn-sm" onclick="openModal('addRoomModal')"><i class="fa-solid fa-plus"></i> Add Room</button>
         </div>
         <table class="data-table">
-          <thead><tr><th>Room ID</th><th>Room Name</th><th>Floor</th><th>Type</th><th>Cameras</th><th>Baseline</th><th>Status</th><th>Last Calibrated</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Room ID</th><th>Room Name</th><th>Floor</th><th>Type</th><th>Cameras</th><th>Camera IP</th><th>Baseline</th><th>Status</th><th>Last Calibrated</th><th>Actions</th></tr></thead>
           <tbody>
             <?php if (empty($roomsList)): ?>
             <tr>
-              <td colspan="9" class="text-center py-3" style="color:var(--text-dim);">No monitored rooms configured.</td>
+              <td colspan="10" class="text-center py-3" style="color:var(--text-dim);">No monitored rooms configured.</td>
             </tr>
             <?php else: ?>
             <?php foreach ($roomsList as $r):
                 $status = $r['monitoring_status'] === 'active' ? 'active' : 'offline';
                 $cal = $r['last_calibrated'] ? date('M j, Y', strtotime($r['last_calibrated'])) : '—';
+                $ip = $r['camera_ip'] ? htmlspecialchars($r['camera_ip']) : '<span style="color:var(--text-dim);font-style:italic;">None</span>';
             ?>
             <tr>
               <td><span style="font-family:var(--font-mono);font-weight:800;"><?= htmlspecialchars($r['room_id']) ?></span></td>
@@ -83,11 +84,12 @@ $roomsList = $roomsStmt->fetchAll();
               <td><?= htmlspecialchars($r['floor']) ?></td>
               <td><?= htmlspecialchars($r['room_type']) ?></td>
               <td style="text-align:center;"><?= (int)$r['camera_count'] ?></td>
+              <td style="font-family:var(--font-mono);font-size:.7rem;"><?= $ip ?></td>
               <td style="text-align:center;font-family:var(--font-mono);"><?= (int)$r['baseline_count'] ?></td>
               <td><span class="badge <?= $status==='active'?'badge-ok':'badge-alert' ?>"><?= ucfirst($status) ?></span></td>
               <td style="font-size:.72rem;color:var(--text-dim);font-family:var(--font-mono);"><?= $cal ?></td>
               <td>
-                <button class="btn btn-sm" onclick="showToast('info','Edit room configuration.')" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                <button class="btn btn-sm" data-room="<?= htmlspecialchars(json_encode($r), ENT_QUOTES, 'UTF-8') ?>" onclick="openEditRoomModal(this)" title="Edit"><i class="fa-solid fa-pencil"></i></button>
                 <button class="btn btn-sm btn-alert" onclick="deleteRoom('<?= htmlspecialchars($r['room_id']) ?>')" title="Delete"><i class="fa-solid fa-trash"></i></button>
               </td>
             </tr>
@@ -103,35 +105,118 @@ $roomsList = $roomsStmt->fetchAll();
 
 <!-- ══════════ ADD ROOM MODAL ══════════ -->
 <div class="modal-overlay" id="addRoomModal" onclick="if(event.target===this)closeModal('addRoomModal')">
-  <div class="modal-box" style="max-width:500px;">
+  <div class="modal-box" style="max-width:550px;">
     <div class="modal-head">
       <div class="modal-title"><i class="fa-solid fa-plus"></i> Add New Room</div>
       <div class="modal-close" onclick="closeModal('addRoomModal')"><i class="fa-solid fa-xmark"></i></div>
     </div>
     <div class="modal-body">
-      <div class="form-group mb-3">
-        <label class="form-label">Room ID / Code *</label>
-        <input type="text" class="form-control text-uppercase" id="roomAddId" placeholder="e.g. MLH306" required />
+      <div class="row">
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room ID / Code *</label>
+          <input type="text" class="form-control text-uppercase" id="roomAddId" placeholder="e.g. MLH306" required />
+        </div>
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room Name *</label>
+          <input type="text" class="form-control" id="roomAddName" placeholder="e.g. Systems & Application Lab" required />
+        </div>
       </div>
-      <div class="form-group mb-3">
-        <label class="form-label">Room Name *</label>
-        <input type="text" class="form-control" id="roomAddName" placeholder="e.g. Systems & Application Lab" required />
-      </div>
-      <div class="form-group mb-3">
-        <label class="form-label">Floor *</label>
-        <input type="text" class="form-control" id="roomAddFloor" placeholder="e.g. 3rd Floor MLH" required />
-      </div>
-      <div class="form-group mb-3">
-        <label class="form-label">Room Type *</label>
-        <input type="text" class="form-control" id="roomAddType" placeholder="e.g. Computer Lab" required />
+      <div class="row">
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Floor *</label>
+          <input type="text" class="form-control" id="roomAddFloor" placeholder="e.g. 3rd Floor MLH" required />
+        </div>
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room Type *</label>
+          <input type="text" class="form-control" id="roomAddType" placeholder="e.g. Computer Lab" required />
+        </div>
       </div>
       <div class="form-group mb-3">
         <label class="form-label">Camera Count *</label>
         <input type="number" class="form-control" id="roomAddCameras" value="2" min="1" max="10" required />
       </div>
+      
+      <div style="border-top:1px solid var(--border); margin:15px 0; padding-top:15px;">
+        <h6 style="font-family:var(--font-display);font-weight:700;font-size:.8rem;margin-bottom:12px;color:var(--text-primary);">Tapo CCTV Camera Settings (Optional)</h6>
+        <div class="form-group mb-3">
+          <label class="form-label">Camera Local IP Address</label>
+          <input type="text" class="form-control font-monospace" id="roomAddCameraIp" placeholder="e.g. 192.168.1.100" />
+        </div>
+        <div class="row">
+          <div class="col-md-6 form-group mb-3">
+            <label class="form-label">Camera Username</label>
+            <input type="text" class="form-control" id="roomAddCameraUser" placeholder="e.g. admin" />
+          </div>
+          <div class="col-md-6 form-group mb-3">
+            <label class="form-label">Camera Password</label>
+            <input type="password" class="form-control" id="roomAddCameraPass" placeholder="Leave blank if none" />
+          </div>
+        </div>
+      </div>
+
       <div class="modal-actions mt-4">
         <button class="modal-btn dismiss" onclick="closeModal('addRoomModal')"><i class="fa-solid fa-xmark"></i> Cancel</button>
         <button class="modal-btn recover" onclick="submitAddRoom()"><i class="fa-solid fa-plus"></i> Add Room</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ EDIT ROOM MODAL ══════════ -->
+<div class="modal-overlay" id="editRoomModal" onclick="if(event.target===this)closeModal('editRoomModal')">
+  <div class="modal-box" style="max-width:550px;">
+    <div class="modal-head">
+      <div class="modal-title"><i class="fa-solid fa-pencil"></i> Edit Room Configuration</div>
+      <div class="modal-close" onclick="closeModal('editRoomModal')"><i class="fa-solid fa-xmark"></i></div>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="roomEditId" />
+      <div class="row">
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room ID / Code</label>
+          <input type="text" class="form-control text-uppercase" id="roomEditIdDisplay" disabled />
+        </div>
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room Name *</label>
+          <input type="text" class="form-control" id="roomEditName" required />
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Floor *</label>
+          <input type="text" class="form-control" id="roomEditFloor" required />
+        </div>
+        <div class="col-md-6 form-group mb-3">
+          <label class="form-label">Room Type *</label>
+          <input type="text" class="form-control" id="roomEditType" required />
+        </div>
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">Camera Count *</label>
+        <input type="number" class="form-control" id="roomEditCameras" min="1" max="10" required />
+      </div>
+      
+      <div style="border-top:1px solid var(--border); margin:15px 0; padding-top:15px;">
+        <h6 style="font-family:var(--font-display);font-weight:700;font-size:.8rem;margin-bottom:12px;color:var(--text-primary);">Tapo CCTV Camera Settings</h6>
+        <div class="form-group mb-3">
+          <label class="form-label">Camera Local IP Address</label>
+          <input type="text" class="form-control font-monospace" id="roomEditCameraIp" placeholder="e.g. 192.168.1.100" />
+        </div>
+        <div class="row">
+          <div class="col-md-6 form-group mb-3">
+            <label class="form-label">Camera Username</label>
+            <input type="text" class="form-control" id="roomEditCameraUser" placeholder="e.g. admin" />
+          </div>
+          <div class="col-md-6 form-group mb-3">
+            <label class="form-label">Camera Password</label>
+            <input type="password" class="form-control" id="roomEditCameraPass" placeholder="Leave blank to keep unchanged" />
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions mt-4">
+        <button class="modal-btn dismiss" onclick="closeModal('editRoomModal')"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <button class="modal-btn recover" onclick="submitEditRoom()"><i class="fa-solid fa-check"></i> Save Changes</button>
       </div>
     </div>
   </div>
@@ -175,6 +260,9 @@ async function submitAddRoom() {
   const floor = document.getElementById('roomAddFloor').value.trim();
   const roomType = document.getElementById('roomAddType').value.trim();
   const cameraCount = document.getElementById('roomAddCameras').value.trim();
+  const cameraIp = document.getElementById('roomAddCameraIp').value.trim();
+  const cameraUser = document.getElementById('roomAddCameraUser').value.trim();
+  const cameraPass = document.getElementById('roomAddCameraPass').value.trim();
 
   if (!roomId || !roomName || !floor || !roomType || !cameraCount) {
     showToast('error', 'Please fill in all fields.');
@@ -193,6 +281,9 @@ async function submitAddRoom() {
   fd.append('floor', floor);
   fd.append('room_type', roomType);
   fd.append('camera_count', cameraCount);
+  fd.append('camera_ip', cameraIp);
+  fd.append('camera_user', cameraUser);
+  fd.append('camera_pass', cameraPass);
 
   const data = await spotitFetch('../auth/add_room.php', { method: 'POST', body: fd });
   
@@ -204,13 +295,76 @@ async function submitAddRoom() {
   if (data && data.success) {
     showToast('success', data.message || 'Room added successfully.');
     closeModal('addRoomModal');
-    // Clear inputs
-    ['roomAddId', 'roomAddName', 'roomAddFloor', 'roomAddType'].forEach(id => document.getElementById(id).value = '');
+    ['roomAddId', 'roomAddName', 'roomAddFloor', 'roomAddType', 'roomAddCameraIp', 'roomAddCameraUser', 'roomAddCameraPass'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('roomAddCameras').value = '2';
-    // Reload page to update list
     setTimeout(() => location.reload(), 1000);
   } else {
     showToast('error', data?.message || 'Failed to add room.');
+  }
+}
+
+function openEditRoomModal(target) {
+  let room = target;
+  if (target && target.dataset && target.dataset.room) {
+    try { room = JSON.parse(target.dataset.room); } catch(e){}
+  }
+  document.getElementById('roomEditId').value = room.room_id || '';
+  document.getElementById('roomEditIdDisplay').value = room.room_id || '';
+  document.getElementById('roomEditName').value = room.room_name || '';
+  document.getElementById('roomEditFloor').value = room.floor || '';
+  document.getElementById('roomEditType').value = room.room_type || '';
+  document.getElementById('roomEditCameras').value = room.camera_count || 1;
+  document.getElementById('roomEditCameraIp').value = room.camera_ip || '';
+  document.getElementById('roomEditCameraUser').value = room.camera_user || '';
+  document.getElementById('roomEditCameraPass').value = '';
+  
+  openModal('editRoomModal');
+}
+
+async function submitEditRoom() {
+  const roomId = document.getElementById('roomEditId').value;
+  const roomName = document.getElementById('roomEditName').value.trim();
+  const floor = document.getElementById('roomEditFloor').value.trim();
+  const roomType = document.getElementById('roomEditType').value.trim();
+  const cameraCount = document.getElementById('roomEditCameras').value.trim();
+  const cameraIp = document.getElementById('roomEditCameraIp').value.trim();
+  const cameraUser = document.getElementById('roomEditCameraUser').value.trim();
+  const cameraPass = document.getElementById('roomEditCameraPass').value.trim();
+
+  if (!roomName || !floor || !roomType || !cameraCount) {
+    showToast('error', 'Please fill in all fields.');
+    return;
+  }
+
+  const btn = document.querySelector('#editRoomModal .modal-btn.recover');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+  }
+
+  const fd = new FormData();
+  fd.append('room_id', roomId);
+  fd.append('room_name', roomName);
+  fd.append('floor', floor);
+  fd.append('room_type', roomType);
+  fd.append('camera_count', cameraCount);
+  fd.append('camera_ip', cameraIp);
+  fd.append('camera_user', cameraUser);
+  fd.append('camera_pass', cameraPass);
+
+  const data = await spotitFetch('../auth/edit_room.php', { method: 'POST', body: fd });
+  
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> Save Changes';
+  }
+
+  if (data && data.success) {
+    showToast('success', data.message || 'Room configuration updated successfully.');
+    closeModal('editRoomModal');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showToast('error', data?.message || 'Failed to update room.');
   }
 }
 
@@ -234,4 +388,3 @@ async function deleteRoom(roomId) {
 </script>
 </body>
 </html>
-
