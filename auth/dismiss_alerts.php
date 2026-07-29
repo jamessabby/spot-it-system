@@ -11,6 +11,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $role = $_SESSION['user_role'] ?? '';
+session_write_close();
+
 if (!in_array($role, ['admin', 'staff'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized'], 403);
 }

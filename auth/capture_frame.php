@@ -1,4 +1,12 @@
 <?php
+/**
+ * S.P.O.T.-IT — Capture Baseline Frame
+ * auth/capture_frame.php
+ *
+ * GET/POST endpoint. Captures a single baseline frame from the RTSP camera stream 
+ * or live snapshot buffer for the specified room. Saves to photos/ref_image_{room_id}.jpg 
+ * and updates rooms table in spotit_monitor_db.
+ */
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
@@ -8,55 +16,32 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 
-$roomId = trim($_GET['room_id'] ?? 'DESK');
+$roomId = strtoupper(trim($_REQUEST['room_id'] ?? 'DESK'));
 
-$cameraConfig = [
-    'MLH306' => [
-        1 => ['ip' => getenv('TAPO_MLH306_CAM1_IP') ?: '192.168.1.101', 'user' => 'admin', 'pass' => getenv('TAPO_MLH306_CAM1_PASS') ?: ''],
-    ],
-    'MLH305' => [
-        1 => ['ip' => getenv('TAPO_MLH305_CAM1_IP') ?: '192.168.1.103', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM1_PASS') ?: ''],
-    ],
-    'DESK' => [
-        1 => ['ip' => '192.168.18.11', 'user' => 'SpotItCamera', 'pass' => 'spotittapo232'],
-    ],
-];
-
-// If the room doesn't have a specific camera configured (e.g. dynamic testing rooms like ROOM_1),
-// fall back to the DESK camera configuration so local sandbox testing still works.
-$camRoomId = isset($cameraConfig[$roomId][1]) ? $roomId : 'DESK';
-$cam = $cameraConfig[$camRoomId][1];
-$rtsp = "rtsp://{$cam['user']}:{$cam['pass']}@{$cam['ip']}:554/stream1";
-
-$ffmpegPath = '';
-if (strncasecmp(PHP_OS, 'WIN', 3) === 0) {
-    $winPath = trim(shell_exec('where ffmpeg 2>nul') ?: '');
-    if ($winPath) {
-        $lines = explode("\n", $winPath);
-        $ffmpegPath = trim($lines[0]);
+// Fetch room camera credentials from spotit_monitor_db
+$rtsp = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1';
+try {
+    $camStmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass FROM rooms WHERE room_id = ?");
+    $camStmt->execute([$roomId]);
+    $camDb = $camStmt->fetch();
+    if ($camDb && !empty($camDb['camera_ip'])) {
+        $camIp   = $camDb['camera_ip'];
+        $camUser = $camDb['camera_user'] ?: 'SpotItCamera';
+        $camPass = $camDb['camera_pass'] ?: 'spotittapo232';
+        $rtsp    = "rtsp://{$camUser}:{$camPass}@{$camIp}:554/stream1";
     }
-} else {
-    $ffmpegPath = trim(shell_exec('which ffmpeg 2>/dev/null') ?: '');
-}
-if (!$ffmpegPath) {
-    $test = @shell_exec('ffmpeg -version 2>&1');
-    if (stripos($test, 'ffmpeg version') !== false) {
-        $ffmpegPath = 'ffmpeg';
-    }
+} catch (Exception $e) {
+    // Fallback to default RTSP URL
 }
 
-if (!$ffmpegPath) {
-    ms_json(['success' => false, 'message' => 'FFmpeg is not installed or configured on the server PATH.']);
-}
-
-$targetRef = __DIR__ . '/../photos/ref_image.jpg';
+// Per-room target paths
+$targetRef    = ($roomId === 'DESK') ? __DIR__ . '/../photos/ref_image.jpg' : __DIR__ . "/../photos/ref_image_{$roomId}.jpg";
 $targetUpload = __DIR__ . "/../uploads/snapshots/{$roomId}_baseline.jpg";
 
 @mkdir(dirname($targetRef), 0777, true);
 @mkdir(dirname($targetUpload), 0777, true);
 
-// Smart active stream clone: Use the live snapshot if python script is active
-// to avoid Tapo single-stream RTSP connection lock.
+// Smart active stream clone: Use the live snapshot if python detector is active
 $cleanSnapshot = __DIR__ . "/../uploads/snapshots/clean_{$roomId}.jpg";
 $liveSnapshot  = __DIR__ . "/../uploads/snapshots/live_{$roomId}.jpg";
 $usedLive = false;
@@ -72,6 +57,28 @@ if (file_exists($cleanSnapshot) && filesize($cleanSnapshot) > 1000) {
 }
 
 if (!$usedLive) {
+    // Locate FFmpeg executable
+    $ffmpegPath = '';
+    if (strncasecmp(PHP_OS, 'WIN', 3) === 0) {
+        $winPath = trim(shell_exec('where ffmpeg 2>nul') ?: '');
+        if ($winPath) {
+            $lines = explode("\n", $winPath);
+            $ffmpegPath = trim($lines[0]);
+        }
+    } else {
+        $ffmpegPath = trim(shell_exec('which ffmpeg 2>/dev/null') ?: '');
+    }
+    if (!$ffmpegPath) {
+        $test = @shell_exec('ffmpeg -version 2>&1');
+        if (stripos($test, 'ffmpeg version') !== false) {
+            $ffmpegPath = 'ffmpeg';
+        }
+    }
+
+    if (!$ffmpegPath) {
+        ms_json(['success' => false, 'message' => 'FFmpeg is not installed or configured on the server PATH.']);
+    }
+
     $cmd = '"' . $ffmpegPath . '"'
         . " -rtsp_transport tcp -y -i " . escapeshellarg($rtsp)
         . " -vframes 1 -vf scale=960:-2 -f image2 " . escapeshellarg($targetRef);
@@ -81,6 +88,11 @@ if (!$usedLive) {
 
 if (file_exists($targetRef) && filesize($targetRef) > 1000) {
     copy($targetRef, $targetUpload);
+
+    // Also copy to photos/ref_image.jpg if DESK to ensure sandbox compatibility
+    if ($roomId === 'DESK') {
+        @copy($targetRef, __DIR__ . '/../photos/ref_image.jpg');
+    }
     
     try {
         $relPath = "uploads/snapshots/{$roomId}_baseline.jpg";
@@ -90,20 +102,17 @@ if (file_exists($targetRef) && filesize($targetRef) > 1000) {
         // Ignore DB update error
     }
 
-    $mode_file = __DIR__ . '/../detection_mode.json';
-    if (file_exists($mode_file)) {
-        $m = json_decode(file_get_contents($mode_file), true) ?: [];
-        $m['reset_paused'] = false;
-        $m['reset_rois'] = false;
-        $m['updated_at'] = date('Y-m-d H:i:s');
-        @file_put_contents($mode_file, json_encode($m, JSON_PRETTY_PRINT));
+    // Trigger immediate dynamic reload in main.py
+    $dmFile = __DIR__ . '/../detection_mode.json';
+    if (file_exists($dmFile)) {
+        $dm = json_decode(file_get_contents($dmFile), true) ?: [];
+        $dm['reset_rois'] = true;
+        $dm['reset_paused'] = true;
+        $dm['updated_at'] = date('Y-m-d H:i:s');
+        @file_put_contents($dmFile, json_encode($dm, JSON_PRETTY_PRINT));
     }
 
-    ms_json([
-        'success' => true,
-        'message' => $usedLive ? 'Baseline cloned from active stream!' : 'Reference frame captured successfully!',
-        'image_url' => "../uploads/snapshots/{$roomId}_baseline.jpg?t=" . time()
-    ]);
+    ms_json(['success' => true, 'message' => 'Baseline captured successfully!']);
 } else {
-    ms_json(['success' => false, 'message' => 'Failed to capture frame from Tapo camera RTSP stream. Check camera network.']);
+    ms_json(['success' => false, 'message' => 'Failed to capture frame from RTSP stream. Check camera IP and power.']);
 }

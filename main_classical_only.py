@@ -240,7 +240,7 @@ while True:
 
         # CLASSICAL-ONLY: Standard template matching for personal items, but no MobileNetV2 gate for fixed assets
         # Fixed assets (Tier 1) go straight to checking pixel change.
-        fixed_keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'ups', 'computer', 'fan', 'headphones', 'mini_fan']
+        fixed_keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'laptop', 'ups', 'computer', 'fan', 'headphones', 'mini_fan']
         is_fixed = any(kw in label.lower() for kw in fixed_keywords)
 
         if changed and not is_fixed:

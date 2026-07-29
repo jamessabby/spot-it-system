@@ -7,7 +7,11 @@
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
-if (($_SESSION['user_role'] ?? '') !== 'admin' && ($_SESSION['user_role'] ?? '') !== 'staff') {
+// Release session lock early to prevent queue hangs
+$userRole = $_SESSION['user_role'] ?? '';
+session_write_close();
+
+if ($userRole !== 'admin' && $userRole !== 'staff') {
     ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 

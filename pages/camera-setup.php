@@ -183,14 +183,17 @@ if ($selectedRoomId !== '') {
             <div class="card-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
               <div class="card-title"><i class="fa-solid fa-video"></i> Live Calibration Feed</div>
               <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                <button class="btn btn-sm" onclick="recaptureBaseline()" style="background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); font-size:.72rem;">
-                  <i class="fa-solid fa-arrows-rotate"></i> Recapture Baseline
+                <button class="btn btn-sm" onclick="captureBaseline()" style="background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary); font-size:.72rem;">
+                  <i class="fa-solid fa-camera"></i> Capture Baseline
                 </button>
                 <button class="btn btn-primary btn-sm" onclick="openRoiEditor()" style="font-size:.72rem;">
                   <i class="fa-solid fa-pen-ruler"></i> Setup ROI Zones
                 </button>
                 <button class="btn btn-sm" id="btnResetSystemSetup" onclick="resetSystemSetup()" style="font-size:.72rem; background:var(--alert-bg); border:1px solid rgba(220,53,69,0.3); color:var(--alert); font-weight:700;" title="Reset ROIs and detection logs for this room">
                   <i class="fa-solid fa-rotate-left"></i> Reset System
+                </button>
+                <button class="btn btn-sm" onclick="clearMovementSnapshots()" style="font-size:.72rem; background:rgba(255,193,7,0.15); border:1px solid rgba(255,193,7,0.4); color:#ffc107; font-weight:700;" title="Delete generated movement snapshot images">
+                  <i class="fa-solid fa-broom"></i> Clear Snapshots
                 </button>
                 <button class="btn btn-sm" onclick="toggleSetupFullScreen()" style="font-size:.72rem; background:var(--bg-base); border:1px solid var(--border); color:var(--text-primary);" title="Full Screen View">
                   <i class="fa-solid fa-expand"></i> Full Screen
@@ -334,7 +337,7 @@ function switchRoom(val) {
   window.location.href = 'camera-setup.php?room=' + val;
 }
 
-async function recaptureBaseline() {
+async function captureBaseline() {
   showToast('info', 'Connecting to RTSP camera stream and capturing frame...');
   try {
     const res = await spotitFetch(`../auth/capture_frame.php?room_id=${ROOM_ID}&t=${Date.now()}`);
@@ -348,33 +351,19 @@ async function recaptureBaseline() {
     showToast('error', 'Network error while attempting capture.');
   }
 }
+const recaptureBaseline = captureBaseline;
 
-// Draw ROIs on the overlay canvas (over the live video)
+// Clear preview canvas overlay so live stream handles dynamic ROI rendering without double boxes
 function initPreviewCanvas() {
   const box = document.getElementById('setupVideoBox');
   const canvas = document.getElementById('previewCanvas');
   if (!box || !canvas) return;
 
-  // Use 960x540 (the live frame resolution from main.py STREAM_SCALE=0.5 of 1920x1080)
   canvas.width = 960;
   canvas.height = 540;
 
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  rois.forEach((roi) => {
-    ctx.strokeStyle = '#28a745';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
-
-    ctx.fillStyle = 'rgba(40,167,69,0.85)';
-    ctx.font = 'bold 16px "Outfit", sans-serif';
-    const txtWidth = ctx.measureText(roi.label).width;
-    ctx.fillRect(roi.x, roi.y - 25, txtWidth + 12, 25);
-
-    ctx.fillStyle = '#fff';
-    ctx.fillText(roi.label, roi.x + 6, roi.y - 7);
-  });
 }
 
 function toggleSetupFullScreen() {
@@ -501,7 +490,7 @@ function setupCanvasDragging() {
 
 function detectRoiTier(label) {
   const l = label.toLowerCase();
-  const tier1Keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'computer', 'ups'];
+  const tier1Keywords = ['monitor', 'keyboard', 'mouse', 'pc', 'computer', 'ups', 'laptop'];
   if (tier1Keywords.some(kw => l.includes(kw))) {
     return 'tier1';
   }
@@ -617,6 +606,22 @@ async function switchRoom(newRoomId) {
     window.location.href = `camera-setup.php?room=${newRoomId}`;
   } catch (err) {
     window.location.href = `camera-setup.php?room=${newRoomId}`;
+  }
+}
+
+async function clearMovementSnapshots() {
+  if (!confirm("Delete all generated movement snapshot pictures from the uploads/snapshots directory? Critical system calibration and live feed images will be preserved.")) {
+    return;
+  }
+  try {
+    const res = await spotitFetch('../auth/clear_snapshots.php', { method: 'POST' });
+    if (res && res.success) {
+      showToast('success', res.message || 'Movement snapshots cleared!');
+    } else {
+      showToast('error', res ? res.message : 'Failed to clear snapshots.');
+    }
+  } catch (err) {
+    showToast('error', 'Error clearing snapshots.');
   }
 }
 

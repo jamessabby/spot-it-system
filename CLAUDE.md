@@ -380,34 +380,36 @@ The project roadmap, phase-by-phase implementation checklists, and current task 
 
 ## 6. Tooling — what to use for what
 
-Sab has access to multiple AI coding tools; don't assume only one is in play.
+Sab works inside **Google Antigravity** (VS Code-based IDE), switching between
+models in the same Agent panel rather than juggling separate apps.
 
-- **This assistant (Claude, in Antigravity or Claude Code)**: primary tool for
-  anything touching `main.py`, PHP backend logic, database schema, or existing
-  code that needs precise reasoning about interdependencies (rotation fix,
-  microservice boundaries, tier logic, etc). Default choice for this project.
-- **Antigravity's own agent mode**: fine for isolated, well-scoped, greenfield
-  tasks (e.g. "wire this one page's polling to that one endpoint" as a
-  self-contained delegated task) where the agent doesn't need deep context
-  about the rest of the PHP/Python hybrid codebase. Not recommended for
-  cross-cutting changes (anything touching the detection pipeline, DB schema,
-  or auth) — those need the fuller context this file provides.
+- **Claude (Sonnet/Opus, logged in via Claude Pro subscription)**: primary
+  agent for this repo. Default choice for anything touching `main.py`, PHP
+  backend logic, database schema, or existing code that needs precise
+  reasoning about interdependencies (rotation fix, microservice boundaries,
+  tier logic, etc) — this is where Sab's actual thesis code work happens.
+- **Gemini (built into Antigravity, no separate login/billing)**: useful for
+  isolated, well-scoped, greenfield tasks, or for reading/summarizing large
+  swaths of the codebase quickly, where the agent doesn't need deep context
+  about the rest of the PHP/Python hybrid codebase. Good default for "cheap
+  first pass" tasks to save Claude usage for the harder cross-cutting work.
+  Not recommended for cross-cutting changes (anything touching the detection
+  pipeline, DB schema, or auth) — those need the fuller context this file
+  provides and are worth spending Claude on.
 - **Stitch (AI UI design tool)**: useful if new dashboard pages or a redesign
   are needed — generates high-fidelity HTML/CSS starting points fast. Export
   and adapt into the existing PHP page structure and `assets/css/variables.css`
   design tokens rather than treating Stitch output as final.
-- **General rule**: don't switch primary tools mid-task. Pick one for a given
-  piece of work and finish it there — bouncing a half-finished change between
-  tools is how context gets lost and bugs like the stale-`main.py`-file issue
-  (§3b) happen again.
+- **General rule**: don't split one piece of work across both models
+  mid-task. Pick Gemini or Claude for a given piece of work based on how
+  cross-cutting it is, and finish it there — bouncing a half-finished change
+  between models is how context gets lost and bugs like the
+  stale-`main.py`-file issue (§3b) happen again.
 
 ---
 
 ## 7. Conventions / working style for this project
 
-- **Give complete working files, not fragments.** Sab pastes full files into
-  VS Code / Antigravity and replaces wholesale — partial diffs/snippets create
-  more confusion than they save, given the file interdependencies here.
 - **Make decisive calls on creative/architectural judgment calls** rather than
   presenting a menu of options — this is a solo-implementer thesis on a
   deadline, not a team design review. State the reasoning briefly, then ship
@@ -419,7 +421,7 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
   rationale are actively unhelpful even if they're correct.
 - **Test steps must be explicit and concrete** (exact file paths, exact SQL,
   exact terminal commands) — Sab is testing on a live XAMPP + physical
-  camera/phone setup, not a CI pipeline.
+  camera/phone setup, not a CI pipeline (see §7a Validation Loop below).
 - **Don't silently reintroduce Node.js/Express.** An earlier session scaffolded
   a Node.js/Express backend layer; the project has since pivoted fully to
   PHP/XAMPP/phpMyAdmin. Node.js is not part of the current stack anywhere.
@@ -434,6 +436,35 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
   or the reference/live comparison breaks (see §3b for the full root-cause
   history — this has already happened once, watch for regressions if either
   script is touched independently).
+
+### 7a. Validation loop (no CI/automated test suite exists — this is manual)
+
+Run these after any change, in this order, before considering a fix done:
+
+1. **PHP syntax check** any touched PHP file(s) before testing in-browser:
+   ```
+   php -l auth/<file>.php
+   php -l pages/<file>.php
+   ```
+2. **DB migrations**, if schema changed, run in this exact order (never skip
+   or reorder):
+   ```
+   migration_workflow_audit.sql → migration_confidence.sql →
+   migration_notifications.sql → migration_snapshot_b.sql →
+   services/migration_accuracy_trials.sql
+   ```
+3. **Manual browser pass** against the live XAMPP instance
+   (`http://localhost/spotit/`) — exact page(s) and click path to hit, plus
+   the expected resulting DB row/state, should be spelled out per-fix (see
+   §7 "Test steps must be explicit and concrete").
+4. **Detection pipeline changes** (`main.py`) — run against the live Tapo
+   RTSP stream (or `main_classical_only.py` side-by-side for an A/B
+   comparison, per §3c) and confirm the specific ROI(s) affected behave as
+   expected across a few real trigger/reset cycles, not just one.
+5. **Check `BUGS.md`** before debugging anything that looks like a repeat —
+   RTSP orientation, false-positive/false-negative tuning, and snapshot
+   cleanup issues have each been root-caused before; don't re-diagnose from
+   scratch.
 
 ---
 
@@ -463,4 +494,3 @@ Sab has access to multiple AI coding tools; don't assume only one is in play.
 - **2026-07-26 (Dynamic Room & Camera DB Integration + Crash-Proof Threading):** Added DB-driven camera credentials (`camera_ip`, `camera_user`, `camera_pass`) in `spotit_monitor_db.rooms`, created [`auth/get_room_camera.php`](file:///c:/xampp/htdocs/spotit/auth/get_room_camera.php), dynamic auto-switching RTSP reader in `main.py` (zero terminal restarts), thread-safe `VideoStream` locking to prevent C++ FFmpeg crashes, auto-heal logic in `save_rois.php` for `DESK` system room (prevents FK 1452), auto-sync of `detection_mode.json` on room navigation, and Docker deployment artifacts (`Dockerfile`, `docker-compose.yml`, `requirements.txt`, `FUTURE_SCALING_GUIDE.md`).
 
 The historical change log documenting past development sessions and pivots has been moved to the end of [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook focused. Refer to that file to trace past modifications.
-

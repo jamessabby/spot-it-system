@@ -13,11 +13,35 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
   - **Resolution path:** Need a one-time SQL seed directly in `spotit_auth_db.users`. Check `services/auth/schema.sql` and `login_handler.php` for the hash format.
 - [x] **Double snapshot logic in pipeline:** `main.py` needs to implement the secondary camera snapshot (Snapshot B) when an item's empty ROI is physically interacted with or shifted while in the RED/MISSING state.
 
----
+### Automatic Movement Snapshot Purge Endpoint (`auth/clear_snapshots.php`)
+*   **Symptom:** Generating transient movement/detection snapshot images (`*_registered_*.jpg`, `*_snapshot_A.jpg`, `*_snapshot_B.jpg`) cluttered `uploads/snapshots/` and required manual deletion from VS Code.
+*   **Root Cause:** No dedicated web service existed to clean up transient movement snapshots while leaving core stream/calibration images (`live_*.jpg`, `clean_*.jpg`, `*_baseline.jpg`) intact.
+*   **Resolution:** Created `auth/clear_snapshots.php` and added the **`🧹 Clear Snapshots`** toolbar button to `pages/camera-setup.php` and `pages/room-monitor.php`.
+
+### Human Walk-By False Alarms & Rapid Checking Snapshots
+*   **Symptom:** A person walking past an ROI box caused rapid yellow/checking states and created transient snapshot files on disk.
+*   **Root Cause:**
+    1. Progression snapshots were being written during the yellow/checking phase before an alert was confirmed RED.
+    2. Scene-wide human motion ($> 6\%$) was not suppressing the per-ROI missing counter during active pass-by frames.
+*   **Resolution:** Restricted snapshot generation strictly to confirmed RED missing events, added human walk-by scene motion suppression (`motion_pct > 0.06`), and increased `CONSISTENCY_FRAMES` to 30 (~1.0 second of unbroken absence).
+
+### False Positives / Red Boxes when Item Returned or Shifted
+*   **Symptom:** Placing a dark item (e.g. computer mouse) back on the desk required tweaking/nudging to turn green, or lifting an item left the box green.
+*   **Root Cause:** Template matching threshold `PRESENCE_SCORE_THRESHOLD` was set too low ($0.38$), causing bare wood table background to match baseline crops containing table wood behind the item.
+*   **Resolution:** Calibrated `PRESENCE_SCORE_THRESHOLD = 0.62` and expanded the search window (`PAD = 45`), ensuring item removal evaluates as RED (`MISSING`) instantly while returning/shifting items evaluates as GREEN (`NORMAL`).
 
 ## 2. Past Diagnosed Bugs & Root Causes
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
+
+### Wood Grain / Similar Colored Background False Match (Mouse, Laptop, Tumbler)
+*   **Symptom:** Removing items (like the mouse or laptop) from a textured wood table, or a red tumbler from a reddish-brown wood chair, left the ROI bounding box GREEN.
+*   **Root Cause:**
+    1. Template matching (`cv2.matchTemplate`) returns high correlation scores on similar wood grains or colors.
+    2. Solid-colored items like the red tumbler fall back to color difference checks. Reddish wood chairs had an average color difference below the default `20.0` threshold, tricking the fallback check.
+*   **Resolution:**
+    1. Replaced raw color checks with an **Edge Density Ratio** comparison using `cv2.Canny`. If the match area has edge density $< 35\%$ or $> 220\%$ of the baseline, it is rejected as empty background/wood grain.
+    2. Tightened the solid-color fallback difference threshold from `20.0` to `12.0` to reject similar-toned backgrounds (like red wood seats).
 
 ### Room Monitor Unknown Column 'floor_level' Fatal Error
 *   **Symptom:** Clicking "Room Cameras" (`pages/room-monitor.php`) or polling `auth/get_room_status.php` threw a fatal PDOException: `Unknown column 'floor_level' in 'field list'`.

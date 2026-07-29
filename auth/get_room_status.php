@@ -7,6 +7,9 @@
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
+// Release session lock early for high-frequency polling requests
+session_write_close();
+
 try {
     // Determine target room_id
     $mode_file = __DIR__ . '/../detection_mode.json';

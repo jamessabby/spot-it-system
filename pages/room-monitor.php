@@ -125,6 +125,9 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
                 <button class="btn btn-sm" id="btnDismissAlerts" onclick="dismissAlerts()" style="font-size:.72rem;font-weight:700;background:var(--warn-bg);border:1px solid rgba(255,193,7,0.3);color:var(--warn);" title="Dismiss all active alert detections for this room">
                   <i class="fa-solid fa-bell-slash"></i> Dismiss Alerts
                 </button>
+                <button class="btn btn-sm" onclick="clearMovementSnapshots()" style="font-size:.72rem;font-weight:700;background:rgba(255,193,7,0.15);border:1px solid rgba(255,193,7,0.4);color:#ffc107;" title="Delete generated movement snapshot images">
+                  <i class="fa-solid fa-broom"></i> Clear Snapshots
+                </button>
                 <button class="btn btn-sm" onclick="toggleCamFullScreen()" style="font-size:.72rem;font-weight:700;background:var(--bg-base);border:1px solid var(--border);">
                   <i class="fa-solid fa-expand"></i> Full Screen
                 </button>
@@ -419,6 +422,22 @@ async function switchRoom(newRoomId) {
 
 function openRoiEditor() {
   window.location.href = `room-setup.php?room_id=${currentRoomId}`;
+}
+
+async function clearMovementSnapshots() {
+  if (!confirm("Delete all generated movement snapshot pictures from the uploads/snapshots directory? Critical system calibration and live feed images will be preserved.")) {
+    return;
+  }
+  try {
+    const res = await spotitFetch('../auth/clear_snapshots.php', { method: 'POST' });
+    if (res && res.success) {
+      showToast('success', res.message || 'Movement snapshots cleared!');
+    } else {
+      showToast('error', res ? res.message : 'Failed to clear snapshots.');
+    }
+  } catch (err) {
+    showToast('error', 'Error clearing snapshots.');
+  }
 }
 
 function toggleCamFullScreen() {
