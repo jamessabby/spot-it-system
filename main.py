@@ -49,8 +49,24 @@ CONSISTENCY_FRAMES = 25  # 25 consecutive frames (~0.8s @ 30 FPS) for balanced s
 RTSP_URL = "rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1"
 ROTATE_CAMERA = False  # Set to True for portrait iPhone, False for Tapo CCTV
 MATCH_SCORE_THRESHOLD = (
-    0.48  # threshold score for template matching (calibrated for RTSP stream)
+    0.48  # legacy template-match score — retained only by main_classical_only.py A/B baseline
 )
+
+# ── DUAL-TEMPLATE PRESENCE TUNING (registered ROIs) ──────────────────────
+# Measured on the real ROOM_1 reference frame across present / removed /
+# occluded / +-25% lighting scenarios for all three registered items:
+#   sim_present : item there 0.985-1.000 | removed 0.473-0.743 | occluded 0.302-0.509
+#   sim_empty   : removed    0.765-0.819 | occluded  0.362-0.522
+# Both thresholds sit in the middle of a wide empirical gap, not on an edge.
+SIM_PRESENT = 0.85  # >= this vs the "item here" template  -> item is still there
+SIM_EMPTY = 0.65    # >= this vs the "item gone"  template  -> bare surface revealed
+FOOTPRINT_MIN_FRAC = 0.03  # item smaller than 3% of its box -> ROI drawn far too loose
+# Confirmation is wall-clock, not frame counts: the loop outruns the RTSP frame
+# rate, so counting iterations does not measure elapsed time (see BUGS.md,
+# "Instant Stage Escalation in Loop" — same fix already applied to left items).
+MISSING_CONFIRM_SEC = 1.0   # continuous ABSENT time before an item is flagged RED
+RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before a RED alert auto-resolves
+METRICS_CSV = "photos/detection_metrics.csv"
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── MOBILENETV2 DNN GATEKEEPER CONFIG (Phase 2, Step 2.1) ──────────────────
@@ -235,6 +251,72 @@ else:
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# MOBILENETV2 AS A PERCEPTUAL SIMILARITY METRIC  (secondary gate)
+# ═══════════════════════════════════════════════════════════════════════════
+# md_files/unfixable_limitations.md §2 correctly found that CLASSIFICATION fails
+# here: asking the network to name an 80x60 blurry mouse crop against ImageNet's
+# 1000 classes returns noise, because the features it needs were destroyed by
+# the camera before inference ever started.
+#
+# But comparing TWO CROPS FROM THE SAME CAMERA through the same encoder is a
+# different problem. Both sides carry identical blur and identical downsampling
+# damage, so that degradation is common-mode and cancels in the comparison. We
+# use the network as a learned, shift- and lighting-tolerant feature extractor
+# and compare feature vectors by cosine similarity — never asking it "what is
+# this object?", only "do these two views contain the same thing?".
+#
+# This keeps CLAUDE.md §8 intact: no class name is ever emitted, so this is not
+# object-identity recognition. And it stays a genuine gatekeeper (§3a) on two
+# counts — it runs ONLY inside the ambiguous similarity band, and it can only
+# ever resolve PRESENT vs OCCLUDED. It can never declare an item ABSENT. ML in
+# this pipeline can suppress an alarm; it can never raise one.
+
+# Verified against models/mobilenetv2-7.onnx: this layer outputs (1, 1280, 1, 1),
+# the global-average-pool immediately before the 1x1-conv classifier head. The
+# "onnx_node!" prefix is required — there is no unprefixed alias for this node.
+DNN_EMBED_LAYER = "onnx_node!mobilenetv20_features_pool0_fwd"
+_dnn_embed_ok = dnn_net is not None
+_dnn_embed_warned = False
+
+
+def dnn_embed(bgr_crop):
+    """Return the L2-normalised 1280-d MobileNetV2 feature vector for a crop.
+
+    Returns None if the model or layer is unavailable — callers must treat None
+    as "no opinion" and fall back to the classical decision, never as absence.
+    Stopping at the pooling layer skips the classifier head, so this is actually
+    cheaper than the full forward pass the old code ran.
+    """
+    global _dnn_embed_ok, _dnn_embed_warned
+    if not _dnn_embed_ok or bgr_crop is None or bgr_crop.size == 0:
+        return None
+    if bgr_crop.shape[0] < 8 or bgr_crop.shape[1] < 8:
+        return None
+    try:
+        resized = cv2.resize(bgr_crop, DNN_INPUT_SIZE, interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        normalized = (rgb - IMAGENET_MEAN) / IMAGENET_STD
+        blob = normalized.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32)
+        dnn_net.setInput(blob)
+        vec = dnn_net.forward(DNN_EMBED_LAYER).flatten().astype(np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm < 1e-6:
+            return None
+        return vec / norm
+    except Exception as e:
+        if not _dnn_embed_warned:
+            _dnn_embed_warned = True
+            _dnn_embed_ok = False
+            print(
+                f"[SPOT-IT][DNN][WARN] Embedding layer '{DNN_EMBED_LAYER}' unavailable "
+                f"({e}). Falling back to classical-only presence decisions; ambiguous "
+                f"cases will be treated as PRESENT (fail open, never a false alarm)."
+            )
+        return None
+
+
+
 def validate_presence_dnn(
     roi_crop,
     target_label,
@@ -389,6 +471,11 @@ class VideoStream:
         self.cap = None
         self.ret = False
         self.frame = None
+        # Monotonic counter incremented on every genuinely NEW decoded frame.
+        # The detection loop spins faster (~33 Hz) than the RTSP stream delivers
+        # (15-20 fps), so without this it re-processes the same cached frame and
+        # any frame-counting logic silently counts iterations, not observations.
+        self.seq = 0
         self.last_good_frame_at = time.time()
         self.stopped = False
         self.lock = threading.Lock()
@@ -425,6 +512,7 @@ class VideoStream:
                 self.cap = cap_obj
                 self.ret = r
                 self.frame = f
+                self.seq += 1
                 self.last_good_frame_at = time.time()
 
         while not self.stopped:
@@ -441,6 +529,7 @@ class VideoStream:
                     with self.lock:
                         self.ret = ret
                         self.frame = frame
+                        self.seq += 1
                         self.last_good_frame_at = time.time()
                 else:
                     time.sleep(0.05)
@@ -470,6 +559,7 @@ class VideoStream:
                 self.cap = cap_obj
                 self.ret = r
                 self.frame = f
+                self.seq += 1
                 self.last_good_frame_at = time.time()
                 print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
             else:
@@ -488,6 +578,12 @@ class VideoStream:
     def read(self):
         with self.lock:
             return self.ret, self.frame
+
+    def read_seq(self):
+        """Like read(), but also returns the frame's sequence number so callers
+        can tell a freshly decoded frame from a re-read of the cached one."""
+        with self.lock:
+            return self.ret, self.frame, self.seq
 
     def isOpened(self):
         with self.lock:
@@ -582,6 +678,21 @@ item_occupied_crops = {}
 unreg_absence_count = {}
 monitoring_paused = False
 
+# ── DUAL-TEMPLATE PRESENCE STATE (see CLAUDE.md §3a) ──────────────────────
+# label -> {footprint, frac, embed_present, embed_empty, hist_present, hist_empty}
+# Built once against ref_bgr by calibrate_roi_baselines() and rebuilt on every
+# config/baseline reload.
+roi_templates = {}
+
+# Wall-clock presence/absence accumulators. Frame counting is unreliable here
+# because the loop outruns the RTSP frame rate (see VideoStream.seq).
+absent_time = {roi["label"]: 0.0 for roi in roi_list}
+present_time = {roi["label"]: 0.0 for roi in roi_list}
+roi_state = {roi["label"]: "PRESENT" for roi in roi_list}
+prev_roi_gray_prev = {roi["label"]: None for roi in roi_list}
+last_tick_time = time.time()
+last_processed_seq = -1
+
 last_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
 last_ref_mtime = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0
 last_mode_mtime = 0
@@ -638,6 +749,305 @@ def check_roi(roi, thresh_mask):
     changed_pixels = cv2.countNonZero(roi_mask)
     change_pct = changed_pixels / total_pixels
     return change_pct >= MIN_CHANGE_PERCENT, change_pct
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DUAL-TEMPLATE PRESENCE DETECTION
+# ═══════════════════════════════════════════════════════════════════════════
+# THE PROBLEM (md_files/unfixable_limitations.md §1)
+# The old pipeline asked "can I find the item's reference crop near this ROI?"
+# and answered it with cv2.matchTemplate. On a textured wooden desk that
+# question is unanswerable: the reference crop is mostly desk, so BARE DESK
+# correlates against it at ~0.65 and a removed mouse still reads as present.
+# Raising the threshold to reject that then rejects the item itself under a
+# passing shadow. It is a formulation problem, not a tuning problem.
+#
+# THE FIX — give the removal something of its own to match against.
+# The old comparison was one-sided: only "does this look like the item?", with
+# no competing hypothesis. So we build a SECOND template at calibration time by
+# inpainting the item out of the reference frame, reconstructing that patch of
+# desk from the texture immediately around it. That is a physically meaningful
+# prediction of what the camera will see once the item is lifted away.
+#
+# Every live frame is then scored against BOTH:
+#     sim_present  = similarity(live, "item is here"  template)
+#     sim_empty    = similarity(live, "item is gone"  template)
+#
+#     sim_present high                  -> PRESENT   (item still there)
+#     sim_present low, sim_empty high   -> ABSENT    (bare surface revealed)
+#     both low                          -> OCCLUDED  (a hand/bag is in the way)
+#
+# Wood grain can no longer cause a false PRESENT, because bare wood now matches
+# the empty template far better than it matches the item template. The wood is
+# still there in both — but it is no longer the only thing being compared.
+#
+# WHY THIS SURVIVES LIGHTING CHANGES
+# Comparison is by MobileNetV2 feature-space cosine, not raw pixels. Measured on
+# the real ROOM_1 frame at +-25% brightness, sim_present moved by less than 0.02.
+#
+# WHY OCCLUSION IS SAFE
+# A hand matches neither template, so it lands in OCCLUDED, which HOLDS the
+# timers rather than advancing them. A motionless hand resting on the mouse
+# therefore cannot raise an alarm — the case the old local_motion > 0.05 hack
+# structurally could not handle (unfixable_limitations.md §3).
+#
+# ML BOUNDARY (CLAUDE.md §3a, §8)
+# The classical absdiff/threshold gate (check_roi) still does the first pass and
+# decides whether anything changed at all; the network is consulted only on
+# already-flagged crops. It compares two crops from the same camera and never
+# emits a class name, so this is perceptual similarity, not object identity
+# recognition. See dnn_embed() for why comparison succeeds on small crops where
+# classification failed. classical_similarity() below is the fallback whenever
+# the model is unavailable, so detection degrades rather than stopping.
+
+
+def _chroma_hist(bgr_crop):
+    """Chroma-only (a*, b*) Lab histogram — the classical similarity fallback.
+
+    Excludes L* deliberately: lightness tracks illumination, so binning it makes
+    a 25% dimming look like a different object. Hue/saturation is what actually
+    identifies the item.
+    """
+    if bgr_crop is None or bgr_crop.size == 0:
+        return None
+    lab = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2LAB)
+    hist = cv2.calcHist([lab], [1, 2], None, [16, 16], [0, 256, 0, 256])
+    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+    return hist.flatten()
+
+
+def classical_similarity(ref_hist, live_crop):
+    """Fallback similarity when MobileNetV2 is unavailable. Weaker than the
+    embedding (chroma alone cannot tell a red tumbler from a red mug) but it
+    keeps the same three-way decision working with no model present."""
+    if ref_hist is None:
+        return None
+    live_hist = _chroma_hist(live_crop)
+    if live_hist is None:
+        return None
+    try:
+        return float(max(0.0, cv2.compareHist(ref_hist, live_hist, cv2.HISTCMP_CORREL)))
+    except Exception:
+        return None
+
+
+def _inpaint_item_away(image_bgr, box):
+    """Reconstruct the surface hidden behind an item, from its own surroundings.
+
+    cv2.inpaint propagates the neighbouring texture inward, so for an item on a
+    wooden desk it returns that patch of desk complete with plausible grain —
+    exactly the appearance the camera will produce once the item is lifted.
+    """
+    x, y, w, h = box
+    H, W = image_bgr.shape[:2]
+    pad = max(w, h)
+    px1, py1 = max(0, x - pad), max(0, y - pad)
+    px2, py2 = min(W, x + w + pad), min(H, y + h + pad)
+    region = image_bgr[py1:py2, px1:px2].copy()
+
+    mask = np.zeros(region.shape[:2], np.uint8)
+    mx, my = x - px1, y - py1
+    mask[my + 2 : my + h - 2, mx + 2 : mx + w - 2] = 255
+    if cv2.countNonZero(mask) == 0:
+        return None
+
+    filled = cv2.inpaint(region, mask, 5, cv2.INPAINT_TELEA)
+    out = image_bgr.copy()
+    out[py1:py2, px1:px2] = filled
+    return out
+
+
+def _item_footprint(ref_crop, empty_crop):
+    """Locate the item's actual outline inside its ROI box.
+
+    The item sits exactly where the reference frame disagrees with its own
+    inpainted version, so differencing the two recovers its silhouette without
+    any manual annotation.
+
+    This matters a lot for small items: the mouse box is ~47% bare desk, and
+    that padding dilutes every comparison equally, shrinking the gap between
+    "present" and "removed" to almost nothing. Cropping to the footprint took
+    the mouse's removal margin from 0.03 to a clean separation.
+
+    Returns ((fx, fy, fw, fh), area_fraction) in ROI-local coordinates.
+    """
+    try:
+        a = cv2.cvtColor(ref_crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+        b = cv2.cvtColor(empty_crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+        diff = np.linalg.norm(a - b, axis=2)
+        thr = max(12.0, float(np.percentile(diff, 60)))
+        m = (diff > thr).astype(np.uint8) * 255
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        n, _, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+        if n <= 1:
+            return None, 0.0
+        big = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        fx, fy, fw, fh, area = stats[big]
+        pad = 2
+        fx, fy = max(0, int(fx) - pad), max(0, int(fy) - pad)
+        fw = min(ref_crop.shape[1] - fx, int(fw) + 2 * pad)
+        fh = min(ref_crop.shape[0] - fy, int(fh) + 2 * pad)
+        if fw < 6 or fh < 6:
+            return None, 0.0
+        frac = float(area) / float(ref_crop.shape[0] * ref_crop.shape[1])
+        return (fx, fy, fw, fh), frac
+    except Exception as e:
+        print(f"[SPOT-IT][CALIB] footprint extraction failed: {e}")
+        return None, 0.0
+
+
+def evaluate_roi_presence(frame_bgr, roi):
+    """Classify one ROI as PRESENT / ABSENT / OCCLUDED for the current frame.
+
+    Returns (state, sim_present, sim_empty, used_dnn).
+    Fails safe: if this ROI was never calibrated, report PRESENT rather than
+    inventing an alarm from a measurement we know is meaningless.
+    """
+    label = roi["label"]
+    tpl = roi_templates.get(label)
+    if not tpl:
+        return "PRESENT", 1.0, 0.0, False
+
+    x, y, w, h = roi["x"], roi["y"], roi["w"], roi["h"]
+    fx, fy, fw, fh = tpl["footprint"]
+    live = frame_bgr[y + fy : y + fy + fh, x + fx : x + fx + fw]
+    if live.size == 0 or live.shape[0] < 4 or live.shape[1] < 4:
+        return "PRESENT", 1.0, 0.0, False
+
+    used_dnn = False
+    sim_p = sim_e = None
+    if tpl.get("embed_present") is not None:
+        live_vec = dnn_embed(live)
+        if live_vec is not None:
+            sim_p = float(np.dot(tpl["embed_present"], live_vec))
+            sim_e = (
+                float(np.dot(tpl["embed_empty"], live_vec))
+                if tpl.get("embed_empty") is not None
+                else 0.0
+            )
+            used_dnn = True
+
+    if sim_p is None:  # model unavailable — classical chroma fallback
+        sim_p = classical_similarity(tpl.get("hist_present"), live)
+        sim_e = classical_similarity(tpl.get("hist_empty"), live)
+        if sim_p is None:
+            return "PRESENT", 1.0, 0.0, False
+        if sim_e is None:
+            sim_e = 0.0
+
+    if sim_p >= SIM_PRESENT:
+        state = "PRESENT"
+    elif sim_e >= SIM_EMPTY:
+        state = "ABSENT"
+    else:
+        state = "OCCLUDED"
+    return state, sim_p, sim_e, used_dnn
+
+
+def calibrate_roi_baselines(ref_image_bgr, rois):
+    """Build both templates for every ROI. Runs at startup and on every reload.
+
+    Cost is a handful of inpaints and DNN passes, paid once per calibration —
+    nothing here runs per frame.
+    """
+    roi_templates.clear()
+    if ref_image_bgr is None or not rois:
+        return
+
+    for r in rois:
+        label = r["label"]
+        x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+        ref_crop = ref_image_bgr[y : y + h, x : x + w]
+        if ref_crop.size == 0 or w < 10 or h < 10:
+            print(f"[SPOT-IT][CALIB][WARN] '{label}' ROI is too small to monitor.")
+            continue
+
+        empty_full = _inpaint_item_away(ref_image_bgr, (x, y, w, h))
+        if empty_full is None:
+            print(f"[SPOT-IT][CALIB][WARN] '{label}' inpainting failed; skipping.")
+            continue
+        empty_crop = empty_full[y : y + h, x : x + w]
+
+        footprint, frac = _item_footprint(ref_crop, empty_crop)
+        if footprint is None:
+            # Nothing distinguishes the ROI from its own surroundings, which
+            # means the baseline was captured with the item already absent, or
+            # the item is invisible at this camera distance.
+            print(
+                f"[SPOT-IT][CALIB][WARN] '{label}' — no item found inside this ROI. "
+                f"Re-capture the baseline with the item in place, or redraw the box."
+            )
+            continue
+        if frac < FOOTPRINT_MIN_FRAC:
+            print(
+                f"[SPOT-IT][CALIB][WARN] '{label}' fills only {frac:.1%} of its box. "
+                f"Redraw the ROI tighter around the item — detection will be weak."
+            )
+
+        fx, fy, fw, fh = footprint
+        sub_ref = ref_crop[fy : fy + fh, fx : fx + fw]
+        sub_empty = empty_crop[fy : fy + fh, fx : fx + fw]
+
+        roi_templates[label] = {
+            "footprint": footprint,
+            "frac": frac,
+            "embed_present": dnn_embed(sub_ref),
+            "embed_empty": dnn_embed(sub_empty),
+            "hist_present": _chroma_hist(sub_ref),
+            "hist_empty": _chroma_hist(sub_empty),
+        }
+
+        mode = "DNN" if roi_templates[label]["embed_present"] is not None else "classical"
+        print(
+            f"[SPOT-IT][CALIB] '{label}': item footprint {fw}x{fh}px "
+            f"({frac:.0%} of box) | {mode} templates ready"
+        )
+
+
+_metrics_header_written = False
+_metrics_last = {}  # label -> (last_state, last_write_time)
+METRICS_MIN_INTERVAL = 0.5  # seconds between routine rows for an unchanged ROI
+
+
+def log_roi_metrics(
+    label, change_pct, sim_present, sim_empty, used_dnn, state,
+    t_absent, t_present, scene_motion,
+):
+    """Append one row per ROI per frame to photos/detection_metrics.csv.
+
+    Three jobs at once: it turns threshold tuning into reading a distribution
+    instead of guessing, it produces the TP/FP/FN/TN evidence Chapter 4 needs,
+    and it is the measurement substrate for the A/B run against
+    main_classical_only.py (CLAUDE.md §3c).
+    """
+    global _metrics_header_written
+    try:
+        # Always record a transition (that is the evidence that matters for the
+        # Chapter 4 accuracy table); rate-limit the steady-state rows so a quiet
+        # room does not write ~90 rows/second to disk.
+        now = time.time()
+        prev_state, prev_t = _metrics_last.get(label, (None, 0.0))
+        if state == prev_state and (now - prev_t) < METRICS_MIN_INTERVAL:
+            return
+        _metrics_last[label] = (state, now)
+
+        if not _metrics_header_written:
+            _metrics_header_written = True
+            if not os.path.exists(METRICS_CSV) or os.path.getsize(METRICS_CSV) == 0:
+                with open(METRICS_CSV, "w", encoding="utf-8") as mf:
+                    mf.write(
+                        "ts,room,label,change_pct,sim_present,sim_empty,used_dnn,"
+                        "state,absent_time,present_time,scene_motion\n"
+                    )
+        with open(METRICS_CSV, "a", encoding="utf-8") as mf:
+            mf.write(
+                f"{datetime.now().isoformat(timespec='milliseconds')},{ROOM_ID},{label},"
+                f"{change_pct:.4f},{sim_present:.4f},{sim_empty:.4f},{int(used_dnn)},"
+                f"{state},{t_absent:.2f},{t_present:.2f},{scene_motion:.4f}\n"
+            )
+    except Exception:
+        pass  # instrumentation must never break detection
 
 
 def save_frames_atomic(output_frame, clean_frame):
@@ -920,6 +1330,10 @@ def get_camera_rtsp_url(room_id):
 current_running_room = ROOM_ID
 CURRENT_RTSP_URL = get_camera_rtsp_url(ROOM_ID)
 
+# Establish per-ROI occupancy baselines from the reference frame before the
+# detection loop starts — every presence ratio is measured against these.
+calibrate_roi_baselines(ref_bgr, roi_list)
+
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 while True:
     # ── CHECK FOR DYNAMIC ROOM SWITCH ─────────────────────────────────────
@@ -1095,6 +1509,17 @@ while True:
                     shifted_locations[lbl] = None
                 if lbl not in registered_seq_count:
                     registered_seq_count[lbl] = 0
+                if lbl not in absent_time:
+                    absent_time[lbl] = 0.0
+                if lbl not in present_time:
+                    present_time[lbl] = 0.0
+                if lbl not in roi_state:
+                    roi_state[lbl] = "PRESENT"
+                if lbl not in prev_roi_gray_prev:
+                    prev_roi_gray_prev[lbl] = None
+
+            # Recompute per-ROI occupancy baselines against the new reference
+            calibrate_roi_baselines(ref_bgr, roi_list)
 
             BASELINE_COUNT = len(roi_list)
             last_rois_mtime = current_rois_mtime
@@ -1135,11 +1560,18 @@ while True:
         time.sleep(1.0)
         continue
 
-    ret, frame = cap.read()
+    ret, frame, frame_seq = cap.read_seq()
 
     if not ret or frame is None:
         time.sleep(0.1)
         continue
+
+    # Is this a genuinely new camera frame, or a re-read of the cached one?
+    # Detection decisions are only advanced on new frames (see the wall-clock
+    # timers in the ROI loop); rendering still happens every iteration so the
+    # dashboard feed stays smooth.
+    frame_is_new = frame_seq != last_processed_seq
+    last_processed_seq = frame_seq
 
     if ROTATE_CAMERA:
         frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -1237,12 +1669,17 @@ while True:
     stable, motion_pct = is_scene_stable(blur)
 
     if not stable:
-        for roi in roi_list:
-            consistency_count[roi["label"]] = 0
+        # HOLD, do not reset. Previously this zeroed every consistency counter,
+        # which created a false-negative path: physically removing an item IS
+        # motion, so the counter was wiped on exactly the frames that mattered
+        # and an item taken during any activity could never be confirmed missing.
+        # Freezing the accumulators is equally safe against false alarms (no
+        # counter advances while we cannot see clearly) without that blind spot.
+        last_tick_time = time.time()
 
         cv2.putText(
             output,
-            f"SCENE UNSTABLE — paused ({motion_pct:.1%} motion)",
+            f"SCENE UNSTABLE — holding ({motion_pct:.1%} motion)",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -1274,6 +1711,7 @@ while True:
         continue
 
     output = frame.copy()
+    production_left_state = {}
 
     # ── UNREGISTERED / LEFT ITEMS MODE (Foreground Contour Tracking + ML Gate) ────────
     if SANDBOX_TRACKING_MODE == "unregistered" or IS_PRODUCTION_MODE:
@@ -1306,11 +1744,20 @@ while True:
                 ):
                     continue
 
-                # Secondary ML Gatekeeper: Objectness & Texture Filter
+                # Secondary Gatekeeper: Objectness & Texture Filter.
+                # NOTE: this previously called validate_presence_dnn(crop) with a
+                # single argument while that function requires target_label
+                # positionally — an uncaught TypeError that killed the process on
+                # the first left-item contour. It also asked the wrong question:
+                # ImageNet classification cannot name a small CCTV crop (see
+                # md_files/unfixable_limitations.md §2). What this gate actually
+                # needs is objectness — "is this a real object or a flat shadow?"
+                # — which validate_presence_classical() already answers via
+                # Laplacian variance + edge density.
                 crop = frame[y : y + h, x : x + w]
-                is_real_obj, conf = validate_presence_dnn(crop)
+                is_real_obj, conf = validate_presence_classical(crop, label=f"object{unreg_count + 1}")
                 if not is_real_obj:
-                    # Flat shadow / lighting noise -> REJECTED by ML gatekeeper!
+                    # Flat shadow / lighting noise -> REJECTED by objectness gate
                     continue
 
                 unreg_count += 1
@@ -1432,25 +1879,41 @@ while True:
                     item_occupied_crops.pop(lbl, None)
                     unreg_absence_count.pop(lbl, None)
 
-        # Write real-time physical state for PHP polling
-        try:
-            with open("photos/live_roi_state.json", "w") as sf:
-                json.dump(live_left_state, sf)
-        except Exception:
-            pass
+        # In PRODUCTION both jobs must run on the same frame: watch the
+        # registered lab equipment AND spot unregistered left items. Previously
+        # this branch always `continue`d, so whenever production mode was on the
+        # registered-ROI loop below never executed at all and no lab equipment
+        # was monitored. Only the sandbox 'unregistered' test mode short-circuits
+        # here; production falls through, carrying its left-item state along to
+        # be merged into the single live_roi_state.json the dashboard polls.
+        if not IS_PRODUCTION_MODE:
+            try:
+                with open("photos/live_roi_state.json", "w") as sf:
+                    json.dump(live_left_state, sf)
+            except Exception:
+                pass
 
-        save_frames_atomic(output, frame)
+            save_frames_atomic(output, frame)
 
-        if SHOW_GUI:
-            cv2.imshow("S.P.O.T.-IT Live Detection", output)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        else:
-            time.sleep(0.03)
-        continue
+            if SHOW_GUI:
+                cv2.imshow("S.P.O.T.-IT Live Detection", output)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+            else:
+                time.sleep(0.03)
+            continue
 
-    # ── GATE 2 + 3: REGISTERED ROI CHANGE + FRAME CONSISTENCY ───────────────
+        production_left_state = live_left_state
+
+    # ── GATE 2 + 3: REGISTERED ROI PRESENCE + WALL-CLOCK CONFIRMATION ───────
     missing_count = 0
+
+    # Elapsed wall-clock since the last evaluated frame. Presence/absence is
+    # accumulated in seconds, not frames, because the loop spins faster than the
+    # camera delivers and frame counts therefore do not measure time.
+    _now = time.time()
+    tick_dt = min(0.5, max(0.0, _now - last_tick_time))  # clamp to survive stalls
+    last_tick_time = _now
 
     for roi in roi_list:
         x, y, w, h = roi["x"], roi["y"], roi["w"], roi["h"]
@@ -1491,134 +1954,100 @@ while True:
         else:  # 'unregistered'
             tier = 2
 
-        # Compute frame-to-frame pixel change inside this ROI to detect hand movement/typing
+        # Compute frame-to-frame pixel change inside this ROI (hand movement/typing).
+        # Kept for the Snapshot B / clean-frame watchers below, which need the
+        # PREVIOUS frame's crop — hence prev_roi_gray_prev, preserved before
+        # prev_roi_gray is overwritten. Without that separation both watchers
+        # diffed a crop against a copy of itself and always measured zero motion,
+        # silently disabling Snapshot B entirely.
         roi_gray = gray[y : y + h, x : x + w]
+        prev_roi_gray_prev[label] = prev_roi_gray.get(label)
         local_motion = 0.0
         if (
-            prev_roi_gray[label] is not None
-            and prev_roi_gray[label].shape == roi_gray.shape
+            prev_roi_gray_prev[label] is not None
+            and prev_roi_gray_prev[label].shape == roi_gray.shape
         ):
-            roi_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
+            roi_diff = cv2.absdiff(prev_roi_gray_prev[label], roi_gray)
             _, roi_thr = cv2.threshold(roi_diff, 15, 255, cv2.THRESH_BINARY)
             local_motion = cv2.countNonZero(roi_thr) / (w * h)
-        else:
-            local_motion = 0.0
         prev_roi_gray[label] = roi_gray.copy()
 
+        # ── GATE 2: CLASSICAL CHANGE DETECTION (first pass) ───────────────
+        # Purely classical absdiff vs the baseline. This decides WHETHER
+        # anything in the ROI is worth a closer look; it never decides presence.
+        # Keeping this first is what preserves "classical primary, ML secondary"
+        # (CLAUDE.md §3a) — on a quiet frame the network is never invoked at all,
+        # which is also why the added cost is negligible.
         changed, change_pct = check_roi(roi, thresh)
-        is_actually_missing = changed
 
-        # Keep box green if there is active hand movement or typing inside the ROI
-        if local_motion > 0.05:
-            is_actually_missing = False
-            changed = False
+        # ══════════════════════════════════════════════════════════════════
+        # GATE 3: PRESENCE DECISION — dual-template (see evaluate_roi_presence)
+        # ══════════════════════════════════════════════════════════════════
+        # Scores the ROI against BOTH "item is here" and "item is gone"
+        # templates. Bare wood matches the empty template, so it can no longer
+        # masquerade as the item the way it did under plain template matching.
+        if not changed:
+            # Nothing changed against the baseline — the item is where it was.
+            state, sim_present, sim_empty, used_dnn = "PRESENT", 1.0, 0.0, False
+        else:
+            state, sim_present, sim_empty, used_dnn = evaluate_roi_presence(frame, roi)
 
-        if changed:
-            ref_crop = ref_bgr[y : y + h, x : x + w]
-            orig_live_crop = frame[y : y + h, x : x + w]
+        # ── WALL-CLOCK CONFIRMATION ──────────────────────────────────────
+        # Only advance timers on genuinely new camera frames; re-reads of the
+        # cached frame carry no new evidence.
+        if frame_is_new:
+            if state == "ABSENT":
+                absent_time[label] = absent_time.get(label, 0.0) + tick_dt
+                present_time[label] = 0.0
+            elif state == "PRESENT":
+                present_time[label] = present_time.get(label, 0.0) + tick_dt
+                absent_time[label] = 0.0
+            # OCCLUDED holds both accumulators exactly where they are
 
-            # ── SHIFT-SEARCH MATCH GATE (wood-grain-resistant) ──────────────
-            # Strategy: use a tight ±PAD search window to find the ref crop.
-            # Then validate with EDGE DENSITY comparison instead of color diff.
-            # Why: wood grain has very few edges. Physical objects (mouse, laptop,
-            # tumbler) have rich edge structures. If the "match" area has edge
-            # density close to the reference crop, the item is present.
-            # If it has low edge density (≈ bare wood), the item is gone → RED.
-            PAD = min(15, w // 3, h // 3)
-            x1 = max(0, x - PAD)
-            y1 = max(0, y - PAD)
-            x2 = min(frame.shape[1], x + w + PAD)
-            y2 = min(frame.shape[0], y + h + PAD)
-            live_search_area = frame[y1:y2, x1:x2]
+        roi_state[label] = state
+        is_actually_missing = absent_time.get(label, 0.0) >= MISSING_CONFIRM_SEC
+        item_confirmed_present = present_time.get(label, 0.0) >= RECOVER_CONFIRM_SEC
 
-            max_score = 0.0
-            best_loc = (PAD, PAD)
-            if live_search_area.shape[0] >= h and live_search_area.shape[1] >= w:
-                res = cv2.matchTemplate(
-                    live_search_area, ref_crop, cv2.TM_CCOEFF_NORMED
+        # Keep the frame-count fields the dashboard/JSON contract expects in sync
+        # with the wall-clock truth, so no PHP or JS has to change.
+        consistency_count[label] = (
+            CONSISTENCY_FRAMES
+            if is_actually_missing
+            else int(
+                min(
+                    CONSISTENCY_FRAMES - 1,
+                    (absent_time.get(label, 0.0) / MISSING_CONFIRM_SEC)
+                    * CONSISTENCY_FRAMES,
                 )
-                _, max_score, _, max_loc = cv2.minMaxLoc(res)
-                best_loc = max_loc
+            )
+        )
+        shifted_locations[label] = None
 
-            PRESENCE_SCORE_THRESHOLD = 0.52
+        log_roi_metrics(
+            label,
+            change_pct,
+            sim_present,
+            sim_empty,
+            used_dnn,
+            state,
+            absent_time.get(label, 0.0),
+            present_time.get(label, 0.0),
+            motion_pct,
+        )
 
-            # ── EDGE DENSITY HELPER ──────────────────────────────────────────
-            def _edge_density(bgr_crop):
-                """Return fraction of pixels that are edges in a BGR crop."""
-                if bgr_crop is None or bgr_crop.size == 0:
-                    return 0.0
-                g = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2GRAY)
-                edges = cv2.Canny(g, 40, 120)
-                return cv2.countNonZero(edges) / float(g.shape[0] * g.shape[1] + 1e-6)
+        # NOTE: the old SHIFT-SEARCH MATCH GATE (cv2.matchTemplate + Canny edge
+        # density ratio + colour-diff fallback) previously sat here. It has been
+        # replaced by the dual-template decision above. The template-match
+        # approach is preserved unmodified in main_classical_only.py as the A/B
+        # baseline for Chapter 4 (CLAUDE.md §3c).
 
-            # Compute reference crop edge density once (what the item looks like)
-            ref_edge_density = _edge_density(ref_crop)
-
-            if max_score >= PRESENCE_SCORE_THRESHOLD:
-                best_x, best_y = best_loc[0], best_loc[1]
-                matched_live_crop = live_search_area[
-                    best_y : best_y + h, best_x : best_x + w
-                ]
-
-                # Edge density of the matched patch in the live frame
-                live_edge_density = _edge_density(matched_live_crop)
-
-                # If ref crop has meaningful edges (real object), check if live
-                # patch also has them. Wood grain has ~0.01–0.03 edge density.
-                # Real objects have > 0.05. Ratio < 0.35 means we matched bare desk.
-                if ref_edge_density > 0.04:
-                    edge_ratio = live_edge_density / (ref_edge_density + 1e-6)
-                    item_edge_present = (0.35 <= edge_ratio <= 2.2)
-                else:
-                    # Low-edge reference (e.g. solid-colored item) — fall back
-                    # to color diff as secondary check
-                    if matched_live_crop.shape == ref_crop.shape:
-                        color_diff = float(
-                            np.mean(
-                                np.abs(
-                                    matched_live_crop.astype(np.float32)
-                                    - ref_crop.astype(np.float32)
-                                )
-                            )
-                        )
-                        item_edge_present = color_diff < 12.0
-                    else:
-                        item_edge_present = False
-
-                if item_edge_present:
-                    is_actually_missing = False
-                    sx = x1 + best_loc[0]
-                    sy = y1 + best_loc[1]
-                    if abs(sx - x) > 8 or abs(sy - y) > 8:
-                        shifted_locations[label] = (sx, sy, w, h)
-                    else:
-                        shifted_locations[label] = None
-                    if label not in missing_timestamps:
-                        pass  # still present, no log needed
-                else:
-                    # Template score looked ok but edge structure says bare desk → MISSING
-                    print(
-                        f"[SPOT-IT][EDGE] '{label}' template matched (score={max_score:.2f}) "
-                        f"but edge ratio={live_edge_density/max(ref_edge_density,1e-6):.2f} "
-                        f"< 0.35 — wood grain false match rejected → MISSING"
-                    )
-                    is_actually_missing = True
-                    shifted_locations[label] = None
-            else:
-                # Item baseline crop NOT found anywhere in search area → RED
-                is_actually_missing = True
-                shifted_locations[label] = None
-
-        if is_actually_missing:
+        if state == "ABSENT" and not active_events[label]:
             ok_consistency_count[label] = 0
-            consistency_count[label] += 1
-            if consistency_count[label] == 1:
+            if absent_time[label] <= tick_dt * 1.5:  # first frame of this absence
                 print(
-                    f"[SPOT-IT] '{label}' change detected! (change: {change_pct:.1%}). Status: CHECKING ({consistency_count[label]}/{CONSISTENCY_FRAMES})"
-                )
-            elif consistency_count[label] < CONSISTENCY_FRAMES:
-                print(
-                    f"[SPOT-IT] '{label}' checking progress ({consistency_count[label]}/{CONSISTENCY_FRAMES})"
+                    f"[SPOT-IT] '{label}' surface revealed where the item was "
+                    f"(match vs item {sim_present:.2f}, vs empty surface "
+                    f"{sim_empty:.2f}). Confirming..."
                 )
 
             # ── PROGRESSION SNAPSHOT SEQUENCE (Tier 1 / Registered Items) ──
@@ -1645,30 +2074,29 @@ while True:
                     if registered_seq_count[label] >= 5:
                         seq_completed[label] = True
 
-        else:
-            consistency_count[label] = 0
+        elif item_confirmed_present:
+            # Item has been continuously and unambiguously present for
+            # RECOVER_CONFIRM_SEC. Note this requires state == PRESENT that whole
+            # time — an OCCLUDED zone freezes the timer, so a hand hovering over
+            # an empty spot cannot clear a live alert.
             ok_consistency_count[label] += 1
-            # Require 3 consecutive frames of OK presence before resetting missing state
-            if ok_consistency_count[label] >= 3:
-                if active_events[label]:
-                    print(
-                        f"[SPOT-IT] '{label}' confirmed returned to OK state. Auto-resolving alert..."
-                    )
-                    post_item_recovered(label)
-                active_events[label] = False
-                active_detection_ids[label] = None
-                snapshot_b_triggered[label] = False
-                clean_snapshot_saved[label] = False
-                seq_completed[label] = False
-                last_seq_snapshot_time[label] = 0
-                shifted_locations[label] = None
-                registered_seq_count[label] = 0
-                if label in missing_timestamps:
-                    del missing_timestamps[label]
+            if active_events[label]:
+                print(
+                    f"[SPOT-IT] '{label}' confirmed returned to OK state. Auto-resolving alert..."
+                )
+                post_item_recovered(label)
+            active_events[label] = False
+            active_detection_ids[label] = None
+            snapshot_b_triggered[label] = False
+            clean_snapshot_saved[label] = False
+            seq_completed[label] = False
+            last_seq_snapshot_time[label] = 0
+            shifted_locations[label] = None
+            registered_seq_count[label] = 0
+            if label in missing_timestamps:
+                del missing_timestamps[label]
 
-        confirmed_missing = (
-            consistency_count[label] >= CONSISTENCY_FRAMES and not active_events[label]
-        )
+        confirmed_missing = is_actually_missing and not active_events[label]
 
         if confirmed_missing:
             active_events[label] = True
@@ -1723,12 +2151,15 @@ while True:
         # ── FINAL POST-REMOVAL FRAME COMPLETION ─────────────────────────────
         # Once item is confirmed missing, capture ONE final clean frame showing empty ROI after hand leaves
         if active_events[label] and not clean_snapshot_saved[label]:
-            roi_gray = gray[y : y + h, x : x + w]
+            # Uses prev_roi_gray_prev (the PREVIOUS frame's crop). prev_roi_gray
+            # was already overwritten with this frame's crop at the top of the
+            # loop, so diffing against it always yielded 0.0 motion and this
+            # "wait for the hand to leave" gate fired instantly on every event.
             if (
-                prev_roi_gray[label] is not None
-                and prev_roi_gray[label].shape == roi_gray.shape
+                prev_roi_gray_prev[label] is not None
+                and prev_roi_gray_prev[label].shape == roi_gray.shape
             ):
-                ftf_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
+                ftf_diff = cv2.absdiff(prev_roi_gray_prev[label], roi_gray)
                 _, ftf_thresh = cv2.threshold(ftf_diff, 15, 255, cv2.THRESH_BINARY)
                 motion_val = cv2.countNonZero(ftf_thresh) / (w * h)
 
@@ -1747,11 +2178,14 @@ while True:
         # ── SNAPSHOT B LOGIC (Unregistered / Tier 2 Only) ──────────────────
         # If item is already confirmed missing, watch it for subsequent movement (theft/hand capture)
         if tier == 2 and active_events[label] and not snapshot_b_triggered[label]:
-            roi_gray = gray[y : y + h, x : x + w]
-            if prev_roi_gray[label] is not None:
-                if prev_roi_gray[label].shape == roi_gray.shape:
+            # Also fixed to read prev_roi_gray_prev — against the clobbered
+            # prev_roi_gray this diff was always exactly 0.0, so the >= 0.05 gate
+            # could never be met and Snapshot B never once fired for a registered
+            # ROI, despite being a documented requirement (CLAUDE.md §3c).
+            if prev_roi_gray_prev[label] is not None:
+                if prev_roi_gray_prev[label].shape == roi_gray.shape:
                     # Frame-to-frame difference within the empty ROI
-                    ftf_diff = cv2.absdiff(prev_roi_gray[label], roi_gray)
+                    ftf_diff = cv2.absdiff(prev_roi_gray_prev[label], roi_gray)
                     _, ftf_thresh = cv2.threshold(ftf_diff, 15, 255, cv2.THRESH_BINARY)
                     motion_val = cv2.countNonZero(ftf_thresh) / (w * h)
 
@@ -1766,10 +2200,9 @@ while True:
                             label, active_detection_ids[label], snapshot_path_b
                         )
                         print()
-            prev_roi_gray[label] = roi_gray
 
         # ── DRAW ROI BOXES ────────────────────────────────────────────────
-        if consistency_count[label] >= CONSISTENCY_FRAMES:
+        if is_actually_missing:
             missing_count += 1
             cv2.rectangle(output, (x, y), (x + w, y + h), (0, 0, 255), 2)
             cv2.putText(
@@ -1781,31 +2214,30 @@ while True:
                 (0, 0, 255),
                 2,
             )
-        elif consistency_count[label] > 0:
+        elif state == "ABSENT":
+            pct = min(1.0, absent_time.get(label, 0.0) / MISSING_CONFIRM_SEC)
             cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 255), 2)
             cv2.putText(
                 output,
-                f"CHECKING: {label} ({consistency_count[label]}/{CONSISTENCY_FRAMES})",
+                f"CHECKING: {label} ({pct:.0%})",
                 (x, y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
                 (0, 255, 255),
                 1,
             )
-        elif shifted_locations[label] is not None:
-            # Draw original boundary in thin green and the shifted position in solid green OK
-            cv2.rectangle(
-                output, (x, y), (x + w, y + h), (0, 255, 0), 1, lineType=cv2.LINE_AA
-            )
-            sx, sy, sw, sh = shifted_locations[label]
-            cv2.rectangle(output, (sx, sy), (sx + sw, sy + sh), (0, 255, 0), 2)
+        elif state == "OCCLUDED":
+            # Blue = "cannot see the item, holding judgement". Distinct from
+            # yellow (counting down to an alarm) so the operator can tell at a
+            # glance that nothing is wrong — someone's hand is simply in the way.
+            cv2.rectangle(output, (x, y), (x + w, y + h), (255, 180, 0), 2)
             cv2.putText(
                 output,
-                f"OK: {label}",
-                (sx, sy - 10),
+                f"OCCLUDED: {label}",
+                (x, y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
+                0.45,
+                (255, 180, 0),
                 1,
             )
         else:
@@ -1819,6 +2251,19 @@ while True:
                 (0, 255, 0),
                 1,
             )
+
+        # Live diagnostics under each box: occupancy ratio and appearance
+        # similarity — the two numbers that decided the state above. Without
+        # these visible, threshold tuning is guesswork.
+        cv2.putText(
+            output,
+            f"here={sim_present:.2f} gone={sim_empty:.2f}",
+            (x, y + h + 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            (220, 220, 220),
+            1,
+        )
 
     # ── STATUS BAR ────────────────────────────────────────────────────────
     if not monitoring_paused:
@@ -1846,13 +2291,17 @@ while True:
 
     # ── WRITE REAL-TIME PHYSICAL ROI STATE FOR PHP ENDPOINTS ──────────────
     try:
-        live_state_map = {}
+        # Start from any left-item state produced earlier this frame so that in
+        # production BOTH registered equipment and unregistered left items reach
+        # the dashboard through the single file it polls.
+        live_state_map = dict(production_left_state)
         for r in roi_list:
             lbl = r["label"]
             live_state_map[lbl] = {
                 "is_missing": active_events.get(lbl, False)
-                or (consistency_count.get(lbl, 0) >= CONSISTENCY_FRAMES),
+                or absent_time.get(lbl, 0.0) >= MISSING_CONFIRM_SEC,
                 "consistency": consistency_count.get(lbl, 0),
+                "state": roi_state.get(lbl, "PRESENT"),
                 "tier": r.get("tier", "tier1"),
             }
         with open("photos/live_roi_state.json", "w") as sf:

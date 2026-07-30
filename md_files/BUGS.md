@@ -25,7 +25,14 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
     2. Scene-wide human motion ($> 6\%$) was not suppressing the per-ROI missing counter during active pass-by frames.
 *   **Resolution:** Restricted snapshot generation strictly to confirmed RED missing events, added human walk-by scene motion suppression (`motion_pct > 0.06`), and increased `CONSISTENCY_FRAMES` to 30 (~1.0 second of unbroken absence).
 
-### False Positives / Red Boxes when Item Returned or Shifted
+### False Positives / Red Boxes when Item Returned or Shifted — **SUPERSEDED 2026-07-30**
+> This entry describes tuning of the template-match pipeline, which was **removed** from
+> `main.py` on 2026-07-30. `PRESENCE_SCORE_THRESHOLD` and `PAD` no longer exist there. The
+> underlying problem is now solved structurally — see `unfixable_limitations.md` §1. The
+> template-match pipeline survives unmodified in `main_classical_only.py` as the A/B baseline.
+> Note also that the values recorded here ($0.62$ / `PAD = 45`) had already drifted from the
+> code, which by commit `6c47a1d` actually ran $0.52$ / `PAD = min(15, w//3, h//3)`.
+
 *   **Symptom:** Placing a dark item (e.g. computer mouse) back on the desk required tweaking/nudging to turn green, or lifting an item left the box green.
 *   **Root Cause:** Template matching threshold `PRESENCE_SCORE_THRESHOLD` was set too low ($0.38$), causing bare wood table background to match baseline crops containing table wood behind the item.
 *   **Resolution:** Calibrated `PRESENCE_SCORE_THRESHOLD = 0.62` and expanded the search window (`PAD = 45`), ensuring item removal evaluates as RED (`MISSING`) instantly while returning/shifting items evaluates as GREEN (`NORMAL`).
@@ -34,7 +41,69 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
 
-### Wood Grain / Similar Colored Background False Match (Mouse, Laptop, Tumbler)
+### 2026-07-30 — Five defects found while rewriting the presence logic
+
+Found by reading `main.py` end to end during the detection-pipeline rewrite. All five were
+live in commit `6c47a1d`; none had visible symptoms that pointed at the real cause.
+
+#### (a) `validate_presence_dnn()` crashed the whole script — CRITICAL
+*   **Symptom:** `main.py` dies with no warning shortly after a left item appears on camera.
+*   **Root cause:** [`main.py:1311`](file:///c:/xampp/htdocs/spotit/main.py) called
+    `validate_presence_dnn(crop)` with one argument, but the function requires `target_label`
+    positionally. Nothing wraps the contour loop or `while True:` in a `try`, so the first
+    contour $\geq 4500$ px that cleared the border filter raised an uncaught `TypeError` and
+    killed the process. Any run in production or sandbox-unregistered mode was affected.
+*   **Resolution:** the call site's own comment describes it as an "Objectness & Texture
+    Filter", and the file already contained a correct implementation of exactly that —
+    `validate_presence_classical()` (Laplacian variance + edge density), previously dead code.
+    Switched to it. Classification was the wrong question there anyway: ImageNet cannot name a
+    small CCTV crop (see `unfixable_limitations.md` §2).
+
+#### (b) `prev_roi_gray` clobbered mid-loop — Snapshot B never fired
+*   **Symptom:** Snapshot B was never produced for registered ROIs, despite being a documented
+    §3c requirement. The "wait for the hand to leave" clean frame also fired instantly.
+*   **Root cause:** `prev_roi_gray[label]` was overwritten with the *current* frame's crop at
+    the top of the ROI body. Both downstream watchers then diffed the current crop against that
+    same-frame copy, so `motion_val` was **always exactly 0.0** — permanently below the
+    Snapshot B gate (`>= 0.05`, never fires) and permanently below the clean-frame gate
+    (`< 0.04`, fires immediately).
+*   **Resolution:** added `prev_roi_gray_prev[label]`, captured *before* the overwrite, and
+    pointed both watchers at it.
+
+#### (c) Scene instability reset the missing counter instead of holding it
+*   **Symptom:** items removed while anyone was moving nearby were never confirmed missing.
+*   **Root cause:** the scene-stability gate zeroed every ROI's `consistency_count` whenever
+    frame motion exceeded `SCENE_MOTION_LIMIT`. But physically removing an item *is* motion, so
+    the counter was wiped on exactly the frames that mattered.
+*   **Resolution:** unstable frames now **hold** the accumulators (advance nothing) rather than
+    resetting them. Equally safe against false alarms, without the blind spot.
+
+#### (d) Consistency counted loop iterations, not camera frames
+*   **Symptom:** confirmation timing did not match the configured frame count.
+*   **Root cause:** `VideoStream.read()` returned the cached frame with no novelty flag while
+    the loop spun at ~33 Hz against a 15–20 fps stream, so roughly half of every count was a
+    re-read of a frame already counted.
+*   **Resolution:** added a monotonic `seq` counter incremented only on genuinely new decoded
+    frames, plus `read_seq()`. Confirmation moved to wall-clock seconds
+    (`MISSING_CONFIRM_SEC = 1.0`), matching the fix already applied to the left-item path
+    ("Instant Stage Escalation in Loop" below).
+
+#### (e) Production mode never monitored registered items
+*   **Symptom:** registered lab equipment was not watched at all whenever production mode was on.
+*   **Root cause:** the left-item branch was entered when
+    `SANDBOX_TRACKING_MODE == "unregistered" **or** IS_PRODUCTION_MODE` and unconditionally
+    `continue`d at the end, so the registered-ROI loop below was unreachable in production.
+*   **Resolution:** only sandbox-unregistered mode short-circuits now. Production runs the
+    left-item scan **and** falls through to the registered loop, merging both into the single
+    `live_roi_state.json` the dashboard polls.
+
+### Wood Grain / Similar Colored Background False Match (Mouse, Laptop, Tumbler) — **SUPERSEDED 2026-07-30**
+> The Canny edge-density-ratio fix recorded here did not hold up in live testing and has been
+> removed. Edge density cannot separate a glossy reflective desk from a dark item reliably, and
+> the solid-colour fallback it depended on was the cause of the tumbler failure. Replaced by the
+> dual-template method — see `unfixable_limitations.md` §1 and §4 for the resolution and
+> measured numbers.
+
 *   **Symptom:** Removing items (like the mouse or laptop) from a textured wood table, or a red tumbler from a reddish-brown wood chair, left the ROI bounding box GREEN.
 *   **Root Cause:**
     1. Template matching (`cv2.matchTemplate`) returns high correlation scores on similar wood grains or colors.

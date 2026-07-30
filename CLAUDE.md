@@ -129,34 +129,51 @@ spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
 
 ## 3. Detection pipeline — current logic in `main.py`
 
+**Rewritten 2026-07-30.** Template matching was removed from the registered-ROI path; it
+survives unmodified in `main_classical_only.py` as the A/B baseline. Rationale and measured
+results in [unfixable_limitations.md](file:///c:/xampp/htdocs/spotit/md_files/unfixable_limitations.md).
+
 Pipeline per frame, per registered ROI:
 
-1. **Scene stability gate** — compare full frame against `ref_image.jpg`
-   (blurred grayscale absdiff). If motion % across the whole frame exceeds
-   `SCENE_MOTION_LIMIT`, monitoring pauses for that frame (someone's walking
-   through, class is active, etc).
-2. **ROI change check** — within a stable scene, diff the ROI's pixels against
-   its reference crop; if change exceeds `THRESHOLD`/`MIN_CHANGE_PERCENT`, it's
-   a candidate.
-3. **Tolerance-zone template match** (`cv2.matchTemplate`) — search a wider
-   margin box around the ROI for the original reference crop. If found with
-   score ≥ `MATCH_SCORE_THRESHOLD`, the item is judged "still present, just
-   shifted" (thesis Fig. 3.9 / Section 3.6.7 behavior).
-4. If neither the original ROI nor the tolerance zone finds it for
-   `CONSISTENCY_FRAMES` consecutive frames, a candidate event fires: snapshot
-   saved, POSTed to `ingest_detection.php`.
+1. **Scene stability gate** — frame-to-frame blurred grayscale absdiff. If motion exceeds
+   `SCENE_MOTION_LIMIT`, this frame is skipped and all confirmation timers **hold**
+   (they are *not* reset — resetting created a false-negative path, since removing an item
+   is itself motion; see BUGS.md 2026-07-30 (c)).
+2. **Classical change check** (`check_roi`) — absdiff of the ROI against the baseline. Below
+   `MIN_CHANGE_PERCENT` the item is unchanged and the frame ends there. This is the classical
+   first pass that keeps the ML strictly secondary: on a quiet frame the network never runs.
+3. **Dual-template presence test** (`evaluate_roi_presence`) — only on changed ROIs. Scores
+   the item's footprint against **two** templates built at calibration time: the reference
+   crop ("item is here") and an inpainted reconstruction of the surface beneath it
+   ("item is gone"). Yields `PRESENT`, `ABSENT`, or `OCCLUDED`.
+4. **Wall-clock confirmation** — `ABSENT` accumulates time; at `MISSING_CONFIRM_SEC` the event
+   fires (snapshot + POST to `ingest_detection.php`). `PRESENT` accumulates separately and
+   auto-resolves at `RECOVER_CONFIRM_SEC`. `OCCLUDED` freezes both — while the view is blocked
+   no evidence accrues either way, which is what makes a motionless hand on the mouse safe.
 
-**Known current tuning values** (raised once already to kill RTSP compression-
-noise false positives):
+**Why two templates.** The old test was one-sided — it only asked *"does this look like the
+item?"* — so bare desk scored ~0.65 against a crop that was itself mostly desk and won by
+default. Giving the removal its own hypothesis to match resolves this without threshold games.
+
+**Current tuning values** (verified against the code, 2026-07-30):
 ```
-THRESHOLD = 25          # was 10 — pixel delta needed to count as "changed"
-SCENE_MOTION_LIMIT = 0.40   # was 0.15 — % of frame that must be stable
-CONSISTENCY_FRAMES = 5      # was 3 — consecutive frames needed to confirm
-MATCH_SCORE_THRESHOLD ≈ 0.55 (tune 0.45–0.65 as needed)
-TOLERANCE_MARGIN ≈ 0.25 for Tier 1 fixed lab equipment (tighter than the 0.6
-  default — lab equipment shouldn't drift far), wider for personal items.
+THRESHOLD = 25              # pixel delta counted as "changed"
+MIN_CHANGE_PERCENT = 0.08   # ROI change fraction that triggers the presence test
+SCENE_MOTION_LIMIT = 0.20   # frame-to-frame motion above which we hold
+SIM_PRESENT = 0.85          # >= this vs "item here" template  -> PRESENT
+SIM_EMPTY = 0.65            # >= this vs "item gone" template  -> ABSENT
+MISSING_CONFIRM_SEC = 1.0   # continuous ABSENT time before RED
+RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before auto-resolve
+FOOTPRINT_MIN_FRAC = 0.03   # item smaller than this fraction of its box -> warn
 ```
-These are tuned for the Tapo TC65 camera setup. Expect to re-tune if camera placement or lighting changes (see §5, Phase 3).
+`CONSISTENCY_FRAMES` still exists but is now **derived** from the wall-clock timers purely to
+keep the `live_roi_state.json` contract stable for the PHP dashboard — it no longer drives any
+decision. `MATCH_SCORE_THRESHOLD` is retained only for `main_classical_only.py`.
+`TOLERANCE_MARGIN` never existed in the code despite earlier versions of this document.
+
+Tuned for the Tapo TC65. Both similarity thresholds sit mid-gap rather than on an edge, so
+they should tolerate camera or lighting changes; `photos/detection_metrics.csv` records the
+inputs to every decision if re-tuning is needed.
 
 ### 3a. Open design decision — DO NOT re-litigate from scratch, just implement
 
@@ -198,7 +215,27 @@ file honest" at the top).
   which computer is which" — don't try to make the system do something it
   isn't designed to do.
 
-**Status update:** `main.py` is fully updated with the MobileNetV2 ONNX gatekeeper, real clock-time stage tracking (`time.time()`), Snapshot A/B evidence capture, and unregistered state cleanup.
+**Status update (2026-07-30):** `main.py` runs the dual-template presence test with real
+clock-time confirmation, Snapshot A/B evidence capture, and unregistered state cleanup.
+
+The MobileNetV2 gatekeeper is still in place but is used **differently** than originally
+planned, and the change is worth understanding before touching it. It is no longer a
+classifier — asking ImageNet to name an 80×60 CCTV crop does not work and never will. It now
+supplies a **perceptual similarity metric**: the penultimate 1280-d feature vector
+(`onnx_node!mobilenetv20_features_pool0_fwd`), compared by cosine between two crops from the
+same camera. Because both crops carry identical blur, that degradation cancels.
+
+This *strengthens* the §3a framing rather than weakening it:
+- It never emits a class name, so the §8 no-identity-recognition guardrail holds strictly.
+- The classical absdiff gate still decides whether anything changed; the network is consulted
+  only on already-flagged crops and never runs on a quiet frame.
+- `classical_similarity()` (chroma-only Lab histogram) performs the same three-way decision if
+  the model is absent, so detection degrades rather than stopping.
+
+If a panelist asks why ML is needed at all: the classical stage cannot distinguish *"the item
+was removed"* from *"someone's hand is covering it"*. Both look like "not the item". The
+embedding separates them — measured 0.98 for the item under lighting change vs 0.44 for a
+hand. That disambiguation is exactly the gatekeeper role §3a describes.
 
 ### 3c. Finalized scope & behavior decisions (2026-07-04 discussion with team)
 
@@ -465,6 +502,12 @@ Run these after any change, in this order, before considering a fix done:
    RTSP orientation, false-positive/false-negative tuning, and snapshot
    cleanup issues have each been root-caused before; don't re-diagnose from
    scratch.
+6. **Detection-pipeline changes: follow
+   [TESTING_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/TESTING_GUIDE.md)** — the
+   full physical test script (removal, return, nudge, hand occlusion, lighting,
+   walk-past, Snapshot A/B, production dual-path), expected console/DB/disk output
+   for each, the A/B protocol against `main_classical_only.py`, and threshold
+   troubleshooting from `photos/detection_metrics.csv`.
 
 ---
 
@@ -490,6 +533,22 @@ Run these after any change, in this order, before considering a fix done:
 
 
 ## 9. Change Log & Project History
+
+- **2026-07-30 (Detection Pipeline Rewrite — Dual-Template Presence):** Replaced the
+  template-match + Canny-edge-ratio + colour-diff presence gate in `main.py` with a
+  dual-template test: each ROI is calibrated with both an "item here" crop and an inpainted
+  "item gone" reconstruction of the surface beneath it, compared via MobileNetV2 feature-space
+  cosine (classical chroma-histogram fallback). Adds an `OCCLUDED` hold state so hand occlusion
+  can no longer raise or clear alarms, moves confirmation to wall-clock
+  (`MISSING_CONFIRM_SEC = 1.0`), and adds `photos/detection_metrics.csv` instrumentation for
+  tuning and Chapter 4 metrics. Verified 27/27 on the real ROOM_1 reference frame across
+  present/removed/nudged/±25%-lighting/occluded cases for all three items. Also fixed five
+  live defects found while reading the code — including an uncaught `TypeError` that killed
+  the process whenever a left item appeared, and a variable clobber that meant Snapshot B had
+  never once fired for registered ROIs. Full detail in
+  [BUGS.md](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md) and
+  [unfixable_limitations.md](file:///c:/xampp/htdocs/spotit/md_files/unfixable_limitations.md).
+  `main_classical_only.py` deliberately left unchanged as the A/B baseline.
 
 - **2026-07-26 (Dynamic Room & Camera DB Integration + Crash-Proof Threading):** Added DB-driven camera credentials (`camera_ip`, `camera_user`, `camera_pass`) in `spotit_monitor_db.rooms`, created [`auth/get_room_camera.php`](file:///c:/xampp/htdocs/spotit/auth/get_room_camera.php), dynamic auto-switching RTSP reader in `main.py` (zero terminal restarts), thread-safe `VideoStream` locking to prevent C++ FFmpeg crashes, auto-heal logic in `save_rois.php` for `DESK` system room (prevents FK 1452), auto-sync of `detection_mode.json` on room navigation, and Docker deployment artifacts (`Dockerfile`, `docker-compose.yml`, `requirements.txt`, `FUTURE_SCALING_GUIDE.md`).
 
