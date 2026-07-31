@@ -58,8 +58,8 @@ MATCH_SCORE_THRESHOLD = (
 #   sim_present : item there 0.985-1.000 | removed 0.473-0.743 | occluded 0.302-0.509
 #   sim_empty   : removed    0.765-0.819 | occluded  0.362-0.522
 # Both thresholds sit in the middle of a wide empirical gap, not on an edge.
-SIM_PRESENT = 0.85  # >= this vs the "item here" template  -> item is still there
-SIM_EMPTY = 0.65    # >= this vs the "item gone"  template  -> bare surface revealed
+SIM_PRESENT = 0.80  # >= this vs the "item here" template  -> item is still there (lowered for position tolerance)
+SIM_EMPTY = 0.55    # >= this vs the "item gone"  template  -> bare surface revealed (lowered for weak inpaints)
 FOOTPRINT_MIN_FRAC = 0.03  # item smaller than 3% of its box -> ROI drawn far too loose
 # Confirmation is wall-clock, not frame counts: the loop outruns the RTSP frame
 # rate, so counting iterations does not measure elapsed time (see BUGS.md,
@@ -1006,8 +1006,7 @@ def calibrate_roi_baselines(ref_image_bgr, rois):
 
 
 _metrics_header_written = False
-_metrics_last = {}  # label -> (last_state, last_write_time)
-METRICS_MIN_INTERVAL = 0.5  # seconds between routine rows for an unchanged ROI
+_metrics_last = {}  # label -> last_state (for state-transition detection)
 
 
 def log_roi_metrics(
@@ -1023,14 +1022,13 @@ def log_roi_metrics(
     """
     global _metrics_header_written
     try:
-        # Always record a transition (that is the evidence that matters for the
-        # Chapter 4 accuracy table); rate-limit the steady-state rows so a quiet
-        # room does not write ~90 rows/second to disk.
-        now = time.time()
-        prev_state, prev_t = _metrics_last.get(label, (None, 0.0))
-        if state == prev_state and (now - prev_t) < METRICS_MIN_INTERVAL:
+        # Only log on state transitions. Steady-state rows are noise for Chapter 4 analysis
+        # and create massive CSV files during long test runs. State transitions are what
+        # matter: they mark the evidence for TP/FP/FN/TN classification.
+        prev_state = _metrics_last.get(label)
+        if state == prev_state:
             return
-        _metrics_last[label] = (state, now)
+        _metrics_last[label] = state
 
         if not _metrics_header_written:
             _metrics_header_written = True
