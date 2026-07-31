@@ -914,7 +914,15 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
 
     x, y, w, h = roi["x"], roi["y"], roi["w"], roi["h"]
     fx, fy, fw, fh = tpl["footprint"]
-    live = frame_bgr[y + fy : y + fy + fh, x + fx : x + fx + fw]
+    # Add padding tolerance: nudged items that leave the ROI by a few pixels are still detected.
+    # Pad by 5px on all sides, clip to frame bounds.
+    pad = 5
+    H, W = frame_bgr.shape[:2]
+    crop_x1 = max(0, x + fx - pad)
+    crop_y1 = max(0, y + fy - pad)
+    crop_x2 = min(W, x + fx + fw + pad)
+    crop_y2 = min(H, y + fy + fh + pad)
+    live = frame_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
     if live.size == 0 or live.shape[0] < 4 or live.shape[1] < 4:
         return "PRESENT", 1.0, 0.0, False
 

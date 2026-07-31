@@ -373,10 +373,14 @@ async function dismissAlerts() {
   const btn = document.getElementById('btnDismissAlerts');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Clearing...'; }
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
     const res = await spotitFetch('../auth/dismiss_alerts.php', {
       method: 'POST',
-      body: new URLSearchParams({ room_id: currentRoomId })
+      body: new URLSearchParams({ room_id: currentRoomId }),
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     if (res && res.success) {
       showToast('success', res.message || 'Alerts dismissed!');
       setTimeout(() => location.reload(), 800);
@@ -385,7 +389,8 @@ async function dismissAlerts() {
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
     }
   } catch (e) {
-    showToast('error', 'Network error.');
+    const msg = e.name === 'AbortError' ? 'Request timed out (8s) — try stopping main.py first.' : 'Network error.';
+    showToast('error', msg);
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
   }
 }
