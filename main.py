@@ -897,12 +897,15 @@ def _item_footprint(ref_crop, empty_crop):
         return None, 0.0
 
 
-def evaluate_roi_presence(frame_bgr, roi):
+def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     """Classify one ROI as PRESENT / ABSENT / OCCLUDED for the current frame.
 
     Returns (state, sim_present, sim_empty, used_dnn).
     Fails safe: if this ROI was never calibrated, report PRESENT rather than
     inventing an alarm from a measurement we know is meaningless.
+
+    Hysteresis: if coming out of ABSENT state, require higher confidence (0.85)
+    to flip back to PRESENT, preventing oscillation on frame-to-frame noise.
     """
     label = roi["label"]
     tpl = roi_templates.get(label)
@@ -936,7 +939,10 @@ def evaluate_roi_presence(frame_bgr, roi):
         if sim_e is None:
             sim_e = 0.0
 
-    if sim_p >= SIM_PRESENT:
+    # Hysteresis: use higher threshold to flip out of ABSENT to prevent noise oscillation
+    present_threshold = 0.85 if prev_state == "ABSENT" else SIM_PRESENT
+
+    if sim_p >= present_threshold:
         state = "PRESENT"
     elif sim_e >= SIM_EMPTY:
         state = "ABSENT"
@@ -1988,7 +1994,9 @@ while True:
             # Nothing changed against the baseline — the item is where it was.
             state, sim_present, sim_empty, used_dnn = "PRESENT", 1.0, 0.0, False
         else:
-            state, sim_present, sim_empty, used_dnn = evaluate_roi_presence(frame, roi)
+            state, sim_present, sim_empty, used_dnn = evaluate_roi_presence(
+                frame, roi, prev_state=roi_state.get(label)
+            )
 
         # ── WALL-CLOCK CONFIRMATION ──────────────────────────────────────
         # Only advance timers on genuinely new camera frames; re-reads of the
