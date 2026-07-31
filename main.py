@@ -1445,6 +1445,25 @@ while True:
                     except Exception:
                         pass
 
+                # Dismiss active alerts (clear internal state)
+                if mode_data.get("clear_alerts", False):
+                    print("[SPOT-IT] Dismiss alerts signal received! Clearing active alerts...")
+                    for r in roi_list:
+                        lbl = r["label"]
+                        absent_time[lbl] = 0
+                        present_time[lbl] = 0
+                        consistency_count[lbl] = 0
+                        active_events[lbl] = False
+                        active_detection_ids[lbl] = None
+                    missing_timestamps.clear()
+                    unreg_absence_count.clear()
+                    try:
+                        mode_data["clear_alerts"] = False
+                        with open(mode_file, "w") as mf_out:
+                            json.dump(mode_data, mf_out, indent=2)
+                    except Exception:
+                        pass
+
                 if IS_PRODUCTION_MODE:
                     print(
                         f"[SPOT-IT] Production Mode active for Room '{ROOM_ID}' — Timer Speed: {TIMER_MODE} (S1:{STAGE1_THRESH}s / S2:{STAGE2_THRESH}s) | Dual Tracking Active"

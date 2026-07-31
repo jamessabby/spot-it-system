@@ -23,19 +23,25 @@ if ($roomId === '') {
 }
 
 try {
-    $stmt = $monitorPdo->prepare("
-        UPDATE detections
-        SET status = 'recovered', is_removed = 1, updated_at = NOW()
-        WHERE room_id = ? AND status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0
-    ");
-    $stmt->execute([$roomId]);
-    $affected = $stmt->rowCount();
+    // Signal main.py to dismiss alerts via detection_mode.json (no DB lock contention).
+    // main.py will clear its internal state on next loop and stop creating detections.
+    $mode_file = __DIR__ . '/../detection_mode.json';
+    $current = [];
+    if (file_exists($mode_file)) {
+        $current = json_decode(file_get_contents($mode_file), true) ?? [];
+    }
+
+    $current['clear_alerts'] = true;
+    $current['clear_alerts_timestamp'] = time();
+    $current['updated_at'] = date('Y-m-d H:i:s');
+
+    file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT));
 
     ms_json([
         'success' => true,
-        'message' => "Dismissed {$affected} active alert(s) for room {$roomId}.",
-        'dismissed' => $affected
+        'message' => "Dismiss signal sent to monitoring system for room {$roomId}. Alerts clearing...",
+        'dismissed' => 0
     ]);
-} catch (Throwable $e) {
-    ms_json(['success' => false, 'message' => 'DB error: ' . $e->getMessage()], 500);
+} catch (Exception $e) {
+    ms_json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
 }
