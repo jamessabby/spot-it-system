@@ -34,27 +34,34 @@ if (!file_exists($mode_file)) {
 }
 
 try {
+    // 1. Clear the mass-deviation / pending false-alarm detections for this room.
+    $monitorPdo->prepare(
+        "DELETE FROM detections WHERE room_id = ? AND status IN ('pending', 'potential')"
+    )->execute([$roomId]);
+
+    // 2. Clear the mass-deviation monitoring log entries.
+    $monitorPdo->prepare(
+        "DELETE FROM monitoring_logs WHERE room_id = ? AND event_type LIKE '%mass_deviation%'"
+    )->execute([$roomId]);
+
+    // 3. Mark the room active again.
+    $monitorPdo->prepare(
+        "UPDATE rooms SET monitoring_status = 'active' WHERE room_id = ?"
+    )->execute([$roomId]);
+
+    // 4. Signal main.py to unpause and reset its in-memory state.
     $current = json_decode(file_get_contents($mode_file), true) ?? [];
     $current['reset_paused'] = true;
     $current['reset_timestamp'] = time();
     $current['updated_at'] = date('Y-m-d H:i:s');
+    file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT));
 
-    if (!file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT))) {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'message' => 'Failed to write config']);
-        exit;
-    }
-
-    // Success — immediate response, main.py will handle unpause on next loop
-    http_response_code(200);
     echo json_encode([
         'success' => true,
-        'message' => "Recalibration alert dismissed. Monitoring unpausing on next loop."
+        'message' => "Recalibration alert dismissed for room '$roomId'. Live monitoring unpaused."
     ]);
-    exit;
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
     http_response_code(500);
     echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-    exit;
 }

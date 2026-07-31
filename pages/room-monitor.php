@@ -389,7 +389,7 @@ async function dismissAlerts() {
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
     }
   } catch (e) {
-    const msg = e.name === 'AbortError' ? 'Request timed out (8s) — try stopping main.py first.' : 'Network error.';
+    const msg = e.name === 'AbortError' ? 'Request timed out after 8s.' : 'Network error.';
     showToast('error', msg);
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
   }

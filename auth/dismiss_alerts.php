@@ -1,7 +1,8 @@
 <?php
 /**
  * auth/dismiss_alerts.php
- * POST: Signal main.py to dismiss active alerts for a room.
+ * POST: Mark all active detections for a room as 'recovered', and signal main.py
+ * to reset its in-memory timers so it does not immediately re-fire the same alert.
  */
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
@@ -29,39 +30,34 @@ if ($roomId === '') {
     exit;
 }
 
-// Signal main.py to dismiss alerts via detection_mode.json (no DB lock contention).
-// main.py will clear its internal state on next loop.
-$mode_file = __DIR__ . '/../detection_mode.json';
-
-// Early exit if mode file doesn't exist and can't be created
-if (!file_exists($mode_file)) {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'message' => 'Config file not found']);
-    exit;
-}
-
 try {
-    $current = json_decode(file_get_contents($mode_file), true) ?? [];
-    $current['clear_alerts'] = true;
-    $current['clear_alerts_timestamp'] = time();
-    $current['updated_at'] = date('Y-m-d H:i:s');
+    // 1. Resolve the open alerts in the database.
+    $stmt = $monitorPdo->prepare("
+        UPDATE detections
+        SET status = 'recovered', is_removed = 1, updated_at = NOW()
+        WHERE room_id = ? AND status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0
+    ");
+    $stmt->execute([$roomId]);
+    $affected = $stmt->rowCount();
 
-    if (!file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT))) {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'message' => 'Failed to write config']);
-        exit;
+    // 2. Tell main.py to reset its in-memory confirmation timers for this room.
+    //    Without this it still holds absent_time >= MISSING_CONFIRM_SEC and would
+    //    re-raise the same alert on its very next frame.
+    $mode_file = __DIR__ . '/../detection_mode.json';
+    if (file_exists($mode_file)) {
+        $current = json_decode(file_get_contents($mode_file), true) ?? [];
+        $current['clear_alerts'] = true;
+        $current['clear_alerts_timestamp'] = time();
+        $current['updated_at'] = date('Y-m-d H:i:s');
+        file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT));
     }
 
-    // Success — immediate response
-    http_response_code(200);
     echo json_encode([
         'success' => true,
-        'message' => "Dismiss signal sent. Alerts clearing on next loop."
+        'message' => "Dismissed {$affected} active alert(s) for room {$roomId}.",
+        'dismissed' => $affected
     ]);
-    exit;
-
-} catch (Exception $e) {
+} catch (Throwable $e) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-    exit;
+    echo json_encode(['success' => false, 'message' => 'DB error: ' . $e->getMessage()]);
 }

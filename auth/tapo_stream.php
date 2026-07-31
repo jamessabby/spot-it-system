@@ -40,6 +40,15 @@ if (!in_array($_SESSION['user_role'] ?? '', ['admin','staff'], true)) {
     exit();
 }
 
+// CRITICAL: release the session lock before streaming.
+// PHP holds an exclusive lock on the session file from session_start() until the
+// script ends. The MJPEG action below runs forever (set_time_limit(0) + an
+// infinite read loop), so without this every other request from the same browser
+// — dismiss_alerts, reset_recalibration, get_detections — blocks inside
+// session_start() waiting for a lock that is never released. Nothing past this
+// point reads or writes $_SESSION.
+session_write_close();
+
 $action  = trim($_GET['action']  ?? 'status');
 $roomId  = trim($_GET['room_id'] ?? '');
 $camNum  = (int)($_GET['cam']    ?? 1);

@@ -41,6 +41,34 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
 
+### 2026-07-31 — Every dashboard button hung forever ("Clearing…" / "Unpausing…")
+
+*   **Symptom:** clicking **Dismiss Alerts** or **Dismiss Recalibration Alert** on
+    `room-monitor.php` spun forever and never resolved. Appeared to depend on whether
+    `main.py` was running, which sent three separate debugging attempts down the wrong path
+    (assumed MySQL row-lock contention with the detection loop — it was not).
+*   **The measurement that found it:** hitting the endpoint directly with `curl` returned in
+    **12 ms**. So PHP, MySQL and the handler logic were all fine, and the fault had to be in
+    something the browser had that `curl` did not — **a session cookie**.
+*   **Root cause:** [`auth/tapo_stream.php`](file:///c:/xampp/htdocs/spotit/auth/tapo_stream.php)
+    serves the live MJPEG feed. It calls `session_start()` (via `service_bootstrap.php`), then
+    `set_time_limit(0)` and streams inside `while (!feof($proc) …)` — i.e. **it never
+    terminates while the feed is on screen.** PHP's default session handler holds an
+    **exclusive flock on the session file** from `session_start()` until the script ends or
+    `session_write_close()` is called. That lock was therefore held for the entire life of the
+    live feed, and *every* other request carrying the same session cookie blocked inside
+    `session_start()` waiting for it. `curl` had no cookie, got a fresh session, and sailed past.
+*   **Resolution:** call `session_write_close()` in `tapo_stream.php` immediately after the
+    auth check and before streaming begins. Nothing past that point touches `$_SESSION`.
+*   **Rule for this codebase:** any endpoint that is long-running, streaming, or long-polling
+    **must** `session_write_close()` as soon as it has finished reading `$_SESSION`. Note the
+    call must come *after* the `require_once service_bootstrap.php` — putting it in the handler
+    that hangs does not help, because the block happens inside the bootstrap's `session_start()`.
+*   **Note on the wrong turns:** two commits removed the DB writes from `dismiss_alerts.php` and
+    `reset_recalibration.php` on the mistaken row-lock theory. Those writes were correct and
+    have been restored — dropping them left detections stuck at `pending` so the dashboard alert
+    list never cleared.
+
 ### 2026-07-30 — Five defects found while rewriting the presence logic
 
 Found by reading `main.py` end to end during the detection-pipeline rewrite. All five were
