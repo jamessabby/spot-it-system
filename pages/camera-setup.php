@@ -295,6 +295,28 @@ if ($selectedRoomId !== '') {
         Click and drag on the camera snapshot to draw your detection boxes. Give each zone a descriptive label matching the item (e.g. <code>monitor_1</code>, <code>mouse_2</code>). Assign the correct inspection tier.
       </p>
 
+      <?php
+        // You are drawing on the stored baseline, which is also what main.py compares
+        // every live frame against. If it is hours old the room's lighting has moved on,
+        // similarity scores drop, and present items get flagged MISSING — with correctly
+        // placed boxes, so it looks like the ROIs broke. Warn before that happens.
+        $baselineFile = __DIR__ . "/../uploads/snapshots/{$selectedRoomId}_baseline.jpg";
+        $baselineAgeMin = file_exists($baselineFile)
+            ? (int) round((time() - filemtime($baselineFile)) / 60)
+            : null;
+      ?>
+      <?php if ($baselineAgeMin === null): ?>
+        <div style="font-size:.72rem; padding:9px 12px; border-radius:8px; background:rgba(220,53,69,0.1); border:1px solid rgba(220,53,69,0.25); color:#dc3545;">
+          <strong>No baseline captured yet.</strong> Close this editor and click <strong>Capture Baseline</strong> first — ROIs drawn without one cannot be calibrated.
+        </div>
+      <?php elseif ($baselineAgeMin >= 30): ?>
+        <div style="font-size:.72rem; padding:9px 12px; border-radius:8px; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); color:#a67c00;">
+          <strong>This baseline is <?= $baselineAgeMin >= 120 ? round($baselineAgeMin/60,1).' hours' : $baselineAgeMin.' minutes' ?> old</strong>
+          (captured <?= date('g:i A', filemtime($baselineFile)) ?>). The lighting has likely changed since then, which lowers similarity scores and can flag present items as MISSING.
+          Close this editor, click <strong>Capture Baseline</strong>, then reopen to draw on a current frame.
+        </div>
+      <?php endif; ?>
+
       <div style="display:grid; grid-template-columns: 1fr 340px; gap:18px; align-items:start;">
         <!-- Canvas area -->
         <div style="display:flex; justify-content:center;">
@@ -558,13 +580,20 @@ function renderRoiList() {
 function updateEditorRoiLabel(idx, val) {
   const cleanLabel = val.trim().replace(/\s+/g, '_');
   editorRois[idx].label = cleanLabel;
-  editorRois[idx].tier = detectRoiTier(cleanLabel);
+  // Only re-guess the tier from the label while the admin has not explicitly
+  // chosen one. Previously this line ran unconditionally, so typing a label
+  // containing a Tier 1 keyword ("mouse", "laptop") silently discarded the tier
+  // just picked from the dropdown — the UI showed Tier 2 and saved Tier 1.
+  if (!editorRois[idx].tierLocked) {
+    editorRois[idx].tier = detectRoiTier(cleanLabel);
+  }
   renderRoiList();
   redrawEditorCanvas();
 }
 
 function updateEditorRoiTier(idx, val) {
   editorRois[idx].tier = val;
+  editorRois[idx].tierLocked = true;  // admin chose deliberately — stop auto-guessing
 }
 
 function deleteEditorRoi(idx) {
