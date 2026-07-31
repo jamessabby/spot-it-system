@@ -1,44 +1,60 @@
 <?php
 /**
  * auth/reset_recalibration.php
- * Endpoint to reject/dismiss mass deviation recalibration alerts and unpause live monitoring.
- * Updates detection_mode.json with a reset timestamp so main.py immediately unpauses.
+ * Signal main.py to unpause monitoring and clear mass-deviation alerts.
  */
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
-// Release session lock early to prevent queue hangs
+// Early validation
 $userRole = $_SESSION['user_role'] ?? '';
 session_write_close();
 
 if ($userRole !== 'admin' && $userRole !== 'staff') {
-    ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit;
 }
 
-$roomId = trim($_POST['room_id'] ?? 'DESK');
+$roomId = strtoupper(trim($_POST['room_id'] ?? 'DESK'));
+if (!$roomId) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'room_id required']);
+    exit;
+}
+
+// Signal main.py to unpause via detection_mode.json (no DB lock contention)
+$mode_file = __DIR__ . '/../detection_mode.json';
+
+// Early exit if config file doesn't exist
+if (!file_exists($mode_file)) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Config file not found']);
+    exit;
+}
 
 try {
-    // Signal main.py to unpause via detection_mode.json (no DB lock contention)
-    $mode_file = __DIR__ . '/../detection_mode.json';
-    $current = [];
-    if (file_exists($mode_file)) {
-        $current = json_decode(file_get_contents($mode_file), true) ?? [];
-    }
-
+    $current = json_decode(file_get_contents($mode_file), true) ?? [];
     $current['reset_paused'] = true;
     $current['reset_timestamp'] = time();
     $current['updated_at'] = date('Y-m-d H:i:s');
 
-    file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT));
+    if (!file_put_contents($mode_file, json_encode($current, JSON_PRETTY_PRINT))) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => 'Failed to write config']);
+        exit;
+    }
 
-    // main.py will handle clearing its state & detections on next loop.
-    // No database ops here to avoid lock contention with live detection writes.
-
-    ms_json([
+    // Success — immediate response, main.py will handle unpause on next loop
+    http_response_code(200);
+    echo json_encode([
         'success' => true,
-        'message' => "Recalibration alert dismissed for room '$roomId'. Live monitoring unpaused."
+        'message' => "Recalibration alert dismissed. Monitoring unpausing on next loop."
     ]);
+    exit;
 
 } catch (Exception $e) {
-    ms_json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+    exit;
 }
