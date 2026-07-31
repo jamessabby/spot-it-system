@@ -944,9 +944,21 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     # when the item is repositioned while still blocking frame-to-frame jitter at 0.75-0.80.
     present_threshold = 0.82 if prev_state == "ABSENT" else SIM_PRESENT
 
+    # This is a two-hypothesis test, so absence must be *won*, not merely reached.
+    # Requiring sim_empty > sim_present is what separates "the surface is showing"
+    # from "something I cannot identify is in the way":
+    #
+    #   item present   here 1.00  gone 0.00   -> here wins        -> PRESENT
+    #   item removed   here 0.50  gone 0.80   -> gone wins        -> ABSENT
+    #   hand holding   here 0.77  gone 0.60   -> neither wins     -> OCCLUDED
+    #
+    # Without the comparison the last row fell through to ABSENT purely because
+    # gone cleared an absolute floor, and a hand resting on the mouse raised an
+    # alarm — the exact failure unfixable_limitations.md §3 exists to prevent.
+    # SIM_EMPTY now acts only as a floor beneath that comparison.
     if sim_p >= present_threshold:
         state = "PRESENT"
-    elif sim_e >= SIM_EMPTY:
+    elif sim_e >= SIM_EMPTY and sim_e > sim_p:
         state = "ABSENT"
     else:
         state = "OCCLUDED"
