@@ -44,30 +44,51 @@ Refer to this log so you do not waste time re-investigating previously solved pr
 ### 2026-07-31 — Every dashboard button hung forever ("Clearing…" / "Unpausing…")
 
 *   **Symptom:** clicking **Dismiss Alerts** or **Dismiss Recalibration Alert** on
-    `room-monitor.php` spun forever and never resolved. Appeared to depend on whether
-    `main.py` was running, which sent three separate debugging attempts down the wrong path
-    (assumed MySQL row-lock contention with the detection loop — it was not).
-*   **The measurement that found it:** hitting the endpoint directly with `curl` returned in
-    **12 ms**. So PHP, MySQL and the handler logic were all fine, and the fault had to be in
-    something the browser had that `curl` did not — **a session cookie**.
+    `room-monitor.php` spun forever and never resolved.
+*   **Root cause — a 404 on a script tag.**
+    [`pages/room-monitor.php`](file:///c:/xampp/htdocs/spotit/pages/room-monitor.php) loaded
+    `../assets/js/dashboard.js`, **which does not exist** — the shared helpers live in
+    `assets/js/spotit.js`, which is what every other page in `pages/` loads. Apache answered the
+    404 with an HTML error page, so the browser additionally refused to execute it on MIME
+    grounds (`Refused to execute script … MIME type ('text/html') is not executable`).
+*   **Why it presented as a hang rather than an error.** `spotit.js` defines both `spotitFetch`
+    (line 146) and `showToast` (line 28). With the file missing:
+    1. `dismissAlerts()` calls `spotitFetch(...)` → `ReferenceError: spotitFetch is not defined`
+    2. control passes to the `catch` block, which calls `showToast(...)` → **also undefined** →
+       throws a *second* `ReferenceError` out of the catch
+    3. the button-restore line sat *after* that call, so it never ran
+
+    The request was therefore never even sent, and the spinner was permanent. The console said
+    so plainly the whole time — the lesson is to read it before theorising.
+*   **Resolution:** point the script tag at `assets/js/spotit.js`. Additionally hardened both
+    handlers so this class of failure cannot lock a button again: toast calls go through a
+    `safeToast()` wrapper that swallows its own errors, and the button restore moved into a
+    `finally` block so it runs on every path.
+*   **Diagnostic note:** `curl -X POST …/auth/dismiss_alerts.php` returned **HTTP 403 in 12 ms**.
+    That single measurement ruled out PHP, MySQL and the handler logic, and should have been the
+    *first* step. Three earlier attempts guessed at MySQL row-lock contention with `main.py`
+    instead and were all wrong; two of them removed correct DB writes from
+    `dismiss_alerts.php` and `reset_recalibration.php` (leaving detections stuck at `pending`
+    so the alert list never cleared) and have been reverted.
+
+### 2026-07-31 — Latent: MJPEG stream held the PHP session lock forever
+
+Found while chasing the bug above. **Not** the cause of it, but a genuine defect that would
+have produced very similar symptoms once the JS was fixed, so it was fixed at the same time.
+
 *   **Root cause:** [`auth/tapo_stream.php`](file:///c:/xampp/htdocs/spotit/auth/tapo_stream.php)
-    serves the live MJPEG feed. It calls `session_start()` (via `service_bootstrap.php`), then
-    `set_time_limit(0)` and streams inside `while (!feof($proc) …)` — i.e. **it never
-    terminates while the feed is on screen.** PHP's default session handler holds an
-    **exclusive flock on the session file** from `session_start()` until the script ends or
-    `session_write_close()` is called. That lock was therefore held for the entire life of the
-    live feed, and *every* other request carrying the same session cookie blocked inside
-    `session_start()` waiting for it. `curl` had no cookie, got a fresh session, and sailed past.
-*   **Resolution:** call `session_write_close()` in `tapo_stream.php` immediately after the
-    auth check and before streaming begins. Nothing past that point touches `$_SESSION`.
-*   **Rule for this codebase:** any endpoint that is long-running, streaming, or long-polling
-    **must** `session_write_close()` as soon as it has finished reading `$_SESSION`. Note the
-    call must come *after* the `require_once service_bootstrap.php` — putting it in the handler
-    that hangs does not help, because the block happens inside the bootstrap's `session_start()`.
-*   **Note on the wrong turns:** two commits removed the DB writes from `dismiss_alerts.php` and
-    `reset_recalibration.php` on the mistaken row-lock theory. Those writes were correct and
-    have been restored — dropping them left detections stuck at `pending` so the dashboard alert
-    list never cleared.
+    serves the live feed. It calls `session_start()` (via `service_bootstrap.php`), then
+    `set_time_limit(0)` and streams inside `while (!feof($proc) …)` — it never terminates while
+    the feed is on screen. PHP's default session handler holds an **exclusive flock on the
+    session file** from `session_start()` until the script ends or `session_write_close()` is
+    called, so that lock was held for the entire life of the stream. Any other request carrying
+    the same session cookie would block inside `session_start()` waiting for it.
+*   **Resolution:** `session_write_close()` immediately after the auth check, before streaming
+    begins. Nothing past that point touches `$_SESSION`.
+*   **Rule for this codebase:** any long-running, streaming or long-polling endpoint **must**
+    `session_write_close()` as soon as it has finished reading `$_SESSION`. The call must come
+    *after* `require_once service_bootstrap.php` — adding it to the handler that appears to hang
+    does not help, because the block happens inside the bootstrap's own `session_start()`.
 
 ### 2026-07-30 — Five defects found while rewriting the presence logic
 

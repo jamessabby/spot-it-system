@@ -223,7 +223,7 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
   </div>
 </div>
 
-<script src="../assets/js/dashboard.js"></script>
+<script src="../assets/js/spotit.js"></script>
 <script>
 let currentRoomId = "<?= htmlspecialchars($room_id) ?>";
 let currentTimerMode = "<?= htmlspecialchars($timer_mode) ?>";
@@ -350,28 +350,41 @@ async function captureBaseline() {
 async function dismissRecalibrationAlert() {
   if (!confirm(`Dismiss mass deviation / recalibration alert for ${currentRoomId} and unpause monitoring?`)) return;
   const btn = document.getElementById('btnDismissRecal');
+  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert'; } };
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Unpausing...'; }
+  let reloading = false;
   try {
     const fd = new FormData();
     fd.append('room_id', currentRoomId);
     const res = await spotitFetch('../auth/reset_recalibration.php', { method: 'POST', body: fd });
     if (res && res.success) {
-      showToast('success', res.message || 'Recalibration alert dismissed!');
+      reloading = true;
+      safeToast('success', res.message || 'Recalibration alert dismissed!');
       setTimeout(() => location.reload(), 800);
     } else {
-      showToast('error', res?.message || 'Failed to dismiss.');
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert'; }
+      safeToast('error', (res && res.message) || 'Failed to dismiss.');
     }
   } catch (e) {
-    showToast('error', 'Network error.');
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert'; }
+    safeToast('error', 'Network error.');
+  } finally {
+    if (!reloading) restore();
   }
+}
+
+// Never let a missing helper leave a button spinning forever: toast failures must
+// not escape, and the button is restored in finally so it resets on every path.
+// (A missing assets/js/spotit.js once made showToast throw inside a catch block,
+// which skipped the restore line — see BUGS.md 2026-07-31.)
+function safeToast(type, msg) {
+  try { showToast(type, msg); } catch (_) { console.warn('[toast]', type, msg); }
 }
 
 async function dismissAlerts() {
   if (!confirm(`Dismiss all active alerts for room ${currentRoomId}? This will mark them as recovered.`)) return;
   const btn = document.getElementById('btnDismissAlerts');
+  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; } };
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Clearing...'; }
+  let reloading = false;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -382,16 +395,16 @@ async function dismissAlerts() {
     });
     clearTimeout(timeout);
     if (res && res.success) {
-      showToast('success', res.message || 'Alerts dismissed!');
+      reloading = true;
+      safeToast('success', res.message || 'Alerts dismissed!');
       setTimeout(() => location.reload(), 800);
     } else {
-      showToast('error', res?.message || 'Failed to dismiss alerts.');
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
+      safeToast('error', (res && res.message) || 'Failed to dismiss alerts.');
     }
   } catch (e) {
-    const msg = e.name === 'AbortError' ? 'Request timed out after 8s.' : 'Network error.';
-    showToast('error', msg);
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Dismiss Alerts'; }
+    safeToast('error', e.name === 'AbortError' ? 'Request timed out after 8s.' : 'Network error.');
+  } finally {
+    if (!reloading) restore();
   }
 }
 
