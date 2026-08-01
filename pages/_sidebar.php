@@ -62,6 +62,13 @@ $initials = strtoupper(
     <a href="recovered-items.php" class="sb-item <?= $active==='recovered'?'active':'' ?>">
       <i class="fa-solid fa-box-open"></i> Recovered Items
     </a>
+    <?php if ($role === 'admin'): ?>
+    <!-- Admin only: this page permanently deletes CCTV evidence and claimant
+         photographs (CLAUDE.md §3c data retention lifecycle). -->
+    <a href="donation.php" class="sb-item <?= $active==='donation'?'active':'' ?>">
+      <i class="fa-solid fa-hand-holding-heart"></i> Donation &amp; Retention
+    </a>
+    <?php endif; ?>
   </div>
   <?php endif; ?>
 

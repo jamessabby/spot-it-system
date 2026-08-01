@@ -69,7 +69,13 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
         <span class="topbar-title">Room Cameras</span>
         <span class="topbar-sub"> — <strong id="topRoomId"><?= htmlspecialchars($room_id) ?></strong> · <span id="topRoomName"><?= htmlspecialchars($room_name) ?></span></span>
       </div>
-      <div class="live-pill"><div class="live-dot"></div>LIVE FEED</div>
+      <!-- Reflects the detector's actual heartbeat, not a hardcoded label.
+           Once main.py runs as an unattended service there is no terminal to
+           glance at, and a crashed detector otherwise looks identical to a quiet
+           room: all boxes green, no alerts, nothing visibly wrong. -->
+      <div class="live-pill" id="detectorPill" title="Checking detector...">
+        <div class="live-dot" id="detectorDot"></div><span id="detectorLabel">LIVE FEED</span>
+      </div>
       
       <div class="topbar-right">
         <!-- Room Selector -->
@@ -470,10 +476,54 @@ function toggleCamFullScreen() {
 </script>
 <script src="../assets/js/stream-viewer.js"></script>
 <script>
+// ── Detector health ─────────────────────────────────────────────────────────
+// main.py posts a heartbeat every 10s; the server calls it offline after 30s.
+// Shows FPS as well as up/down, because a detector crawling at 2 fps is a real
+// fault that a binary badge would hide.
+async function pollDetectorHealth() {
+  const pill  = document.getElementById('detectorPill');
+  const dot   = document.getElementById('detectorDot');
+  const label = document.getElementById('detectorLabel');
+  if (!pill) return;
+  try {
+    const res = await fetch(
+      `../auth/detector_heartbeat.php?room_id=${encodeURIComponent(currentRoomId)}`,
+      { cache: 'no-store' }
+    );
+    const data = await res.json();
+    const h = (data && data.health) || {};
+    if (h.online) {
+      dot.style.background = '#00ff88';
+      label.textContent = h.fps ? `LIVE · ${h.fps} FPS` : 'LIVE FEED';
+      pill.style.opacity = '1';
+      pill.title = `Detector online — last seen ${h.seconds_ago}s ago (${data.deploy} mode)`;
+    } else {
+      dot.style.background = '#dc3545';
+      label.textContent = 'DETECTOR OFFLINE';
+      pill.style.opacity = '1';
+      pill.title = h.last_seen
+        ? `No heartbeat since ${h.last_seen}. Check that main.py is running on the lab PC.`
+        : 'This detector has never checked in. Start main.py on the lab PC.';
+    }
+  } catch (e) {
+    // Leave the badge as-is: a failed poll means OUR connection is unhappy,
+    // which says nothing about whether the detector is running.
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   pollRoomStatus();
   setInterval(pollRoomStatus, 2000);
+  pollDetectorHealth();
+  setInterval(pollDetectorHealth, 10000);
   initLiveFrameStream('camVideoBox', currentRoomId);
+});
+
+// Stop polling while the tab is hidden. With a 2s interval and several staff
+// leaving dashboards open all day, background tabs are a meaningful share of
+// total requests against shared hosting.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { pollRoomStatus(); pollDetectorHealth(); }
 });
 </script>
 </body>

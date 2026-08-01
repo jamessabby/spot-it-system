@@ -1,4 +1,18 @@
-opencv-python-headless>=4.5.0
-numpy>=1.19.0
-requests>=2.25.0
-onnxruntime>=1.8.0
+# S.P.O.T.-IT - detector dependencies (main.py)
+#
+# Install on the lab mini-PC with:
+#     pip install -r requirements.txt
+#
+# opencv-python-HEADLESS, not opencv-python: the detector runs as a background
+# service with no desktop session, and the GUI build drags in Qt libraries it can
+# never use. Install plain opencv-python only if you want SPOTIT_GUI=1 to watch
+# the annotated window while tuning at a desk.
+
+opencv-python-headless>=4.8.0,<5.0
+numpy>=1.24.0,<3.0
+requests>=2.31.0
+
+# NOTE: onnxruntime was listed here but is never imported. MobileNetV2 is loaded
+# through OpenCV's own DNN module (cv2.dnn.readNetFromONNX in main.py), so
+# onnxruntime was roughly 200 MB of download and disk that nothing used. Removed
+# 2026-08-01. If inference is ever moved off cv2.dnn, add it back explicitly.

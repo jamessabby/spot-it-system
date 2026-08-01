@@ -22,9 +22,23 @@ $status = $_GET['status'] ?? 'recovered'; // default: claimable items only
 $where  = ['1=1'];
 $params = [];
 
-if ($status !== 'all') {
+if ($status === 'donatable') {
+    // Everything still awaiting an owner — the candidate pool for the
+    // end-of-year donation run (pages/donation.php). Claimed and already
+    // archived items are excluded because there is nothing left to dispose of.
+    $where[] = "ri.status IN ('recovered','pending_claim')";
+} elseif ($status !== 'all') {
     $where[]  = 'ri.status = ?';
     $params[] = $status;
+}
+
+// Age filter, used by the donation page so staff cannot accidentally dispose of
+// something found last week. Days rather than a date so the caller does not have
+// to care about timezones.
+$minAgeDays = (int) ($_GET['min_age_days'] ?? 0);
+if ($minAgeDays > 0) {
+    $where[]  = 'ri.recovered_at <= DATE_SUB(NOW(), INTERVAL ? DAY)';
+    $params[] = $minAgeDays;
 }
 
 $whereSQL = implode(' AND ', $where);

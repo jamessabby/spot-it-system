@@ -1,18 +1,64 @@
-version: '3.8'
+# S.P.O.T.-IT - Detector service (Linux hosts)
+#
+# Runs main.py only. The PHP site lives on Hostinger; nothing here affects it.
+# On a Windows mini-PC use deploy/install-service.ps1 instead - see Dockerfile.
+#
+# Setup:
+#   1. cp .env.example .env    and fill in API_URL / API_KEY / ROOM_ID
+#   2. docker compose up -d
+#   3. docker compose logs -f
+#
+# The previous version of this file hardcoded C:/xampp paths and used
+# network_mode: host on a Windows machine, where that mode does not exist. Both
+# are fixed below.
 
 services:
   spotit-detector:
     build: .
-    container_name: spotit_detector_service
-    restart: always
-    network_mode: host # Allows container to directly access cameras on local WiFi network
+    image: spotit-detector:latest
+    container_name: spotit_detector_${ROOM_ID:-desk}
+    restart: unless-stopped
+
+    # Host networking so the container reaches the camera directly on the lab
+    # LAN. RTSP negotiates its own UDP ports, which NAT'd bridge networking
+    # mangles. Linux only - this is the reason this file is not for Windows.
+    network_mode: host
+
     environment:
-      - API_URL=http://localhost/spotit/auth/ingest_detection.php
-      - API_KEY=CHANGE_ME_DETECTION_KEY
+      # Point at ingest_detection.php on the hosted site; main.py derives the
+      # other endpoints (config poll, live frame, baseline, heartbeat) from it.
+      API_URL: ${API_URL:?set API_URL in .env}
+      # Must match SPOTIT_DETECTION_KEY in the site's config/env.local.php.
+      API_KEY: ${API_KEY:?set API_KEY in .env}
+      # remote = fetch config over HTTP instead of reading a shared disk.
+      SPOTIT_DEPLOY: ${SPOTIT_DEPLOY:-remote}
+      ROOM_ID: ${ROOM_ID:?set ROOM_ID in .env, e.g. ROOM_1}
+      SNAPSHOT_DIR: /app/uploads/snapshots
+      PYTHONUNBUFFERED: "1"
+
     volumes:
-      # Mount snapshots directory so output images are visible to the web server
-      - C:/xampp/htdocs/spotit/uploads/snapshots:/app/uploads/snapshots
-      - C:/xampp/htdocs/spotit/photos:/app/photos
-      - ./detection_mode.json:/app/detection_mode.json
-      # Support dynamic room ROIs
-      - .:/app/shared_config:ro
+      # Relative paths - portable across machines, unlike the absolute
+      # C:/xampp/... entries this file used to carry.
+      #
+      # These persist the detector's working state across container restarts:
+      # the synced baseline, ROI definitions and metrics CSV. In remote mode the
+      # server is the source of truth and these act as the offline cache that
+      # keeps detection running through a network outage.
+      - ./photos:/app/photos
+      - ./uploads/snapshots:/app/uploads/snapshots
+      - ./logs:/app/logs
+
+    # Bounded so one container cannot fill the disk over a semester.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # MobileNetV2 inference is CPU-bound; the cap stops the detector starving
+    # anything else sharing the box.
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
