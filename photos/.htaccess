@@ -1,0 +1,19 @@
+# ============================================================
+# S.P.O.T.-IT — deny-all
+#
+# Defence in depth. The root .htaccess blocks this directory with a
+# RewriteRule, but that silently does nothing if mod_rewrite is off or a host
+# ignores per-directory overrides. This file denies access using two different
+# mechanisms so the protection does not rest on a single module being loaded.
+# ============================================================
+
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order Allow,Deny
+  Deny from all
+</IfModule>
+
+php_flag engine off
+Options -Indexes -ExecCGI

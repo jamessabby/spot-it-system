@@ -40,6 +40,23 @@ function initLiveFrameStream(containerId, roomId) {
   let activeImgId = 1;
   let livePollInterval = null;
   let consecutiveErrors = 0;
+  let presenceTimer = null;
+
+  // ── Tell the server somebody is watching ───────────────────────────────────
+  // In a remote deployment the detector runs in the lab and pushes frames here
+  // over the internet. Pushing 1 fps continuously would be roughly 5 GB per room
+  // per day, almost all of it while nobody is looking. So the detector asks the
+  // server "is anyone watching?" and only pushes at full rate when the answer is
+  // yes. This ping is what makes the answer yes.
+  //
+  // Deliberately less frequent than the frame poll — the server keeps the flag
+  // alive for LIVE_VIEWER_TTL_SEC (15s), so once every 10s is enough, and it
+  // stops as soon as the tab is hidden or the viewer is torn down.
+  function pingPresence() {
+    if (document.hidden) return;
+    fetch(`../auth/detector_heartbeat.php?room_id=${encodeURIComponent(roomId)}&watching=1`,
+          { cache: 'no-store' }).catch(() => {});
+  }
 
   function setOfflineState(isOffline, message = 'Daemon Offline (Standby)') {
     const loader = offlineOverlay.querySelector('.hud-loader');
@@ -99,10 +116,18 @@ function initLiveFrameStream(containerId, roomId) {
   setOfflineState(true, 'Connecting to stream feed...');
   pollNext();
 
+  // Presence: immediately, then every 10s while the tab is visible.
+  pingPresence();
+  presenceTimer = setInterval(pingPresence, 10000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pingPresence();
+  });
+
   // Return controls to stop stream if needed
   return {
     stop: () => {
       if (livePollInterval) clearTimeout(livePollInterval);
+      if (presenceTimer) clearInterval(presenceTimer);
     }
   };
 }

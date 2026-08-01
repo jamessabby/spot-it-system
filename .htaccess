@@ -6,9 +6,18 @@
 Options -Indexes -MultiViews
 ServerSignature Off
 
-# ── HTTPS redirect (uncomment after SSL is active on Hostinger) ──────────────
-# RewriteCond %{HTTPS} off
-# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+# ── HTTPS redirect ───────────────────────────────────────────────────────────
+# Active on any real hostname, skipped on localhost so XAMPP (which has no
+# certificate) keeps working. Without this, session cookies and the detection
+# API key would cross the internet in clear text.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP_HOST} !^localhost [NC]
+  RewriteCond %{HTTP_HOST} !^127\.0\.0\.1 [NC]
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
 
 # ── Deny direct access to sensitive directories + clean URLs ─────────────────
 <IfModule mod_rewrite.c>
@@ -43,11 +52,22 @@ ServerSignature Off
   Deny from all
 </FilesMatch>
 
-# ── Block rois.json from direct web access (leaks ROI layout/camera setup) ───
-<Files "rois.json">
-  Order Allow,Deny
-  Deny from all
-</Files>
+# ── Block detector config files from direct web access ───────────────────────
+# These sit in the web root because main.py reads them from disk. Served over
+# HTTP they would hand an anonymous visitor the exact pixel coordinates of every
+# monitored item, plus which rooms exist and what mode they are in — a map of
+# what is watched and, by omission, what is not.
+# FilesMatch (not Files) so the per-room variants rois_ROOM_1.json are covered
+# too; the old rule named only "rois.json" and missed every production room.
+<FilesMatch "^(rois.*\.json|detection_mode\.json|live_roi_state\.json|requirements\.txt|docker-compose\.yml|Dockerfile)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order Allow,Deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
 
 # ── Security headers ──────────────────────────────────────────────────────────
 <IfModule mod_headers.c>

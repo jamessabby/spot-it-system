@@ -23,7 +23,46 @@ API_URL = os.environ.get("API_URL", "http://localhost/spotit/auth/ingest_detecti
 API_KEY = os.environ.get(
     "API_KEY", "CHANGE_ME_DETECTION_KEY"
 )  # must match env.php / DETECTION_API_KEY
-SHOW_GUI = False  # Set to False to run headless (no floating window)
+
+# ── DEPLOYMENT MODE ──────────────────────────────────────────────────────────
+# "local"  — this script and the web app share a filesystem (XAMPP dev). Config
+#            is read straight off disk, exactly as it always has been.
+# "remote" — the web app is hosted and this script runs on a mini-PC in the lab.
+#            There is no shared disk, so config arrives over HTTP instead.
+#
+# HOW REMOTE MODE WORKS, AND WHY IT IS SHAPED THIS WAY
+# The lab sits behind NAT, so the server can never call in — every exchange has
+# to start here. On each poll this script fetches the current config and then
+# WRITES IT INTO THE SAME LOCAL FILES the local-mode path already reads
+# (detection_mode.json, rois_{ROOM}.json, photos/ref_image_{ROOM}.jpg).
+#
+# That choice matters: the existing mtime-driven reload and recalibration logic
+# is reused untouched rather than duplicated, so remote mode cannot drift away
+# from local mode's behaviour. It also makes those files a genuine offline cache
+# — if the network drops, detection keeps running on the last known good config.
+DEPLOY_MODE = os.environ.get("SPOTIT_DEPLOY", "local").strip().lower()
+IS_REMOTE = DEPLOY_MODE == "remote"
+
+# Derived sibling endpoints. API_URL points at ingest_detection.php; everything
+# else lives beside it, so one env var configures the whole contract.
+_API_BASE = API_URL.rsplit("/", 1)[0] if "/" in API_URL else API_URL
+CONFIG_URL = f"{_API_BASE}/get_detector_config.php"
+LIVE_FRAME_URL = f"{_API_BASE}/ingest_live_frame.php"
+BASELINE_URL = f"{_API_BASE}/ingest_baseline.php"
+HEARTBEAT_URL = f"{_API_BASE}/detector_heartbeat.php"
+
+CONFIG_POLL_SEC = 3.0       # how often to ask the server for config + commands
+HEARTBEAT_SEC = 10.0        # how often to report "still alive" (offline after 30s)
+LIVE_FRAME_ACTIVE_SEC = 1.0   # frame push rate while somebody is watching
+LIVE_FRAME_IDLE_SEC = 15.0    # ...and while nobody is. Continuous 1 fps would be
+                              # roughly 5 GB per room per day, nearly all wasted.
+LIVE_FRAME_MAX_WIDTH = 960    # downscale before upload; the dashboard shows it small
+LIVE_FRAME_QUALITY = 70
+
+# Headless by default (unchanged). A Windows service account has no desktop
+# session, so cv2.imshow would throw there — SPOTIT_GUI=1 is opt-in for desk
+# debugging only and must never be set in the service definition.
+SHOW_GUI = os.environ.get("SPOTIT_GUI", "").strip().lower() in ("1", "true", "yes")
 BASELINE_COUNT = None  # set below from number of ROIs
 
 # ── CONFIG ───────────────────────────────────────────────────────────────
@@ -1103,6 +1142,332 @@ def log_roi_metrics(
         pass  # instrumentation must never break detection
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# REMOTE CONTROL PLANE  (only active when SPOTIT_DEPLOY=remote)
+# ═══════════════════════════════════════════════════════════════════════════
+# In a hosted deployment the web app cannot see this machine's disk and cannot
+# open a connection to it, so everything below is detector-initiated:
+#
+#   poll  get_detector_config.php   -> mode, ROIs, baseline, pending commands
+#   push  ingest_live_frame.php     -> the live view the dashboard displays
+#   push  ingest_baseline.php       -> a fresh baseline, on command
+#   push  detector_heartbeat.php    -> proof this service is still alive
+#
+# Every function here fails soft. A dropped network must degrade the dashboard,
+# never stop detection — the last synced config stays on disk and remains valid.
+
+_last_config_poll = 0.0
+_last_heartbeat = 0.0
+_last_live_push = 0.0
+_remote_viewers_active = False
+_last_config_version = None
+_last_baseline_version = None
+_remote_warned = False
+
+# Most recent un-annotated frame, kept so a queued capture_baseline command can
+# be served immediately rather than waiting for the next camera read. Populated
+# by save_frames_atomic, which every code path already calls.
+_last_clean_frame = None
+
+# Rolling frame rate, reported in the heartbeat so the dashboard can show not
+# just "alive" but "keeping up" — a detector crawling at 2 fps is a real problem
+# that a binary online/offline badge would hide.
+_fps_window = []
+_fps_value = 0.0
+
+
+def _record_frame_tick():
+    global _fps_window, _fps_value
+    now = time.time()
+    _fps_window.append(now)
+    if len(_fps_window) > 30:
+        _fps_window = _fps_window[-30:]
+    if len(_fps_window) >= 2:
+        span = _fps_window[-1] - _fps_window[0]
+        _fps_value = (len(_fps_window) - 1) / span if span > 0 else 0.0
+
+
+def _remote_warn_once(msg):
+    """Report a connectivity problem once, not on every failed poll."""
+    global _remote_warned
+    if not _remote_warned:
+        _remote_warned = True
+        print(f"[SPOT-IT][REMOTE] {msg}")
+
+
+def sync_remote_config():
+    """Fetch server config and materialise it into the local files.
+
+    Deliberately does NOT introduce a second config path. It writes
+    detection_mode.json / rois_{ROOM}.json / photos/ref_image_{ROOM}.jpg and then
+    lets the existing mtime-driven reload logic downstream pick the changes up,
+    so remote and local mode share one code path and cannot behave differently.
+
+    Returns the list of pending commands (empty on any failure).
+    """
+    global _last_config_poll, _remote_viewers_active
+    global _last_config_version, _last_baseline_version, _remote_warned
+
+    now = time.time()
+    if now - _last_config_poll < CONFIG_POLL_SEC:
+        return []
+    _last_config_poll = now
+
+    try:
+        resp = requests.get(
+            CONFIG_URL, params={"api_key": API_KEY, "room_id": ROOM_ID}, timeout=5
+        )
+        if resp.status_code != 200:
+            _remote_warn_once(
+                f"config poll returned HTTP {resp.status_code} — running on last known config."
+            )
+            return []
+        cfg = resp.json()
+    except Exception as e:
+        _remote_warn_once(f"cannot reach {CONFIG_URL} ({e}) — running on last known config.")
+        return []
+
+    if not cfg.get("success"):
+        return []
+
+    if _remote_warned:
+        _remote_warned = False
+        print("[SPOT-IT][REMOTE] Reconnected to server.")
+
+    _remote_viewers_active = bool(cfg.get("viewers_active"))
+
+    # Only rewrite files when something actually changed — otherwise every poll
+    # would bump mtimes and trigger a pointless full recalibration every 3s.
+    version = cfg.get("config_version")
+    if version and version != _last_config_version:
+        _last_config_version = version
+        try:
+            with open("detection_mode.json", "w") as mf:
+                json.dump(
+                    {
+                        "mode": cfg.get("mode", "testing"),
+                        "tracking_mode": cfg.get("tracking_mode", "registered"),
+                        "timer_mode": cfg.get("timer_mode", "testing_speed"),
+                        "room_id": cfg.get("room_id", ROOM_ID),
+                        "reset_paused": False,
+                        "reset_rois": False,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    mf,
+                    indent=2,
+                )
+
+            rois = cfg.get("rois")
+            if isinstance(rois, list):
+                roi_target = (
+                    "rois.json" if ROOM_ID == "DESK" else f"rois_{ROOM_ID}.json"
+                )
+                with open(roi_target, "w") as rf:
+                    json.dump(rois, rf, indent=2)
+
+            print(
+                f"[SPOT-IT][REMOTE] Config synced (version {version}, "
+                f"{cfg.get('roi_count', 0)} ROIs)."
+            )
+        except Exception as e:
+            print(f"[SPOT-IT][REMOTE] Could not write synced config: {e}")
+
+    # Baseline is fetched separately — it is large and changes rarely.
+    b_version = cfg.get("baseline_version")
+    b_url = cfg.get("baseline_url")
+    if b_url and b_version and b_version != _last_baseline_version:
+        if download_remote_baseline(b_url):
+            _last_baseline_version = b_version
+
+    return cfg.get("commands") or []
+
+
+def download_remote_baseline(url):
+    """Pull the server's baseline down to this machine.
+
+    Writes both the file main.py calibrates against and the copy the ROI editor
+    draws on, from identical bytes — if those two ever diverge, boxes drawn in
+    the browser stop lining up with what detection actually compares.
+    """
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code != 200 or len(resp.content) < 1000:
+            print(f"[SPOT-IT][REMOTE] Baseline download failed (HTTP {resp.status_code}).")
+            return False
+
+        ref_target = (
+            "photos/ref_image.jpg"
+            if ROOM_ID == "DESK"
+            else f"photos/ref_image_{ROOM_ID}.jpg"
+        )
+        os.makedirs("photos", exist_ok=True)
+        tmp = ref_target + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(resp.content)
+        os.replace(tmp, ref_target)
+
+        copy_target = os.path.join(SNAPSHOT_DIR, f"{ROOM_ID}_baseline.jpg")
+        try:
+            with open(copy_target, "wb") as f:
+                f.write(resp.content)
+        except Exception:
+            pass  # editor copy is a convenience; the ref image is what matters
+
+        print(f"[SPOT-IT][REMOTE] Baseline updated from server ({len(resp.content)} bytes).")
+        return True
+    except Exception as e:
+        print(f"[SPOT-IT][REMOTE] Baseline download error: {e}")
+        return False
+
+
+def push_live_frame(output_frame, clean_frame):
+    """Upload the annotated frame so the hosted dashboard has something to show.
+
+    Rate-limited by whether anyone is actually watching. This is the difference
+    between roughly 5 GB and 0.3 GB of upload per room per day, and almost all of
+    that traffic would otherwise be sent to an empty room.
+    """
+    global _last_live_push, _remote_viewers_active
+
+    now = time.time()
+    interval = LIVE_FRAME_ACTIVE_SEC if _remote_viewers_active else LIVE_FRAME_IDLE_SEC
+    if now - _last_live_push < interval:
+        return
+    _last_live_push = now
+
+    try:
+        frame = output_frame
+        h, w = frame.shape[:2]
+        if w > LIVE_FRAME_MAX_WIDTH:
+            scale = LIVE_FRAME_MAX_WIDTH / float(w)
+            frame = cv2.resize(frame, (LIVE_FRAME_MAX_WIDTH, int(h * scale)))
+
+        ok, buf = cv2.imencode(
+            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), LIVE_FRAME_QUALITY]
+        )
+        if not ok:
+            return
+
+        files = {"frame": ("live.jpg", buf.tobytes(), "image/jpeg")}
+
+        # The clean frame is what Capture Baseline and the ROI editor want — a
+        # baseline with ROI boxes burned into it would corrupt every future
+        # comparison. Sent at the idle rate only; it is not needed per-frame.
+        if clean_frame is not None and not _remote_viewers_active:
+            c = clean_frame
+            if c.shape[1] > LIVE_FRAME_MAX_WIDTH:
+                s = LIVE_FRAME_MAX_WIDTH / float(c.shape[1])
+                c = cv2.resize(c, (LIVE_FRAME_MAX_WIDTH, int(c.shape[0] * s)))
+            ok_c, buf_c = cv2.imencode(".jpg", c, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            if ok_c:
+                files["clean"] = ("clean.jpg", buf_c.tobytes(), "image/jpeg")
+
+        resp = requests.post(
+            LIVE_FRAME_URL,
+            data={"api_key": API_KEY, "room_id": ROOM_ID},
+            files=files,
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            try:
+                _remote_viewers_active = bool(resp.json().get("viewers_active"))
+            except Exception:
+                pass
+    except Exception:
+        pass  # the live view is cosmetic; never let it interrupt detection
+
+
+def send_heartbeat(fps=None, camera_state="unknown"):
+    """Report liveness so the dashboard can show an offline badge.
+
+    Once this runs as an unattended service there is no terminal to glance at.
+    Without a heartbeat a crashed detector looks exactly like a quiet room — all
+    green, no alerts — which is the most dangerous way for a security system to
+    fail.
+    """
+    global _last_heartbeat
+    now = time.time()
+    if now - _last_heartbeat < HEARTBEAT_SEC:
+        return
+    _last_heartbeat = now
+    try:
+        requests.post(
+            HEARTBEAT_URL,
+            data={
+                "api_key": API_KEY,
+                "room_id": ROOM_ID,
+                "fps": f"{fps:.1f}" if fps else "",
+                "camera": camera_state,
+                "deploy": DEPLOY_MODE,
+                "roi_count": len(roi_list),
+                "missing_count": count_missing_items(),
+            },
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def upload_baseline_capture(clean_frame):
+    """Execute a queued `capture_baseline` command.
+
+    Capture Baseline used to run server-side via ffmpeg. That cannot work once
+    hosted: rtsp://192.168.x.x only exists inside the lab. So the flow inverts —
+    the dashboard queues a request, and this machine, the only one that can see
+    the camera, grabs the frame and posts it back.
+    """
+    if clean_frame is None:
+        print("[SPOT-IT][REMOTE] capture_baseline requested but no clean frame available yet.")
+        return False
+    try:
+        ok, buf = cv2.imencode(".jpg", clean_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+        if not ok:
+            return False
+        resp = requests.post(
+            BASELINE_URL,
+            data={"api_key": API_KEY, "room_id": ROOM_ID},
+            files={"baseline": ("baseline.jpg", buf.tobytes(), "image/jpeg")},
+            timeout=20,
+        )
+        if resp.status_code == 200 and resp.json().get("success"):
+            print("[SPOT-IT][REMOTE] Fresh baseline captured and uploaded.")
+            return True
+        print(f"[SPOT-IT][REMOTE] Baseline upload rejected: HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"[SPOT-IT][REMOTE] Baseline upload error: {e}")
+    return False
+
+
+def apply_remote_commands(commands, clean_frame):
+    """Carry out instructions left by the dashboard.
+
+    reset_paused / clear_alerts are written into detection_mode.json rather than
+    handled here, so the existing in-loop handlers stay the single implementation
+    of what those actually mean.
+    """
+    if not commands:
+        return
+    for cmd in commands:
+        print(f"[SPOT-IT][REMOTE] Command received: {cmd}")
+        if cmd == "capture_baseline":
+            upload_baseline_capture(clean_frame)
+        elif cmd in ("reset_paused", "clear_alerts", "reload_rois"):
+            try:
+                data = {}
+                if os.path.exists("detection_mode.json"):
+                    with open("detection_mode.json", "r") as mf:
+                        data = json.load(mf) or {}
+                if cmd == "reload_rois":
+                    data["reset_rois"] = True
+                else:
+                    data[cmd] = True
+                data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open("detection_mode.json", "w") as mf:
+                    json.dump(data, mf, indent=2)
+            except Exception as e:
+                print(f"[SPOT-IT][REMOTE] Could not apply '{cmd}': {e}")
+
+
 def save_frames_atomic(output_frame, clean_frame):
     try:
         live_path = os.path.join(SNAPSHOT_DIR, f"live_{ROOM_ID}.jpg")
@@ -1127,6 +1492,16 @@ def save_frames_atomic(output_frame, clean_frame):
             os.replace(clean_tmp, clean_path)
     except Exception:
         pass
+
+    # Single hook point for the remote path. Every branch of the main loop calls
+    # this function, so pushing from here guarantees the hosted dashboard sees
+    # the same frames the local one does — including the paused, standby and
+    # flood-gate screens, which is exactly when an operator most wants to look.
+    global _last_clean_frame
+    _last_clean_frame = clean_frame
+    _record_frame_tick()
+    if IS_REMOTE:
+        push_live_frame(output_frame, clean_frame)
 
 
 def save_snapshot(frame, label, suffix="snapshot_A"):
@@ -1424,6 +1799,20 @@ while True:
         # 3. Force reload of ROIs and reference images on next frame
         last_rois_mtime = -1
         last_ref_mtime = -1
+
+    # ── REMOTE CONTROL PLANE SYNC ─────────────────────────────────────────
+    # Runs BEFORE the mtime checks below, deliberately: it writes the very files
+    # those checks read, so a config change fetched now is picked up by the
+    # existing reload logic in this same iteration. No-op in local mode.
+    if IS_REMOTE:
+        _pending_commands = sync_remote_config()
+        if _pending_commands:
+            apply_remote_commands(_pending_commands, _last_clean_frame)
+        send_heartbeat(
+            fps=_fps_value,
+            camera_state="online" if (cap is not None and cap.isOpened()) else "offline",
+        )
+
     # ── CHECK FOR CONFIG RECALIBRATION CHANGES ────────────────────────────
     current_rois_mtime = os.path.getmtime(ROI_FILE) if os.path.exists(ROI_FILE) else 0
     current_ref_mtime = os.path.getmtime(REF_IMAGE) if os.path.exists(REF_IMAGE) else 0

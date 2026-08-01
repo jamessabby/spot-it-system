@@ -3,11 +3,30 @@
  * S.P.O.T.-IT — Capture Baseline Frame
  * auth/capture_frame.php
  *
- * GET/POST endpoint. Captures a single baseline frame from the RTSP camera stream 
- * or live snapshot buffer for the specified room. Saves to photos/ref_image_{room_id}.jpg 
- * and updates rooms table in spotit_monitor_db.
+ * GET/POST endpoint. Captures a single baseline frame for the specified room,
+ * saving to photos/ref_image_{room_id}.jpg and uploads/snapshots/{room}_baseline.jpg
+ * and stamping rooms.last_calibrated in spotit_monitor_db.
+ *
+ * TWO PATHS, BECAUSE THE CAMERA IS NOT ALWAYS REACHABLE FROM HERE
+ *
+ *   SPOTIT_DEPLOY=local   — web app and camera on the same network (XAMPP dev).
+ *                           Clone the detector's latest clean frame if it has
+ *                           one, otherwise pull directly via ffmpeg. Unchanged
+ *                           behaviour.
+ *
+ *   SPOTIT_DEPLOY=remote  — web app hosted, camera behind the lab's NAT. The
+ *                           rtsp://192.168.x.x address is meaningless from a
+ *                           data centre, and ffmpeg is rarely installed on
+ *                           shared hosting anyway. So we invert the flow: queue
+ *                           a `capture_baseline` command, and the detector — the
+ *                           one machine that CAN see the camera — grabs a fresh
+ *                           frame and posts it to auth/ingest_baseline.php.
+ *
+ * Same button, same result. In remote mode it completes one poll interval later
+ * rather than instantly, which is why the response distinguishes the two cases.
  */
 require_once __DIR__ . '/service_bootstrap.php';
+require_once __DIR__ . '/detector_state.php';
 header('Content-Type: application/json; charset=utf-8');
 
 ms_require_auth('../pages/login.php');
@@ -16,7 +35,45 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 
-$roomId = strtoupper(trim($_REQUEST['room_id'] ?? 'DESK'));
+$roomId = detector_clean_room($_REQUEST['room_id'] ?? 'DESK');
+if ($roomId === '') {
+    ms_json(['success' => false, 'message' => 'Valid room_id required.'], 400);
+}
+
+$targetRef    = detector_ref_image_file($roomId);
+$targetUpload = detector_baseline_copy_file($roomId);
+
+@mkdir(dirname($targetRef), 0777, true);
+@mkdir(dirname($targetUpload), 0777, true);
+
+// ── Remote deployment: ask the detector to do it ──────────────────────────────
+if (IS_REMOTE_DEPLOY) {
+    if (!detector_queue_command($roomId, 'capture_baseline')) {
+        ms_json(['success' => false, 'message' => 'Could not queue capture command.'], 500);
+    }
+
+    $health = detector_health($roomId);
+    if (!$health['online']) {
+        // Queued regardless — it will run when the detector comes back — but say
+        // so plainly rather than letting the admin wait for a frame that is not
+        // coming.
+        ms_json([
+            'success' => true,
+            'queued'  => true,
+            'warning' => true,
+            'message' => 'Capture queued, but the detector for this room is OFFLINE. '
+                       . 'The baseline will be captured when it reconnects.',
+        ]);
+    }
+
+    ms_json([
+        'success' => true,
+        'queued'  => true,
+        'message' => 'Capture requested. The lab detector will upload a fresh baseline in a few seconds.',
+    ]);
+}
+
+// ── Local deployment: capture here ────────────────────────────────────────────
 
 // Fetch room camera credentials from spotit_monitor_db
 $rtsp = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1';
@@ -34,16 +91,11 @@ try {
     // Fallback to default RTSP URL
 }
 
-// Per-room target paths
-$targetRef    = ($roomId === 'DESK') ? __DIR__ . '/../photos/ref_image.jpg' : __DIR__ . "/../photos/ref_image_{$roomId}.jpg";
-$targetUpload = __DIR__ . "/../uploads/snapshots/{$roomId}_baseline.jpg";
-
-@mkdir(dirname($targetRef), 0777, true);
-@mkdir(dirname($targetUpload), 0777, true);
-
-// Smart active stream clone: Use the live snapshot if python detector is active
-$cleanSnapshot = __DIR__ . "/../uploads/snapshots/clean_{$roomId}.jpg";
-$liveSnapshot  = __DIR__ . "/../uploads/snapshots/live_{$roomId}.jpg";
+// Smart active stream clone: use the detector's latest frame if it is running.
+// Prefer the clean (un-annotated) frame — a baseline with ROI boxes drawn on it
+// would poison every subsequent comparison.
+$cleanSnapshot = SNAPSHOT_PATH . "clean_{$roomId}.jpg";
+$liveSnapshot  = SNAPSHOT_PATH . "live_{$roomId}.jpg";
 $usedLive = false;
 
 if (file_exists($cleanSnapshot) && filesize($cleanSnapshot) > 1000) {
@@ -89,11 +141,6 @@ if (!$usedLive) {
 if (file_exists($targetRef) && filesize($targetRef) > 1000) {
     copy($targetRef, $targetUpload);
 
-    // Also copy to photos/ref_image.jpg if DESK to ensure sandbox compatibility
-    if ($roomId === 'DESK') {
-        @copy($targetRef, __DIR__ . '/../photos/ref_image.jpg');
-    }
-    
     try {
         $relPath = "uploads/snapshots/{$roomId}_baseline.jpg";
         $monitorPdo->prepare("UPDATE rooms SET baseline_image = ?, last_calibrated = NOW() WHERE room_id = ?")
@@ -103,7 +150,7 @@ if (file_exists($targetRef) && filesize($targetRef) > 1000) {
     }
 
     // Trigger immediate dynamic reload in main.py
-    $dmFile = __DIR__ . '/../detection_mode.json';
+    $dmFile = detector_mode_file();
     if (file_exists($dmFile)) {
         $dm = json_decode(file_get_contents($dmFile), true) ?: [];
         $dm['reset_rois'] = true;

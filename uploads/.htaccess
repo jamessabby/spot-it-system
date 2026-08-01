@@ -1,0 +1,67 @@
+# ============================================================
+# S.P.O.T.-IT — uploads/.htaccess
+#
+# This directory receives files over the network: detection snapshots and live
+# frames posted by main.py, and claim selfies uploaded from the claiming station
+# by ordinary users. It is also inside the web root, so anything landing here is
+# directly fetchable by URL.
+#
+# That combination — untrusted bytes in a script-executable directory — is the
+# classic PHP file-upload compromise. Upload something ending .php, request it,
+# and the server runs it. The endpoints do verify uploads with getimagesize(),
+# but this file is the layer that holds even if one of them is ever wrong.
+#
+# Serve images. Execute nothing.
+# ============================================================
+
+# ── Kill script execution, whatever the handler config upstream says ─────────
+php_flag engine off
+
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+  php_flag engine off
+</IfModule>
+
+# Hostinger and most modern hosts run PHP-FPM, where php_flag does nothing —
+# the handler must be unset explicitly.
+<IfModule mod_mime.c>
+  RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar
+  RemoveType    .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar
+</IfModule>
+SetHandler none
+
+# ── Refuse to serve anything executable at all ───────────────────────────────
+<FilesMatch "\.(php|phtml|php[0-9]|phps|pht|phar|cgi|pl|py|sh|asp|aspx|jsp|htaccess)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order Allow,Deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# ── Positive allowlist: only real media may be fetched ───────────────────────
+<FilesMatch "\.(jpg|jpeg|png|gif|webp)$">
+  <IfModule mod_authz_core.c>
+    Require all granted
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order Allow,Deny
+    Allow from all
+  </IfModule>
+</FilesMatch>
+
+# Never let a browser second-guess the type of a file from this directory —
+# sniffing is how an "image" gets treated as script.
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set Content-Disposition "inline"
+</IfModule>
+
+Options -Indexes -ExecCGI

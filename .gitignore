@@ -1,4 +1,24 @@
-uploads/snapshots/ 
-config/env.php 
-__pycache__/ 
-*.pyc 
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# config/env.php is now credential-free and IS tracked, so a fresh checkout or a
+# Hostinger deploy has working configuration out of the box. Real credentials go
+# in env.local.php, which never leaves the machine it was written on.
+config/env.local.php
+.env
+
+# ── Runtime state ─────────────────────────────────────────────────────────────
+# Detector control-plane scratch (command queue, heartbeats, viewer presence).
+# Regenerated automatically; machine-specific.
+runtime/
+logs/
+
+# ── Generated media ───────────────────────────────────────────────────────────
+uploads/snapshots/
+photos/*.jpg
+photos/detection_metrics.csv
+photos/live_roi_state.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+venv/
+.venv/

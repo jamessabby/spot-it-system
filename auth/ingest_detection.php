@@ -30,7 +30,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 // ── API key auth ──────────────────────────────────────────────────────────────
-define('DETECTION_API_KEY', getenv('SPOTIT_DETECTION_KEY') ?: 'CHANGE_ME_DETECTION_KEY');
+// Use the constant resolved by config/env.php rather than reading getenv() again
+// here: env.php also honours config/env.local.php, which is where the production
+// key actually lives. Reading the raw environment would silently ignore it and
+// leave this endpoint accepting the shipped placeholder key.
+define('DETECTION_API_KEY', SPOTIT_DETECTION_KEY);
 $provided_key = trim($_POST['api_key'] ?? $_SERVER['HTTP_X_SPOTIT_KEY'] ?? '');
 if (!hash_equals(DETECTION_API_KEY, $provided_key)) {
     http_response_code(401);

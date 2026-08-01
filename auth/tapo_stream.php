@@ -54,6 +54,31 @@ $roomId  = trim($_GET['room_id'] ?? '');
 $camNum  = (int)($_GET['cam']    ?? 1);
 $quality = (($_GET['quality'] ?? '') === 'high') ? 'stream1' : 'stream2';
 
+// ── Not available in a remote deployment ──────────────────────────────────────
+// Every path below shells out to ffmpeg against rtsp://192.168.x.x. That address
+// is private to the lab network: from a hosted server there is literally nothing
+// at it. Separately, the MJPEG proxy holds one Apache worker open for as long as
+// each viewer watches, which would exhaust a shared-hosting worker pool after a
+// few dashboards.
+//
+// In remote deployments the live view is served instead by the detector pushing
+// frames to auth/ingest_live_frame.php, which assets/js/stream-viewer.js already
+// reads. Fail loudly here so a misconfiguration is obvious rather than appearing
+// as a feed that simply never loads.
+require_once __DIR__ . '/detector_state.php';
+if (IS_REMOTE_DEPLOY) {
+    http_response_code(501);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'success' => false,
+        'message' => 'The MJPEG proxy is disabled in remote deployments — the camera is not '
+                   . 'reachable from this server. The live view is fed by the lab detector '
+                   . 'pushing frames to ingest_live_frame.php.',
+        'deploy'  => SPOTIT_DEPLOY,
+    ]);
+    exit();
+}
+
 // ── Camera configuration ───────────────────────────────────────────────────────
 // Dynamic fetch from DB if configured, otherwise fallback to hardcoded
 $stmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass FROM rooms WHERE room_id = ? LIMIT 1");
