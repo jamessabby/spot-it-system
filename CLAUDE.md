@@ -95,6 +95,43 @@ spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
   a web server), reading an RTSP stream and POSTing to `ingest_detection.php`.
 - Everything else runs under XAMPP Apache at `http://localhost/spotit/`.
 
+### 1a. Deployment architecture — two machines, one direction (2026-08-01)
+
+In production this is **not** one machine. It cannot be, and the reason drives a lot of
+the code:
+
+```
+   CEAT lab (mini-PC, always on)              Hostinger (public URL)
+   ┌──────────────────────────┐               ┌────────────────────────┐
+   │ main.py                  │ ── HTTPS ──▶  │ PHP + MySQL            │
+   │   ← RTSP ← Tapo TC65     │               │ dashboards, claiming   │
+   └──────────────────────────┘               └────────────────────────┘
+              (server can never call in — NAT)
+```
+
+The camera is at a **private address** (`192.168.x.x`) behind the campus NAT. A hosted
+server cannot route to it, and the router blocks unsolicited inbound connections anyway.
+So detection must run on-premise, and **every exchange has to be started by the
+detector.** The server leaves notes; the detector picks them up.
+
+`SPOTIT_DEPLOY` (`config/env.php`, and the matching env var for `main.py`) selects:
+
+- **`local`** — one machine, shared filesystem. Original behaviour: config read off disk,
+  MJPEG proxy live, `capture_frame.php` shells out to ffmpeg. This is XAMPP dev **and the
+  offline fallback for the defense demo** — keep it working.
+- **`remote`** — split. `main.py` polls `auth/get_detector_config.php` and pushes to
+  `ingest_live_frame.php` / `ingest_baseline.php` / `detector_heartbeat.php`.
+  `tapo_stream.php` returns 501 (it cannot reach the camera, and it pinned one Apache
+  worker per viewer, which shared hosting cannot absorb).
+
+**Design note worth preserving:** in remote mode `sync_remote_config()` writes the fetched
+config into *the same local files* local mode already reads. The existing mtime-driven
+reload path is therefore reused rather than duplicated — the two modes cannot drift — and
+those files double as an offline cache, so a network blip degrades the dashboard without
+stopping detection.
+
+Full runbook: [DEPLOYMENT_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/DEPLOYMENT_GUIDE.md).
+
 ---
 
 ## 2. Hard architecture rules (from README.md — do not violate without adviser sign-off)
@@ -533,6 +570,21 @@ Run these after any change, in this order, before considering a fix done:
 
 
 ## 9. Change Log & Project History
+
+- **2026-08-01 (Deployment Readiness — Two-Machine Architecture):** Made everything except
+  detection deployable. Added an HTTP control plane (`auth/get_detector_config.php`,
+  `ingest_live_frame.php`, `ingest_baseline.php`, `detector_heartbeat.php`,
+  `detector_state.php`) so `main.py` can run on a lab mini-PC while the site is hosted —
+  previously the two halves communicated through a shared filesystem, so on Hostinger the
+  live feed and *every dashboard control* would have failed silently. `config/env.php` is
+  now credential-free and tracked (it was gitignored, so a fresh deploy had no config at
+  all); real values live in `config/env.local.php`. Security hardening verified by request:
+  uploaded `.php` in `uploads/` → 403, `env.php`/`main.py`/`rois_*.json` → 403, HTTPS
+  redirect enabled. Built the donation/retention page closing the §3c lifecycle. Added
+  NSSM service scripts so nobody types `python main.py`. Fixed the Docker artifacts
+  (Windows-absolute paths, missing `ROOM_ID`, baked-in stale baselines) and dropped
+  `onnxruntime` — never imported, ~200 MB. See §1a and
+  [DEPLOYMENT_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/DEPLOYMENT_GUIDE.md).
 
 - **2026-07-30 (Detection Pipeline Rewrite — Dual-Template Presence):** Replaced the
   template-match + Canny-edge-ratio + colour-diff presence gate in `main.py` with a

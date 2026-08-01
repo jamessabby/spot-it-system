@@ -53,6 +53,28 @@ Phases are sequenced by dependency, not calendar time — treat this as a checkl
   - Allow labeling boxes (e.g., `computer1`, `object1`).
 - [x] Add a "Save Config" button that sends the drawn ROI boxes back to `auth/save_rois.php`, clears the old alerts for that room, and triggers `main.py` to reload its configuration.
 
+### Phase 3.6 — Deployment readiness (added 2026-08-01, complete)
+- [x] HTTP control plane so `main.py` can run on a different machine from the web app
+      (`get_detector_config.php`, `ingest_live_frame.php`, `ingest_baseline.php`,
+      `detector_heartbeat.php`) — without this, hosting the site would have silently
+      broken the live feed and every dashboard control
+- [x] `SPOTIT_DEPLOY=local|remote` switch; `local` retained as the offline defense fallback
+- [x] `config/env.php` made credential-free and tracked; `env.local.php` for real secrets
+- [x] Security hardening for a public URL — `uploads/.htaccess` (no script execution),
+      deny-all on `config/ services/ runtime/ logs/ photos/`, HTTPS redirect enabled,
+      per-room `rois_*.json` blocked (the old rule matched only `rois.json`)
+- [x] Detector health heartbeat + online/offline badge (a crashed detector previously
+      looked identical to a quiet room)
+- [x] NSSM service scripts — auto-start at boot, restart on crash, no terminal
+- [x] Donation & retention page — closes the §3c lifecycle, purges CCTV evidence and
+      claimant selfies on disposal
+- [x] Docker artifacts fixed (relative volumes, `ROOM_ID`, no baked-in baselines);
+      `onnxruntime` dropped from requirements (never imported)
+- [x] `md_files/DEPLOYMENT_GUIDE.md` written
+- [ ] **Buy Hostinger and run the guide** — everything above is ready and waiting
+- [ ] Confirm DLSU-D's network allows the mini-PC outbound HTTPS (external dependency,
+      long lead time if it turns out to be blocked — check well before defense week)
+
 ### Phase 3.5 — Real room + item data
 - [ ] Insert real `rooms` + `registered_lab_items` records for the CEAT rooms actually being tested (see thesis Table 3.2 for list)
 - [ ] Physically deploy the prototype IP camera stream inside the laboratory test environment
