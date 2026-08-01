@@ -61,6 +61,26 @@ MATCH_SCORE_THRESHOLD = (
 SIM_PRESENT = 0.80  # >= this vs the "item here" template  -> item is still there (lowered for position tolerance)
 SIM_EMPTY = 0.55    # >= this vs the "item gone"  template  -> bare surface revealed (lowered for weak inpaints)
 FOOTPRINT_MIN_FRAC = 0.03  # item smaller than 3% of its box -> ROI drawn far too loose
+
+# ── LEFT-ITEM (unregistered) DETECTION GATES ────────────────────────────────
+# Wholly separate from the registered-ROI path above: background differencing
+# against the baseline, then an objectness gate to reject shadows. A genuinely
+# left object must clear all four of these, in order. They were previously
+# magic numbers buried in the contour loop.
+#
+# Loosened 2026-08-01. The originals (35 / 4500 / 85.0 / 0.03) were tuned on
+# bright, high-texture test objects and rejected flatter, more distant ones —
+# a closed book on a chair seat sat right on the edge of every one of them.
+# LEFT_MIN_LAPLACIAN is the gate that most often blocks such items: a matte
+# cover viewed at CCTV distance simply has little texture variance.
+LEFT_DIFF_THRESHOLD = 30      # was 35   — per-pixel delta vs baseline
+LEFT_MIN_AREA = 2500          # was 4500 — blob area in px (~50x50)
+LEFT_MIN_LAPLACIAN = 40.0     # was 85.0 — texture variance (object vs flat shadow)
+LEFT_MIN_EDGE_DENSITY = 0.02  # was 0.03 — crisp-outline requirement
+# Print why near-miss blobs were rejected, so these can be tuned from measured
+# numbers rather than by trial and error. Throttled to one report per second.
+LEFT_DEBUG_REJECTS = True
+_left_reject_log_t = 0.0
 # Confirmation is wall-clock, not frame counts: the loop outruns the RTSP frame
 # rate, so counting iterations does not measure elapsed time (see BUGS.md,
 # "Instant Stage Escalation in Loop" — same fix already applied to left items).
@@ -705,11 +725,15 @@ SANDBOX_TRACKING_MODE = (
 # ── HELPERS ───────────────────────────────────────────────────────────────
 def validate_presence_classical(crop, label="object"):
     """
-    Secondary ML / Computer Vision Gatekeeper Filter.
+    Secondary Computer Vision Gatekeeper Filter for the left-item path.
     Analyzes texture variance and edge density to reject shadows and lighting noise.
+
+    Returns (is_real_object, confidence, measurements) — the measurements dict is
+    what makes the gates tunable from data instead of guesswork when a real item
+    is being rejected.
     """
-    if crop is None or crop.shape[0] < 30 or crop.shape[1] < 30:
-        return False, 0.0
+    if crop is None or crop.shape[0] < 20 or crop.shape[1] < 20:
+        return False, 0.0, {"reason": "crop too small", "w": 0 if crop is None else crop.shape[1]}
     try:
         gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         laplacian_var = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
@@ -717,12 +741,23 @@ def validate_presence_classical(crop, label="object"):
         total_px = float(crop.shape[0] * crop.shape[1])
         edge_density = cv2.countNonZero(edges) / total_px
 
-        # Physical objects (boxes, phones, bags) have crisp edges (> 0.03) and texture variance (> 85.0)
-        is_real_object = (laplacian_var >= 85.0) and (edge_density >= 0.03)
+        # A physical object has texture variance and a crisp outline; a cast
+        # shadow is flat and soft-edged. Both gates must pass.
+        ok_lap = laplacian_var >= LEFT_MIN_LAPLACIAN
+        ok_edge = edge_density >= LEFT_MIN_EDGE_DENSITY
         confidence = min(1.0, (laplacian_var / 250.0) * (edge_density / 0.08))
-        return is_real_object, confidence
+        return (
+            ok_lap and ok_edge,
+            confidence,
+            {
+                "laplacian": laplacian_var,
+                "edge_density": edge_density,
+                "ok_lap": ok_lap,
+                "ok_edge": ok_edge,
+            },
+        )
     except Exception:
-        return True, 0.5
+        return True, 0.5, {"reason": "measurement failed"}
 
 
 prev_frame_blur = None
@@ -1753,7 +1788,9 @@ while True:
     # ── UNREGISTERED / LEFT ITEMS MODE (Foreground Contour Tracking + ML Gate) ────────
     if SANDBOX_TRACKING_MODE == "unregistered" or IS_PRODUCTION_MODE:
         diff_unreg = cv2.absdiff(ref_blur, blur)
-        _, thresh_unreg = cv2.threshold(diff_unreg, 35, 255, cv2.THRESH_BINARY)
+        _, thresh_unreg = cv2.threshold(
+            diff_unreg, LEFT_DIFF_THRESHOLD, 255, cv2.THRESH_BINARY
+        )
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
         thresh_unreg = cv2.morphologyEx(thresh_unreg, cv2.MORPH_OPEN, kernel)
         thresh_unreg = cv2.morphologyEx(thresh_unreg, cv2.MORPH_DILATE, kernel)
@@ -1769,7 +1806,17 @@ while True:
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= 4500:  # Filter out small shadow noise (~65x65 px)
+            # Report blobs that were plausibly an item but fell under the area
+            # gate — without this a too-small item is silently invisible.
+            if LEFT_DEBUG_REJECTS and (LEFT_MIN_AREA * 0.4) <= area < LEFT_MIN_AREA:
+                if now_ts - _left_reject_log_t >= 1.0:
+                    _left_reject_log_t = now_ts
+                    print(
+                        f"[SPOT-IT][LEFT][reject] blob area {int(area)}px < "
+                        f"LEFT_MIN_AREA {LEFT_MIN_AREA} — object too small or too "
+                        f"far from camera."
+                    )
+            if area >= LEFT_MIN_AREA:
                 x, y, w, h = cv2.boundingRect(cnt)
 
                 # Exclude camera edge border reflections
@@ -1792,9 +1839,35 @@ while True:
                 # — which validate_presence_classical() already answers via
                 # Laplacian variance + edge density.
                 crop = frame[y : y + h, x : x + w]
-                is_real_obj, conf = validate_presence_classical(crop, label=f"object{unreg_count + 1}")
+                is_real_obj, conf, meas = validate_presence_classical(
+                    crop, label=f"object{unreg_count + 1}"
+                )
                 if not is_real_obj:
-                    # Flat shadow / lighting noise -> REJECTED by objectness gate
+                    # Flat shadow / lighting noise -> REJECTED by objectness gate.
+                    # Say which gate failed and by how much: a real item rejected
+                    # here looks identical to nothing being there at all.
+                    if LEFT_DEBUG_REJECTS and now_ts - _left_reject_log_t >= 1.0:
+                        _left_reject_log_t = now_ts
+                        if "laplacian" in meas:
+                            failed = []
+                            if not meas["ok_lap"]:
+                                failed.append(
+                                    f"texture {meas['laplacian']:.0f} < {LEFT_MIN_LAPLACIAN:.0f}"
+                                )
+                            if not meas["ok_edge"]:
+                                failed.append(
+                                    f"edges {meas['edge_density']:.3f} < {LEFT_MIN_EDGE_DENSITY:.3f}"
+                                )
+                            print(
+                                f"[SPOT-IT][LEFT][reject] {w}x{h}px blob at ({x},{y}) "
+                                f"failed objectness: {', '.join(failed)}. If this was a "
+                                f"real item, lower the corresponding LEFT_MIN_* constant."
+                            )
+                        else:
+                            print(
+                                f"[SPOT-IT][LEFT][reject] {w}x{h}px blob at ({x},{y}): "
+                                f"{meas.get('reason', 'unknown')}"
+                            )
                     continue
 
                 unreg_count += 1
