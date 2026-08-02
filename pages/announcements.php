@@ -5,6 +5,9 @@
  * MICROSERVICES: No SQL. All data from auth/get_announcements.php via JS fetch.
  */
 require_once __DIR__ . '/../auth/service_bootstrap.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'announcements';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 $is_admin    = $user_role === 'admin';

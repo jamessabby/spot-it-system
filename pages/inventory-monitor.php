@@ -12,6 +12,9 @@
 require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../services/monitoring/db.php';
 require_once __DIR__ . '/../auth/service_bootstrap.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_admin();
+
 $active_page = 'inventory';
 $user_role   = $_SESSION['user_role'] ?? 'staff';
 $is_admin    = $user_role === 'admin';

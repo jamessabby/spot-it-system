@@ -5,6 +5,9 @@
  * MICROSERVICES: No SQL. Saves via auth/save_settings.php fetch call.
  */
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'settings';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 ?>

@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/../auth/service_bootstrap.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_admin();
+
 $active_page = 'claiming'; 
 $user_role = $_SESSION['user_role'] ?? 'staff';
 

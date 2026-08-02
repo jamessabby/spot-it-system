@@ -22,7 +22,7 @@ Nothing in this guide has been run against the live camera yet. The numbers quot
 | Removed item on wood | Bare desk scored 0.65 against a crop that was mostly desk → **stayed GREEN** | Bare desk matches the *empty* template → **turns RED** |
 | Hand on mouse | Not-the-item → **turned RED** | Matches neither template → **OCCLUDED, timers freeze** |
 | Still hand | Motion hack failed → **RED** | Doesn't depend on motion → **stays safe** |
-| Confirmation | Counted loop spins (~half were duplicate frames) | Wall-clock seconds |
+| Confirmation | Counted loop spins (~half were duplicate frames) | Wall-clock seconds |  
 | Lighting change | Could flip states | Compared in feature space; ±25% moves score <0.02 |
 
 ### The five bugs fixed

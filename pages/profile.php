@@ -5,6 +5,9 @@
  * MICROSERVICES: No SQL. Data fetched from auth/get_profile.php via JS.
  */
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'profile';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 $uname       = $_SESSION['user_name']  ?? 'User';

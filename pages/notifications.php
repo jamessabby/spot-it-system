@@ -8,6 +8,9 @@
  * MICROSERVICES: No SQL. All data from auth/get_notifications.php via JS.
  */
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'notifications';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 $user_name   = $_SESSION['user_name'] ?? 'User';

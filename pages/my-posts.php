@@ -6,6 +6,9 @@
  * MICROSERVICES: No SQL. Data from auth/get_posts.php via JS.
  */
 require_once __DIR__ . '/../auth/service_bootstrap.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'posts';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 $uname       = $_SESSION['user_name'] ?? 'User';

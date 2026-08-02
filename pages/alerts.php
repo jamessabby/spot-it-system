@@ -16,6 +16,9 @@
  * auth/ handlers — this page never writes directly.
  */
 require_once __DIR__ . '/../auth/service_bootstrap.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_admin();
+
 $active_page = 'alerts';
 $user_role   = $_SESSION['user_role'] ?? 'staff';
 $uname       = $_SESSION['user_name'] ?? 'User';

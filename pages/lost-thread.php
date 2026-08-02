@@ -1,6 +1,9 @@
 <?php
 require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../services/lostfound/db.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_login();
+
 $active_page = 'thread';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 

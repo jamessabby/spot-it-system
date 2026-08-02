@@ -135,7 +135,6 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
   </div>
 </div>
 
-<script src="../assets/js/theme.js"></script>
 <script src="../assets/js/spotit.js"></script>
 <script>
 let allItems = [];

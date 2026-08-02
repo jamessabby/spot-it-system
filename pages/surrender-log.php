@@ -5,6 +5,9 @@
  * MICROSERVICES: No SQL. All data from auth/ handlers via JS.
  */
 require_once __DIR__ . '/../config/env.php';
+require_once __DIR__ . '/_guard.php';
+spotit_require_admin();
+
 $active_page = 'surrender_log';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 ?>
