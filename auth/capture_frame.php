@@ -76,7 +76,7 @@ if (IS_REMOTE_DEPLOY) {
 // ── Local deployment: capture here ────────────────────────────────────────────
 
 // Fetch room camera credentials from spotit_monitor_db
-$rtsp = 'rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1';
+$rtsp = DESK_CAMERA_RTSP;
 try {
     $camStmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass FROM rooms WHERE room_id = ?");
     $camStmt->execute([$roomId]);
@@ -84,7 +84,7 @@ try {
     if ($camDb && !empty($camDb['camera_ip'])) {
         $camIp   = $camDb['camera_ip'];
         $camUser = $camDb['camera_user'] ?: 'SpotItCamera';
-        $camPass = $camDb['camera_pass'] ?: 'spotittapo232';
+        $camPass = $camDb['camera_pass'] ?: DESK_CAMERA_PASS;
         $rtsp    = "rtsp://{$camUser}:{$camPass}@{$camIp}:554/stream1";
     }
 } catch (Exception $e) {

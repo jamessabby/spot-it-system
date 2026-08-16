@@ -1,9 +1,10 @@
 {
-    "mode": "testing",
-    "tracking_mode": "registered",
-    "reset_paused": true,
-    "reset_rois": true,
-    "reset_timestamp": 1785662513,
-    "updated_at": "2026-08-02 17:21:53",
-    "room_id": "ROOM_1"
+  "mode": "testing",
+  "tracking_mode": "registered",
+  "reset_paused": false,
+  "reset_rois": false,
+  "reset_timestamp": 1786881936,
+  "updated_at": "2026-08-16 20:05:36",
+  "room_id": "DESK",
+  "pipeline": "gatekeeper"
 }

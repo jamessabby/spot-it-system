@@ -80,6 +80,7 @@ echo json_encode([
     'mode'             => $mode['mode'] ?? 'testing',
     'tracking_mode'    => $mode['tracking_mode'] ?? 'registered',
     'timer_mode'       => $mode['timer_mode'] ?? 'testing_speed',
+    'pipeline'         => $mode['pipeline'] ?? 'gatekeeper',
     'rois'             => $rois,
     'roi_count'        => count($rois),
     'config_version'   => detector_config_version($roomId),

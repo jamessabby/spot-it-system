@@ -59,7 +59,7 @@ cd C:\xampp\htdocs\spotit
    <http://localhost/spotit/> and confirm it loads.
 2. **Camera reachable** — this must succeed before anything else:
    ```powershell
-   ping 192.168.18.11
+   ping 192.168.18.14
    ```
    If it fails, the camera is off or on a different network. `main.py` will exit with
    `[ERROR] Cannot open RTSP stream`.
@@ -144,7 +144,7 @@ WHERE room_id = 'ROOM_1' ORDER BY detected_at DESC LIMIT 5;
 ```
 One new row, `status = 'pending'`. And on disk: `uploads\snapshots\mouse_registered_1.jpg`.
 
-**Proves:** the wood-grain false-negative from `unfixable_limitations.md` §1 is fixed.
+**Proves:** the wood-grain false-negative from `BUGS.md` §3.1 is fixed.
 **Repeat 3×** — one success could be luck.
 
 ### Test 2.2 — Put it back
@@ -179,7 +179,7 @@ vs `≈0.48` removed).
 
 ### Test 3.1 — Rest your hand on the mouse and hold still ⭐
 
-This is the case `unfixable_limitations.md` §3 called unfixable. Hold **completely still** for
+This is the case `BUGS.md` §3.3 called unfixable. Hold **completely still** for
 15 seconds — no typing, no twitching. The old motion hack only worked while you were moving.
 
 **Expect:** box turns 🔵 `OCCLUDED: mouse` and **stays there**. Never yellow, never red. Both
@@ -378,7 +378,7 @@ crossover is the moment of removal. That chart is directly usable as a Chapter 4
 | Item flickers red while present | `sim_present` dipping below 0.85 | Check CSV; lower `SIM_PRESENT` to 0.80 |
 | Everything blue/OCCLUDED | Both scores low — camera moved since baseline | Re-capture the baseline |
 | Nothing ever turns yellow | Classical gate not firing | `change_pct` in CSV should exceed 0.08 on removal; if not, lower `MIN_CHANGE_PERCENT` |
-| `Cannot open RTSP stream` | Camera off / different network | `ping 192.168.18.11` |
+| `Cannot open RTSP stream` | Camera off / different network | `ping 192.168.18.14` |
 | All items red at once | Auto-flood gate | Expected if the desk was rearranged — recalibrate |
 
 **Tune from the CSV, not by guessing.** Both thresholds currently sit in the middle of a wide

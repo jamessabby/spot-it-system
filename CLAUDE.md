@@ -56,21 +56,33 @@ and the panel defense" before "is this the most elegant design."
 ```
 spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
 ├── main.py                    ← Python/OpenCV detection loop (runs OUTSIDE htdocs on the laptop)
+├── main_classical_only.py     ← archival pre-ML baseline, standalone; A/B arm for Chapter 4
 ├── capture_ref.py             ← one-off: captures/saves photos/ref_image.jpg from RTSP stream
 ├── register_roi.py            ← interactive tool: draw ROI boxes, saves rois.json
-├── rois.json                  ← registered ROI list (label, x, y, w, h) — currently desk-test items
+├── rois.json                  ← registered ROI list (label, x, y, w, h) — DESK sandbox items
+├── rois_<ROOM>.json           ← per-room ROI lists for production rooms
+├── detection_mode.json        ← runtime control file main.py mtime-polls: room_id, mode,
+│                                tracking_mode, timer_mode, pipeline, reset flags
 ├── photos/
-│   ├── ref_image.jpg          ← baseline reference frame
+│   ├── ref_image.jpg          ← baseline reference frame (ref_image_<ROOM>.jpg per room)
+│   ├── detection_metrics.csv  ← per-decision instrumentation (Chapter 4 raw material)
+│   ├── ab_events_*.csv        ← A/B harness event logs, one per arm
 │   └── snapshots/
 ├── config/
-│   └── env.php                ← site config, OAuth stubs, DB host/creds, SNAPSHOT_PATH, timer thresholds
+│   ├── env.php                ← tracked, credential-free: site config, DESK camera, timers
+│   └── env.local.php          ← real secrets, gitignored
 ├── services/                  ← ONE folder per microservice, ONE database each — DO NOT MIX
-│   ├── auth/       db.php, schema.sql   → spotit_auth_db   (users, sessions, login_attempts)
-│   ├── monitoring/ db.php, schema.sql   → spotit_monitor_db (rooms, registered_lab_items, detections, monitoring_logs)
+│   ├── auth/       db.php, schema.sql   → spotit_auth_db   (users, sessions, login_attempts,
+│   │                                       microsoft_tokens, tour_status, notifications, user_activity)
+│   ├── monitoring/ db.php, schema.sql   → spotit_monitor_db (rooms, registered_lab_items, detections,
+│   │                                       monitoring_logs, + accuracy_trials — see §7a, no migration yet)
 │   ├── lostfound/  db.php, schema.sql   → spotit_lf_db     (recovered_items, surrender_logs, claims)
-│   └── user/       db.php, schema.sql   → spotit_user_db   (user_profiles, user_settings)
+│   ├── user/       db.php, schema.sql   → spotit_user_db   (user_profiles, user_settings)
+│   ├── community/  schema.sql           → spotit_community_db (announcements, forum_posts,
+│   │                                       forum_comments, forum_votes, announcement_views)
+│   └── migration_*.sql        ← four migrations, run in the §7a order
 ├── auth/                      ← backend POST/GET handlers (the ONLY place SQL should be written)
-│   ├── service_bootstrap.php  ← loads all 4 service DBs + shared helpers (e.g. ms_detection_stage())
+│   ├── service_bootstrap.php  ← loads the service DBs + shared helpers (e.g. ms_detection_stage())
 │   ├── ingest_detection.php   ← POST target for main.py — writes to spotit_monitor_db.detections
 │   ├── get_detections.php     ← GET, used by dashboards to poll live events
 │   ├── update_event_status.php← staff verify/dismiss/resolve actions
@@ -168,7 +180,7 @@ Full runbook: [DEPLOYMENT_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/DEPL
 
 **Rewritten 2026-07-30.** Template matching was removed from the registered-ROI path; it
 survives unmodified in `main_classical_only.py` as the A/B baseline. Rationale and measured
-results in [unfixable_limitations.md](file:///c:/xampp/htdocs/spotit/md_files/unfixable_limitations.md).
+results in [BUGS.md §3](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md).
 
 Pipeline per frame, per registered ROI:
 
@@ -192,25 +204,54 @@ Pipeline per frame, per registered ROI:
 item?"* — so bare desk scored ~0.65 against a crop that was itself mostly desk and won by
 default. Giving the removal its own hypothesis to match resolves this without threshold games.
 
-**Current tuning values** (verified against the code, 2026-07-30):
+5. **Stuck-occlusion escape** — an ROI that stays `OCCLUDED` **and motionless** for
+   `OCCLUDED_MAX_SEC` resolves to `ABSENT`. Added 2026-08-16 because the "item gone" template
+   is uninformative for large items (measured `sim_empty` 0.39 present vs 0.41 removed), which
+   parked genuine removals in OCCLUDED forever. The motionless condition is load-bearing —
+   without it this degenerates into a plain timeout that eventually alarms on a resting hand.
+
+**Current tuning values** (re-verified against `main.py`, 2026-08-16):
 ```
 THRESHOLD = 25              # pixel delta counted as "changed"
 MIN_CHANGE_PERCENT = 0.08   # ROI change fraction that triggers the presence test
 SCENE_MOTION_LIMIT = 0.20   # frame-to-frame motion above which we hold
-SIM_PRESENT = 0.85          # >= this vs "item here" template  -> PRESENT
-SIM_EMPTY = 0.65            # >= this vs "item gone" template  -> ABSENT
+SIM_PRESENT = 0.80          # >= this vs "item here" template  -> PRESENT   (was 0.85)
+SIM_EMPTY = 0.55            # >= this vs "item gone" template  -> ABSENT    (was 0.65)
 MISSING_CONFIRM_SEC = 1.0   # continuous ABSENT time before RED
 RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before auto-resolve
 FOOTPRINT_MIN_FRAC = 0.03   # item smaller than this fraction of its box -> warn
+OCCLUDED_MAX_SEC = 5.0      # continuous STILL occlusion before it counts as absence
+OCCLUDED_STILL_MOTION = 0.02  # ROI motion below which it counts as "not moving"
+CLASSICAL_MATCH_THRESHOLD = 0.55  # used only when pipeline == "classical"
 ```
-`CONSISTENCY_FRAMES` still exists but is now **derived** from the wall-clock timers purely to
-keep the `live_roi_state.json` contract stable for the PHP dashboard — it no longer drives any
-decision. `MATCH_SCORE_THRESHOLD` is retained only for `main_classical_only.py`.
-`TOLERANCE_MARGIN` never existed in the code despite earlier versions of this document.
+**Both similarity thresholds were lowered from the 2026-07-30 calibration figures** —
+`SIM_PRESENT` for position tolerance (items nudged inside their ROI scored just under 0.85),
+`SIM_EMPTY` because weak inpaints on large items never reached 0.65. The measured tables in
+BUGS.md §3.1 still record the original calibration and remain the evidence for *why* the
+dual-template method works; they are not the shipped numbers. **`main.py` is the source of
+truth — re-read it before quoting any threshold in the manuscript.**
 
-Tuned for the Tapo TC65. Both similarity thresholds sit mid-gap rather than on an edge, so
-they should tolerate camera or lighting changes; `photos/detection_metrics.csv` records the
-inputs to every decision if re-tuning is needed.
+`CONSISTENCY_FRAMES` (25) still exists but is **derived** from the wall-clock timers purely to
+keep the `live_roi_state.json` contract stable for the PHP dashboard — it no longer drives any
+decision. `MATCH_SCORE_THRESHOLD` (0.48 in `main.py`) is dead there and retained only as a
+historical marker; the live classical arm uses `CLASSICAL_MATCH_THRESHOLD = 0.55`, which is
+`main_classical_only.py`'s own value, so the in-process A/B arm behaves exactly like the
+archival baseline. `TOLERANCE_MARGIN` never existed in the code despite earlier versions of
+this document.
+
+Tuned for the Tapo TC65. `photos/detection_metrics.csv` records the inputs to every decision
+if re-tuning is needed.
+
+**Runtime pipeline switch (2026-08-16).** `detection_mode.json` carries a `pipeline` field
+(`gatekeeper` | `classical`) that `main.py` picks up on its existing mtime poll — no restart.
+`gatekeeper` is the dual-template + MobileNetV2 path above; `classical` runs
+`evaluate_roi_presence_classical()`, the pre-ML template-match baseline, in the same process.
+Exposed **only** on `pages/desk-sandbox.php` — classical-only is a demonstration baseline, never
+a production option. Switching resets the confirmation timers so a verdict from one pipeline can
+never confirm an event under the other, and the active pipeline is burned into the video frame
+so screenshots are self-evidencing. Run the two arms **one at a time**: the Tapo allows only a
+couple of concurrent RTSP clients, and a refused second client silently drops to `/stream2` at
+640×360, which would compare the pipelines at different resolutions without saying so.
 
 ### 3a. Open design decision — DO NOT re-litigate from scratch, just implement
 
@@ -434,7 +475,7 @@ snapshot files on disk.
 
 ### 3b. Bug Diagnosis & Resolution History
 
-The detailed history of past resolved bugs (RTSP orientation issues, constant-red triggers, compression noise, etc.) and their diagnostic root causes has been moved to [BUGS.md](file:///c:/xampp/htdocs/spotit/BUGS.md) to keep this rulebook clean. Refer to that file before debugging repeated issues.
+The detailed history of past resolved bugs (RTSP orientation issues, constant-red triggers, compression noise, etc.) and their diagnostic root causes has been moved to [BUGS.md](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md) to keep this rulebook clean. Refer to that file before debugging repeated issues.
 
 
 ---
@@ -442,12 +483,12 @@ The detailed history of past resolved bugs (RTSP orientation issues, constant-re
 
 ## 4. Active / Immediate Fix Targets
 
-The list of active bugs and immediate development fix targets (like setting up real test rooms and the first admin account) is tracked in [BUGS.md](file:///c:/xampp/htdocs/spotit/BUGS.md). Refer to that file to see outstanding bug tasks.
+The list of active bugs and immediate development fix targets (like setting up real test rooms and the first admin account) is tracked in [BUGS.md](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md). Refer to that file to see outstanding bug tasks.
 
 
 ## 5. Active Roadmap & Progress Checklists
 
-The project roadmap, phase-by-phase implementation checklists, and current task progress have been moved to [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook lightweight. Refer to that file to check off completed items and see what to work on next.
+The project roadmap, phase-by-phase implementation checklists, and current task progress have been moved to [updates.md](file:///c:/xampp/htdocs/spotit/md_files/updates.md) to keep this rulebook lightweight. Refer to that file to check off completed items and see what to work on next.
 
 
 ---
@@ -521,12 +562,17 @@ Run these after any change, in this order, before considering a fix done:
    php -l pages/<file>.php
    ```
 2. **DB migrations**, if schema changed, run in this exact order (never skip
-   or reorder):
+   or reorder) — all four live in `services/`:
    ```
    migration_workflow_audit.sql → migration_confidence.sql →
-   migration_notifications.sql → migration_snapshot_b.sql →
-   services/migration_accuracy_trials.sql
+   migration_notifications.sql → migration_snapshot_b.sql
    ```
+   **`migration_accuracy_trials.sql` was listed here but has never existed.** The
+   `accuracy_trials` table is read/written by four call sites yet has no `CREATE TABLE`
+   anywhere in the repo — it works locally only because it was made by hand in phpMyAdmin.
+   A fresh deploy will fatal on the sandbox metrics panel and both room-status endpoints.
+   Tracked in BUGS.md §1; write the migration before deploying or submitting the §3.6.8
+   database-design text, which now names this table.
 3. **Manual browser pass** against the live XAMPP instance
    (`http://localhost/spotit/`) — exact page(s) and click path to hit, plus
    the expected resulting DB row/state, should be spelled out per-fix (see
@@ -557,7 +603,7 @@ Run these after any change, in this order, before considering a fix done:
 - Do not swap the DB/backend stack (currently PHP/MySQL/XAMPP) — this has
   already changed once (Node.js → PHP) and thesis documentation, diagrams, and
   defense materials are now written around PHP/XAMPP.
-- Do not merge the 4 microservice databases into one, even if it seems simpler
+- Do not merge the 5 microservice databases into one, even if it seems simpler
   — it's an explicit thesis design requirement (Fig. 3.10 database design) and
   part of Objective 3.
 - **These guardrails exist to protect thesis defensibility, not because the
@@ -570,6 +616,72 @@ Run these after any change, in this order, before considering a fix done:
 
 
 ## 9. Change Log & Project History
+
+- **2026-08-16 (Sandbox camera address centralised):** The DESK camera moved
+  `192.168.18.11 → .14` after a factory reset, and the address turned out to be pasted into
+  **8 places** (3 in `main.py`, 1 in `main_classical_only.py`, `capture_frame.php`,
+  `tapo_stream.php`, `save_rois.php`, `desk-sandbox.php`) — so one DHCP change broke the system
+  in several places at once, each with a different symptom. Now defined once: `DESK_CAMERA_IP` /
+  `_USER` / `_PASS` / `_RTSP` in `config/env.php` for PHP, and `SPOTIT_CAMERA_IP` / `_USER` /
+  `_PASS` env vars (same defaults) in both Python scripts. Production rooms are unaffected —
+  they still read `camera_ip` from `spotit_monitor_db.rooms`. **Note:** existing `rooms` rows
+  keep whatever IP they were seeded with; update ROOM_1's `camera_ip` in the DB separately.
+
+- **2026-08-16 (Live Pipeline Switch — A/B in the sandbox):** Added a `pipeline` field to
+  `detection_mode.json` (`gatekeeper` | `classical`) and a segmented toggle on
+  **`pages/desk-sandbox.php` only**, so the live feed can be flipped between the MobileNetV2 gatekeeper
+  and the pre-ML classical baseline **without restarting anything** — it rides the existing
+  mtime-poll path alongside `mode` / `tracking_mode` / `timer_mode`. Implemented as a branch
+  *inside* `main.py` (`evaluate_roi_presence_classical()`, ported verbatim from
+  `main_classical_only.py` and reusing the already-present but previously unused
+  `find_item_template_match()`), **not** by running the second script alongside: the Tapo
+  allows only a couple of concurrent RTSP clients, and when the second is refused `main.py`
+  silently falls back to `/stream2` at 640×360 — a side-by-side demo would have compared
+  pipelines at different resolutions without ever saying so. One process, one stream, one set
+  of ROIs; switching resets the confirmation timers so a verdict from one pipeline can never
+  confirm an event under the other. The active pipeline is burned into the video frame so
+  screenshots are self-evidencing. `main_classical_only.py` remains the standalone archival
+  baseline for offline clip scoring. Verified on a replayed clip: classical → `ABSENT` with 0
+  forward passes, gatekeeper → 150 forward passes, same frames, same process.
+  **Deliberately not exposed on `room-monitor.php`:** classical-only is a demonstration
+  baseline, never a production option — production always runs the gatekeeper. Run the two
+  arms **one at a time**, not concurrently (RTSP client limit, see above).
+  **Fidelity of the in-process classical arm (verified, not asserted):** `check_roi()` and
+  `find_item_template_match()` are byte-identical between `main.py` and
+  `main_classical_only.py`; the decision rule, the 0.55 match threshold and the fixed-asset
+  keyword shortcut match. One divergence was found and fixed — `is_scene_stable()` in
+  `main.py` measures motion frame-to-frame, the old system measured it against the baseline
+  photo, so classical mode now uses the vs-baseline gate. Proven by replaying one clip
+  through both and diffing the event logs: **identical, event for event, to the 0.01 s**.
+  The A/B event CSV's `arm` column now records the pipeline that actually produced the row.
+
+- **2026-08-16 (Stuck-occlusion escape):** The dual-template test could only reach ABSENT when
+  the inpainted "item gone" template won, and inpainting is unreliable for large items — over
+  a big mask `cv2.inpaint` returns a diffused smear. Measured on the sandbox laptop,
+  `sim_empty` read 0.39 with the item present and 0.41 with it removed (no information), so
+  removals parked in OCCLUDED indefinitely while `sim_present` correctly collapsed 0.86 → 0.46.
+  Added `OCCLUDED_MAX_SEC = 5.0` / `OCCLUDED_STILL_MOTION = 0.02`: an ROI that stays OCCLUDED
+  **and motionless** for 5 s resolves to ABSENT. The motion condition is load-bearing — a plain
+  timeout would eventually alarm on a motionless hand, the exact false positive
+  BUGS.md §3.3 exists to prevent. No detection threshold was changed.
+
+- **2026-08-16 (A/B Accuracy Harness — Chapter 4 evidence):** Made the MobileNetV2-vs-classical
+  comparison actually runnable and fair. `SPOTIT_SOURCE=<clip.mp4>` now replays a recorded file
+  through either script instead of the camera, so both arms score **byte-identical frames** —
+  this also dodges the Tapo's concurrent-RTSP-client limit, which silently drops one arm to
+  `/stream2` at 640×360 when both run live. Replay advances the wall-clock timers by the clip's
+  frame interval, so `MISSING_CONFIRM_SEC` means the same thing in replay as live, and it
+  auto-disables all API posting so a scoring run cannot pollute `detections`. Both scripts now
+  print an **ML duty cycle** summary on exit (ROI-frames vs forward passes vs mean latency) —
+  this is the number that answers "isn't this just an AI system?" with a measurement.
+  `main_classical_only.py` was aligned to `main.py` on the four things that were confounding the
+  comparison (room-scoped ROI/reference files, `SCENE_MOTION_LIMIT` 0.40→0.20, frame-count→
+  wall-clock confirmation, hold-instead-of-reset on unstable frames) while its **presence logic
+  — `find_item_template_match`, `MATCH_SCORE_THRESHOLD`, the fixed-asset shortcut — was left
+  untouched**; §9's "deliberately unchanged" note means don't improve the baseline's detection,
+  not don't align its inputs. Also fixed a `UnicodeEncodeError` that killed either script the
+  first time it printed a `→` on a cp1252 Windows console. Protocol, scoring method, and the
+  "why not YOLOv8" argument: [AB_ACCURACY_PROTOCOL.md](file:///c:/xampp/htdocs/spotit/md_files/AB_ACCURACY_PROTOCOL.md).
 
 - **2026-08-01 (Deployment Readiness — Two-Machine Architecture):** Made everything except
   detection deployable. Added an HTTP control plane (`auth/get_detector_config.php`,
@@ -599,9 +711,9 @@ Run these after any change, in this order, before considering a fix done:
   the process whenever a left item appeared, and a variable clobber that meant Snapshot B had
   never once fired for registered ROIs. Full detail in
   [BUGS.md](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md) and
-  [unfixable_limitations.md](file:///c:/xampp/htdocs/spotit/md_files/unfixable_limitations.md).
+  [BUGS.md §3](file:///c:/xampp/htdocs/spotit/md_files/BUGS.md).
   `main_classical_only.py` deliberately left unchanged as the A/B baseline.
 
 - **2026-07-26 (Dynamic Room & Camera DB Integration + Crash-Proof Threading):** Added DB-driven camera credentials (`camera_ip`, `camera_user`, `camera_pass`) in `spotit_monitor_db.rooms`, created [`auth/get_room_camera.php`](file:///c:/xampp/htdocs/spotit/auth/get_room_camera.php), dynamic auto-switching RTSP reader in `main.py` (zero terminal restarts), thread-safe `VideoStream` locking to prevent C++ FFmpeg crashes, auto-heal logic in `save_rois.php` for `DESK` system room (prevents FK 1452), auto-sync of `detection_mode.json` on room navigation, and Docker deployment artifacts (`Dockerfile`, `docker-compose.yml`, `requirements.txt`, `FUTURE_SCALING_GUIDE.md`).
 
-The historical change log documenting past development sessions and pivots has been moved to the end of [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) to keep this rulebook focused. Refer to that file to trace past modifications.
+The historical change log documenting past development sessions and pivots has been moved to the end of [updates.md](file:///c:/xampp/htdocs/spotit/md_files/updates.md) to keep this rulebook focused. Refer to that file to trace past modifications.

@@ -34,6 +34,25 @@ Phases are sequenced by dependency, not calendar time — treat this as a checkl
 - [x] Create `main_classical_only.py` by duplicating `main.py` and stripping out the MobileNetV2 presence validation blocks.
 - [x] Verify both scripts read successfully from the same `rois.json` and local camera RTSP feed.
 - [x] Setup a testing spreadsheet (or SQL table) to log accuracy differences (TP, FP, FN, TN) between both scripts under various test conditions (lighting shift, slight nudge, actual theft).
+- [x] **Replay harness (2026-08-16)** — `SPOTIT_SOURCE=<clip.mp4>` feeds a recorded file
+      through either script so both arms score byte-identical frames. This exists because the
+      Tapo allows only ~2 concurrent RTSP clients: running both arms live silently drops one to
+      `/stream2` at 640×360, comparing the pipelines at different resolutions without saying so.
+      Replay advances the wall-clock timers by the clip's frame interval (so `MISSING_CONFIRM_SEC`
+      means the same thing in replay as live) and auto-disables API posting so a scoring run
+      cannot pollute `detections`.
+- [x] **In-process live switch (2026-08-16)** — `detection_mode.json.pipeline`
+      (`gatekeeper` | `classical`) flips the presence test with no restart, via a segmented
+      toggle on `desk-sandbox.php` only. Fidelity verified rather than assumed: replaying one
+      clip through `main.py --pipeline=classical` and `main_classical_only.py` produced
+      **identical event logs to the 0.01 s**.
+- [x] **ML duty cycle instrumentation (2026-08-16)** — both scripts print ROI-frames vs forward
+      passes vs mean latency on exit. This is the measured answer to "isn't this just an AI
+      system?" — classical reached `ABSENT` with 0 forward passes where the gatekeeper used 150.
+- [ ] **Write `services/migration_accuracy_trials.sql`** — the `accuracy_trials` table that
+      holds the TP/FP/FN/TN trials has no schema file and exists only as a hand-made local
+      table. Blocks a clean deploy and is now named in the thesis §3.6.8 text. See BUGS.md §1.
+- [ ] Record the actual A/B runs and populate the Chapter 4 accuracy table (this is Phase 4 S8)
 
 #### Step 2.3: Ingestion & Backend Updates
 - [x] Update `auth/ingest_detection.php` to accept and process the two separate snapshots (Snapshot A: Empty frame, Snapshot B: Retaking frame).
@@ -109,6 +128,11 @@ Run each scenario ≥5 trials per the methodology, recording results as you go:
 
 Keep this short — one line per meaningful change to project direction, newest first.
 
+- **2026-08-16** — Documentation reconciliation ahead of commit: merged `unfixable_limitations.md` into `BUGS.md` as §3 and deleted it (citations `unfixable_limitations.md §N` → `BUGS.md §3.N`, updated across `CLAUDE.md`, `main.py` comments and `TESTING_GUIDE.md`); corrected CLAUDE.md §3's tuning table, which had drifted from the code (`SIM_PRESENT` 0.85→0.80, `SIM_EMPTY` 0.65→0.55, plus the new occlusion-escape and pipeline constants); fixed `BUGS.md`/`updates.md` link paths that pointed at the repo root instead of `md_files/`; corrected the §1 repo layout, which omitted the entire `services/community/` database, `main_classical_only.py`, `detection_mode.json` and the per-room ROI/reference files. Logged two real defects found while rebuilding the Fig. 3.10 ERD: **`accuracy_trials` has no migration** (four call sites, no `CREATE TABLE` — a fresh deploy fatals) and **`recalibrations` is deleted but never created** (dead code in both reset handlers, silenced by `try/catch`).
+- **2026-08-16** — A/B accuracy harness made runnable and fair: `SPOTIT_SOURCE` clip replay so both arms score identical frames, ML duty-cycle reporting on exit, `main_classical_only.py` aligned to `main.py` on inputs only (room-scoped files, `SCENE_MOTION_LIMIT` 0.40→0.20, wall-clock confirmation, hold-not-reset) with its presence logic deliberately untouched. Protocol in `AB_ACCURACY_PROTOCOL.md`. Fixed a `UnicodeEncodeError` that killed either script on its first `→` on a cp1252 Windows console.
+- **2026-08-16** — Live pipeline switch (`gatekeeper` | `classical`) added to `detection_mode.json` and the sandbox page, implemented as a branch inside `main.py` rather than a second process (the Tapo's RTSP client limit would have silently compared the arms at different resolutions). Deliberately not exposed on `room-monitor.php` — production always runs the gatekeeper.
+- **2026-08-16** — Stuck-occlusion escape (`OCCLUDED_MAX_SEC = 5.0`, `OCCLUDED_STILL_MOTION = 0.02`): removals of large items were parking in OCCLUDED forever because inpainting produces an uninformative "item gone" template at that scale (`sim_empty` 0.39 present vs 0.41 removed). The motionless condition is what keeps a resting hand safe.
+- **2026-08-16** — DESK sandbox camera address centralised to `config/env.php` + `SPOTIT_CAMERA_*` env vars after a factory reset moved the IP and broke the system in 8 places at once. Production rooms unaffected (they read `camera_ip` from the `rooms` table) — but ROOM_1's DB row still needs its IP updated.
 - **2026-07-25** — Refactored asset tracking presence verification: replaced fragile exact-position/DNN validation with an adaptive shift-tolerant template search window (±30px, `threshold=0.60`) to handle physical alignment drifts. Added a **Transient Motion Guard** to ignore changes >65% (person-sized occlusion) and prevent false-positives. Tuned OK recovery hysteresis count from 8 to 3 consecutive frames (~0.3s) for near-instant green status updates when items are returned. Resolved `NameError` crash due to missing `MATCH_SCORE_THRESHOLD` and `FileNotFoundError` during sequential snapshot uploads.
 - **2026-07-24** — Aligned landing page (`pages/index.php`) with the official DLSU-D University Portal design (`sms.dlsud.edu.ph`), featuring a dark emerald header (`#0b4e28`), crisp light background (`#f7faf7`), and an interactive WebGL 3D Tapo TC65 camera with soft radial drop shadow contrast. Renamed "Desk Sandbox Test" to "Live Sandbox Test" across `pages/_sidebar.php` and `pages/desk-sandbox.php`. Fixed SQL column mismatch (`floor` vs `floor_level`) in `pages/room-monitor.php` and `auth/get_room_status.php`. Implemented system reset standby artwork (`assets/img/standby_placeholder.svg`), purged live frame cache on reset in `auth/reset_system_state.php`, and added `reset_paused` flag check in `main.py` to prevent live stream overwrites until re-calibrated. Created `testing_guide.md`.
 - **2026-07-23** — Transitioned S.P.O.T.-IT to Production Level Multi-Room Camera Monitoring. Added Speed Mode Toggle (**Testing Speed 3s/6s** vs **Production Speed 30m/1hr**) on `pages/room-monitor.php`. Enabled dual simultaneous tracking (Registered assets + Unregistered left items) in `main.py` when Production Mode is active. Created `auth/get_room_status.php` API endpoint for multi-room polling, updated `pages/alerts.php` to display alerts across all active user-created rooms, and aggregated `pages/dashboard-admin.php` stats across all monitored rooms.

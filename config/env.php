@@ -84,6 +84,23 @@ define('COOLDOWN_LONG',     300);   // seconds (5 minutes)
 define('TIMER_POTENTIAL_MIN',  30);  // minutes → "Potentially Lost"
 define('TIMER_CONFIRMED_MIN',  60);  // minutes → "Confirmed Missing"
 
+// ── Sandbox / DESK camera ─────────────────────────────────────────────────────
+// The DESK sandbox camera has no row in spotit_monitor_db.rooms to read from, so
+// its address used to be hardcoded in four separate PHP files and three Python
+// spots. A DHCP lease change (or a factory reset) then broke the system in
+// several places at once, each with a different symptom. Defined once here.
+//
+// Production rooms do NOT use these — they read camera_ip / camera_user /
+// camera_pass from the rooms table via auth/get_room_camera.php.
+//
+// If the address keeps moving, give the camera a DHCP reservation on the router
+// (or a static IP in the Tapo app) instead of chasing it here.
+define('DESK_CAMERA_IP',   spotit_env('DESK_CAMERA_IP',   '192.168.18.14'));
+define('DESK_CAMERA_USER', spotit_env('DESK_CAMERA_USER', 'SpotItCamera'));
+define('DESK_CAMERA_PASS', spotit_env('DESK_CAMERA_PASS', 'spotitcamera232'));
+define('DESK_CAMERA_RTSP', 'rtsp://' . DESK_CAMERA_USER . ':' . DESK_CAMERA_PASS
+                          . '@' . DESK_CAMERA_IP . ':554/stream1');
+
 // ── DB Host ───────────────────────────────────────────────────────────────────
 define('DB_HOST', spotit_env('DB_HOST', 'localhost'));
 

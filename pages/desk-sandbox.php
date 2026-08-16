@@ -100,10 +100,16 @@ try {
 
 // 3. Read current tracking mode from detection_mode.json
 $tracking_mode = 'registered';
+$pipeline      = 'gatekeeper';
 $mode_file_path = __DIR__ . '/../detection_mode.json';
 if (file_exists($mode_file_path)) {
     $mdata = json_decode(file_get_contents($mode_file_path), true) ?: [];
     $tracking_mode = $mdata['tracking_mode'] ?? 'registered';
+    // Active detection pipeline. Sandbox-only: 'classical' is the pre-ML A/B
+    // baseline used to demonstrate why the MobileNetV2 gate is needed. It is
+    // deliberately NOT exposed on room-monitor.php — production always runs the
+    // gatekeeper (CLAUDE.md §3a, md_files/AB_ACCURACY_PROTOCOL.md).
+    $pipeline = ($mdata['pipeline'] ?? 'gatekeeper') === 'classical' ? 'classical' : 'gatekeeper';
     if (($mdata['room_id'] ?? '') !== 'DESK') {
         $mdata['room_id'] = 'DESK';
         $mdata['reset_paused'] = true;
@@ -426,6 +432,29 @@ if (file_exists($mode_file_path)) {
                     <i class="fa-solid fa-person-walking-luggage"></i> Left Items
                   </button>
                 </div>
+
+                <!-- Detection Pipeline Toggle (A/B evidence for Chapter 4) —
+                     same camera, same ROIs, same absdiff gate and confirmation
+                     timers; the ONLY thing that changes is the presence test.
+                     Run one at a time: the Tapo allows only a couple of
+                     concurrent RTSP clients. -->
+                <div id="pipelineToggle" style="display:flex; gap:4px; background:var(--bg-base); border:1px solid var(--border); border-radius:8px; padding:3px;"
+                     title="Switch the live detector between the MobileNetV2 gatekeeper and the pre-ML classical baseline. Sandbox only — production always runs the gatekeeper.">
+                  <button id="btnPipeGatekeeper"
+                    onclick="switchPipeline('gatekeeper')"
+                    style="font-size:.7rem; padding:4px 12px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $pipeline === 'gatekeeper' ? 'var(--green-main)' : 'transparent' ?>;
+                           color:<?= $pipeline === 'gatekeeper' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
+                    <i class="fa-solid fa-microchip"></i> MobileNetV2
+                  </button>
+                  <button id="btnPipeClassical"
+                    onclick="switchPipeline('classical')"
+                    style="font-size:.7rem; padding:4px 12px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $pipeline === 'classical' ? 'var(--warn)' : 'transparent' ?>;
+                           color:<?= $pipeline === 'classical' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
+                    <i class="fa-solid fa-diagram-project"></i> Classical Only
+                  </button>
+                </div>
                 <!-- Dismiss Recalibration Alert Button -->
                 <button class="btn btn-sm" id="btnDismissAlert" onclick="dismissRecalibrationAlert('DESK')" style="font-size:.7rem; padding:4px 10px; border-radius:6px; background:var(--alert-bg); border:1px solid rgba(220,53,69,0.3); color:var(--alert); font-weight:700;" title="Dismiss Mass Deviation / False Alarm Pause">
                   <i class="fa-solid fa-circle-xmark"></i> Dismiss Recalibration Alert
@@ -460,7 +489,7 @@ if (file_exists($mode_file_path)) {
                 <!-- HUD Bottom -->
                 <div style="display:flex; justify-content:space-between; align-items:flex-end; width:100%;">
                   <div style="background:rgba(0,0,0,0.65); padding:6px 12px; border-radius:5px; border:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:.62rem; color:var(--text-primary); line-height:1.4; backdrop-filter:blur(3px);">
-                    <div style="color:#5cffac; font-weight:700; font-size:.68rem;">CHANNEL 01 (DESK)</div>
+                    <div style="color:#5cffac; font-weight:700; font-size:.68rem;">CHANNEL 01</div>
                     <div style="opacity:0.75;" id="hudStats">FPS: ~7-10 · Buffer: Local SSD · Protocol: HTTP</div>
                   </div>
                   <div style="background:rgba(0,0,0,0.65); padding:4px 8px; border-radius:5px; border:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:.6rem; color:#fff; opacity:0.8; backdrop-filter:blur(3px);">
@@ -481,7 +510,7 @@ if (file_exists($mode_file_path)) {
           <!-- Live desk status -->
           <div class="card">
             <div class="card-head">
-              <div class="card-title"><i class="fa-solid fa-desktop"></i> Current Desk Status (Room ID: `DESK`)</div>
+              <div class="card-title"><i class="fa-solid fa-desktop"></i> Current Sandbox Status</div>
             </div>
             <div style="padding:16px;">
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px;">
@@ -519,7 +548,7 @@ if (file_exists($mode_file_path)) {
               </div>
               
               <div style="font-size:.76rem;color:var(--text-muted);border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;align-items:center;">
-                <span>Tapo Stream static IP: <code>192.168.18.11:554</code></span>
+                <span>Tapo Stream static IP: <code><?= htmlspecialchars(DESK_CAMERA_IP) ?>:554</code></span>
                 <span class="badge badge-green" style="font-size:.6rem;"><i class="fa-solid fa-wifi"></i> CCTV CONNECTED</span>
               </div>
             </div>
@@ -1245,6 +1274,40 @@ function toggleCamFullScreen() {
   } else {
     if (document.exitFullscreen) document.exitFullscreen();
     else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+
+/* Switch the live detector between the MobileNetV2 gatekeeper and the pre-ML
+   classical baseline. Writes detection_mode.json; main.py picks it up on its
+   existing mtime poll (~1s) — no restart, no second video stream. The feed you
+   are already watching simply changes how it decides.
+
+   Switching also clears the confirmation timers in main.py, so a verdict made
+   by one pipeline can never roll over and confirm an event under the other. */
+async function switchPipeline(newPipeline) {
+  const box = document.getElementById('pipelineToggle');
+  if (box) box.style.opacity = '0.5';
+  try {
+    const fd = new FormData();
+    fd.append('pipeline', newPipeline);
+
+    const res = await spotitFetch('../auth/toggle_detection_mode.php', {
+      method: 'POST',
+      body: fd
+    });
+
+    if (res && res.success) {
+      showToast('success', newPipeline === 'classical'
+        ? 'CLASSICAL ONLY (no ML) — detector switches within ~1s. Watch the badge on the feed.'
+        : 'MOBILENETV2 GATEKEEPER — detector switches within ~1s. Watch the badge on the feed.');
+      setTimeout(() => location.reload(), 800);
+    } else {
+      if (box) box.style.opacity = '1';
+      showToast('error', (res && res.message) || 'Failed to switch pipeline.');
+    }
+  } catch (err) {
+    if (box) box.style.opacity = '1';
+    showToast('error', 'Network error changing pipeline.');
   }
 }
 

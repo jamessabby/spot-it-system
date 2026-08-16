@@ -1,6 +1,12 @@
 # S.P.O.T.-IT — Bug Registry & Resolution History
 
-This file tracks active bugs, pending issues, and logs past bug diagnostic details with their root causes and resolutions. Refer to [CLAUDE.md](file:///c:/xampp/htdocs/spotit/CLAUDE.md) for core architecture rules and [UPDATES.md](file:///c:/xampp/htdocs/spotit/UPDATES.md) for the roadmap status.
+This file tracks active bugs, pending issues, and logs past bug diagnostic details with their root causes and resolutions. Refer to [CLAUDE.md](file:///c:/xampp/htdocs/spotit/CLAUDE.md) for core architecture rules and [updates.md](file:///c:/xampp/htdocs/spotit/md_files/updates.md) for the roadmap status.
+
+> **2026-08-16 — `unfixable_limitations.md` was merged into this file** as §3
+> ("Detection Pipeline Limitations"). That file is gone; anything that used to cite
+> `unfixable_limitations.md §N` now means **BUGS.md §3.N**. The merge was verbatim except
+> for the threshold values, which had drifted from the code and are now corrected against
+> `main.py` — see the note at the top of §3.
 
 ---
 
@@ -11,6 +17,26 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 - [ ] **Test data initialization:** Need real room records inserted into `spotit_monitor_db.rooms` and `registered_lab_items` beyond the temporary `TESTROOM` desk setup before Table 3.5 scenarios can be run against actual CEAT laboratory rooms.
 - [ ] **First-admin bootstrap setup:** Admin accounts can only be provisioned by an existing admin—but no admin exists on a fresh install.
   - **Resolution path:** Need a one-time SQL seed directly in `spotit_auth_db.users`. Check `services/auth/schema.sql` and `login_handler.php` for the hash format.
+- [ ] **`accuracy_trials` table has no schema file — a fresh deploy will 500.** Four call
+  sites read or write it (`auth/log_sandbox_trial.php`, `auth/get_desk_status.php`,
+  `auth/get_room_status.php`, `pages/desk-sandbox.php`) but **no `CREATE TABLE` exists
+  anywhere in the repo**. CLAUDE.md §7a lists a `services/migration_accuracy_trials.sql`
+  in the migration order that was never written. It works locally only because the table
+  was created by hand in phpMyAdmin at some point. On Hostinger the sandbox metrics panel
+  and both room-status endpoints will fatal.
+  - **Resolution path:** write `services/migration_accuracy_trials.sql` in
+    `spotit_monitor_db` with the columns the INSERT in `log_sandbox_trial.php` uses —
+    `expected_state`, `detected_state`, `classification` (TP/TN/FP/FN), `notes`,
+    `trial_timestamp` — plus an AUTO_INCREMENT PK, then run `SHOW CREATE TABLE
+    accuracy_trials` against the local DB and reconcile so the file matches what is
+    already there. Thesis §3.6.8 database-design text now names this table, so it has to
+    exist before the manuscript is submitted.
+- [ ] **`recalibrations` is deleted but never created — dead code.**
+  `auth/reset_room_state.php:30` and `auth/reset_system_state.php:60` both run
+  `DELETE FROM recalibrations`, each inside a `try/catch (Throwable)` that swallows the
+  error, so the missing table has never been noticed. Nothing inserts into it, selects
+  from it, or defines it. Either build the table or drop the two statements — leaving a
+  silenced query against a non-existent table hides real failures on the same code path.
 - [x] **Double snapshot logic in pipeline:** `main.py` needs to implement the secondary camera snapshot (Snapshot B) when an item's empty ROI is physically interacted with or shifted while in the RED/MISSING state.
 
 ### Automatic Movement Snapshot Purge Endpoint (`auth/clear_snapshots.php`)
@@ -40,6 +66,78 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 ## 2. Past Diagnosed Bugs & Root Causes
 
 Refer to this log so you do not waste time re-investigating previously solved problems.
+
+### 2026-08-16 — One DHCP lease change broke the system in eight places at once
+
+*   **Symptom:** after a factory reset moved the DESK camera from `192.168.18.11` to `.14`,
+    the sandbox failed in several unrelated-looking ways at the same time: the live MJPEG feed
+    went to STANDBY, "Capture Baseline" timed out, ROI saving worked but monitored nothing,
+    and `main.py` sat retrying the RTSP connect. Each symptom pointed at a different subsystem.
+*   **Root cause:** the camera address was **pasted into 8 separate places** — three spots in
+    `main.py`, one in `main_classical_only.py`, plus `auth/capture_frame.php`,
+    `auth/tapo_stream.php`, `auth/save_rois.php` and `pages/desk-sandbox.php`. There was no
+    single source of truth because, unlike production rooms, the DESK sandbox has no row in
+    `spotit_monitor_db.rooms` to read `camera_ip` from. Nothing was wrong with any individual
+    file; the defect was that the same fact was stored eight times.
+*   **Resolution:** defined once — `DESK_CAMERA_IP` / `_USER` / `_PASS` / `_RTSP` in
+    `config/env.php` for the PHP side, and `SPOTIT_CAMERA_IP` / `_USER` / `_PASS` environment
+    variables (same defaults) in both Python scripts. Production rooms are untouched and still
+    read their credentials from the `rooms` table via `auth/get_room_camera.php`.
+*   **Note for next time:** the real fix is a DHCP reservation on the router (or a static IP in
+    the Tapo app). Centralising the constant makes the change cheap; it does not stop the
+    address from moving. Also: existing `rooms` rows keep whatever IP they were seeded with —
+    ROOM_1's `camera_ip` still needs updating in the DB separately.
+
+### 2026-08-16 — Removals parked in OCCLUDED forever (inpainting carries no signal on large items)
+
+*   **Symptom:** an item lifted off the desk stayed **blue (OCCLUDED)** indefinitely instead of
+    escalating to RED. The item could be carried out of the room and the box never changed.
+*   **Root cause:** the dual-template test can only reach `ABSENT` when the inpainted
+    "item gone" template wins, and `cv2.inpaint` is unreliable over a large mask — it returns a
+    diffused smear resembling neither the item nor the real bare surface. Measured on the
+    sandbox laptop, `sim_empty` read **0.39 with the item present and 0.41 with it removed**:
+    no information at all. `sim_present` behaved correctly the whole time (0.86 → 0.46), so the
+    ROI satisfied "not the item" but never "is the bare surface", which is exactly the
+    definition of OCCLUDED.
+*   **Resolution:** added `OCCLUDED_MAX_SEC = 5.0` and `OCCLUDED_STILL_MOTION = 0.02`. An ROI
+    that has been continuously OCCLUDED **and shown no motion of its own** for 5 s resolves to
+    ABSENT. **The motion condition is load-bearing** — a plain timeout would eventually alarm on
+    a hand resting motionless on an item, which is the precise false positive §3.3 exists to
+    prevent. Skin at this resolution is never perfectly still, so any flicker above the
+    threshold resets the accumulator. No detection threshold was changed.
+
+### 2026-08-16 — The in-process classical arm silently used the wrong stability gate
+
+Found while building the live pipeline switch, by diffing `main.py`'s ported classical branch
+against `main_classical_only.py` function by function rather than assuming the port was faithful.
+
+*   **Symptom:** none visible. The A/B comparison would simply have been wrong, and quietly.
+*   **Root cause:** `is_scene_stable()` in `main.py` measures motion **frame-to-frame**, whereas
+    the original classical system measured it **against the baseline photo**. Running the
+    classical presence logic behind `main.py`'s stability gate therefore fed it a different set
+    of frames than the archival baseline would have seen — the two arms would have disagreed for
+    a reason that had nothing to do with the pipeline being compared.
+*   **Resolution:** classical mode now uses the vs-baseline gate. Verified by replaying one clip
+    through both `main.py --pipeline=classical` and `main_classical_only.py` and diffing the
+    event logs: **identical, event for event, to the 0.01 s.** `check_roi()` and
+    `find_item_template_match()` were separately confirmed byte-identical between the two files,
+    as were the 0.55 match threshold and the fixed-asset keyword shortcut.
+*   **Lesson:** when porting code for an A/B comparison, the thing that invalidates the result is
+    never the logic you ported — it is the surrounding context you did not.
+
+### 2026-08-16 — Either detection script died on its first `→` on a Windows console
+
+*   **Symptom:** `UnicodeEncodeError` killed `main.py` or `main_classical_only.py` seconds after
+    startup, on the first state transition that printed a status arrow.
+*   **Root cause:** the Windows console defaults to the cp1252 code page, which cannot encode
+    `→` (U+2192). Python raises rather than substituting, and the exception was on the main loop
+    path, so the process died outright.
+*   **Resolution:** both scripts now reconfigure their streams at import time —
+    `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`, same for `stderr`, wrapped in
+    a bare `try/except` so it is a no-op on platforms where the streams are already UTF-8. The
+    `errors="replace"` is the important half: even if a console refuses UTF-8, an unencodable
+    character degrades to `?` instead of raising. Console output is now free to use arrows and
+    box-drawing characters; nothing needs to stay ASCII-only.
 
 ### 2026-07-31 — Every dashboard button hung forever ("Clearing…" / "Unpausing…")
 
@@ -306,4 +404,242 @@ live in commit `6c47a1d`; none had visible symptoms that pointed at the real cau
 *   **Root Cause:** Navigating away from `desk-sandbox.php` did not update `detection_mode.json` to the target production room, and dropdown room switches in `camera-setup.php` lacked an event handler to update `detection_mode.json`.
 *   **Resolution:** Added auto-sync of `detection_mode.json` on page load in `room-monitor.php` and `camera-setup.php`, added the missing `switchRoom()` dropdown handler to `camera-setup.php`, and excluded `DESK` from production room selectors. Navigating away from the Sandbox now automatically releases the `DESK` camera and starts production room monitoring instantly.
 
+---
+
+## 3. Detection Pipeline Limitations: Diagnosis & Resolution
+
+*Merged from `unfixable_limitations.md` on 2026-08-16; that file has been deleted. Cite these
+as **BUGS.md §3.1 … §3.6**.*
+
+This section tracks structural limitations of the hardware, environment, and physical setup of
+the DLSU-D CEAT Laboratory Rooms, and — where they have since been solved — how they were solved.
+
+> **2026-07-30 update.** §3.1, §3.2 and §3.3 were previously logged as *unfixable in software*.
+> They have since been resolved by reformulating the presence test rather than by re-tuning
+> thresholds. The original diagnoses are kept below because they are correct about *why the old
+> approach failed*, and that reasoning is what motivates the new design. §3.5 records what
+> genuinely remains a hardware limitation.
+
+> **2026-08-16 threshold note — read before quoting numbers from this section.** The measured
+> tables below are the original ROOM_1 calibration figures and are still the evidence for *why*
+> the method works. The **shipped thresholds have since been lowered** from the values in those
+> tables: `SIM_PRESENT` 0.85 → **0.80** (position tolerance — items nudged within their ROI were
+> scoring just under the old bar) and `SIM_EMPTY` 0.65 → **0.55** (weak inpaints — see the
+> stuck-occlusion entry in §2, where a large item's "gone" template carried no signal at all).
+> `main.py` is the source of truth; CLAUDE.md §3 carries the current table.
+
+---
+
+## 3.1 The Wood Grain Background False-Match Problem — **SOLVED**
+
+*   **Symptom:** Small items (computer mouse) or dark items (laptop) stayed **GREEN (`OK`)**
+    even when picked up and completely removed from the table.
+*   **Original root cause (still accurate):**
+    *   The baseline item crop contains the object in the centre, surrounded by brown,
+        textured wooden desk.
+    *   When the item is removed, `cv2.matchTemplate` compares the bare desk against that
+        crop. Because the desk texture is present in *both*, correlation reaches $\approx 0.65$.
+    *   Since $0.65$ exceeded the presence threshold ($0.52$), the matcher concluded the
+        object was still present.
+*   **Why threshold tuning could never fix it:** raising the bar above $0.70$ made the box
+    turn red under ordinary shadows while the item *was* present. Each adjustment simply
+    traded a false negative for a false positive. The defect was in the question being
+    asked, not in the number.
+
+### The fix — give the removal a competing hypothesis
+
+The old test was **one-sided**: it only ever asked *"does this look like the item?"*, with
+nothing else to compare against. Bare desk scored 0.65 on that question and won by default,
+because it was the only question on the table.
+
+At calibration time the system now builds a **second template** by inpainting the item out
+of the reference frame (`cv2.inpaint`, Telea), reconstructing the hidden patch of desk from
+the texture immediately surrounding it. This is a physically meaningful prediction of what
+the camera will see once the item is lifted away. Every live frame is then scored against
+**both**:
+
+```
+sim_present = similarity(live, "item is here" template)
+sim_empty   = similarity(live, "item is gone" template)
+
+sim_present >= SIM_PRESENT                       -> PRESENT   (item still there)
+sim_present <  SIM_PRESENT and sim_empty >= SIM_EMPTY -> ABSENT    (bare surface revealed)
+both low                                          -> OCCLUDED  (something in the way)
+```
+
+Bare wood can no longer produce a false PRESENT, because it now matches the *empty*
+template far better than it matches the item template. The wood is still present in both
+crops — it is simply no longer the only thing being compared.
+
+A second refinement matters for small items: the item's true outline is recovered by
+differencing the reference crop against its own inpainted version, and all comparisons are
+cropped to that **footprint**. The mouse box is ~47% bare desk, and that padding was
+diluting the comparison; cropping to the footprint widened the mouse's removal margin from
+0.03 to a clean separation.
+
+**Measured on the real ROOM_1 reference frame** (`photos/ref_image_ROOM_1.jpg`), all three
+registered items, across present / removed / ±25% lighting / nudged / hand-occluded:
+
+| signal | item present | item removed | hand occluding |
+|---|---|---|---|
+| `sim_present` | 0.985 – 1.000 | 0.477 – 0.743 | 0.289 – 0.513 |
+| `sim_empty`   | 0.509 – 0.685 | 0.774 – 0.829 | 0.357 – 0.521 |
+
+Both thresholds sit in the middle of a wide empirical gap rather than on an edge:
+**27/27 scenarios classified correctly.**
+
+---
+
+## 3.2 CCTV Resolution & Object Size Constraints (The DNN Failure) — **SOLVED**
+
+*   **Symptom:** MobileNetV2 failed to verify presence, turning boxes RED even when items
+    were present.
+*   **Original root cause (still accurate for *classification*):**
+    *   The cropped ROI of a mouse is only ~$80 \times 60$ px.
+    *   MobileNetV2 requires $224 \times 224$ input; upscaling that crop produces a blurry,
+        pixelated cluster of colour.
+    *   The network could not identify features on such a crop, frequently misclassifying
+        the mouse as background noise or a "container ship" with low confidence.
+
+### The fix — stop asking the network to name things
+
+The original diagnosis is right that **classification** is hopeless here: the network is
+being asked to map a degraded crop onto an ImageNet class it never saw at that resolution.
+
+But *comparing two crops from the same camera* is a different problem. Both crops carry
+**identical** blur and identical downsampling damage, so that degradation is common-mode
+and cancels in the comparison. The system now takes the penultimate global-average-pool
+feature vector — layer `onnx_node!mobilenetv20_features_pool0_fwd`, output `(1, 1280, 1, 1)`
+— L2-normalises it, and compares by cosine similarity. The network is used as a learned,
+shift- and lighting-tolerant **feature extractor**, never as a recogniser.
+
+Measured on 66×63 crops — precisely the size this section called hopeless:
+
+| comparison | cosine |
+|---|---|
+| same item, new sensor noise | 1.000 |
+| same item, lights dimmed 25% | 0.978 |
+| same item, shifted 4 px | 0.996 |
+| bare wood | 0.609 |
+| hand / sleeve | 0.440 |
+
+Two further points, both load-bearing for the defence:
+
+*   **Scope guardrail intact (CLAUDE.md §8).** No class name is ever emitted. This is
+    perceptual similarity, not object-identity recognition.
+*   **Genuinely secondary (CLAUDE.md §3a).** The classical absdiff/threshold gate
+    (`check_roi`) still decides *whether anything changed*; the network is consulted only on
+    crops already flagged. On a quiet frame it never runs at all. If the model is missing,
+    `classical_similarity()` — a chroma-only Lab histogram — performs the same three-way
+    decision, so detection degrades rather than stopping.
+*   **Cheaper than before.** Stopping at the pooling layer skips the classifier head
+    entirely, so this costs *less* than the old full forward pass.
+*   **Now measured, not asserted (2026-08-16).** Both scripts print an **ML duty cycle**
+    summary on exit — ROI-frames seen vs forward passes actually run vs mean latency. This is
+    the number that answers "isn't this just an AI system?" with evidence: on a replayed clip,
+    classical mode reached `ABSENT` with **0** forward passes where the gatekeeper used 150.
+
+---
+
+## 3.3 Human Occlusion vs. Theft Ambiguity — **RESOLVED BY DESIGN**
+
+*   **Symptom:** When a user typed on the laptop or held the mouse, boxes turned RED or flickered.
+*   **Original root cause (still accurate):** a monocular CCTV camera cannot see through a
+    hand. The template matcher saw skin/sleeve instead of the item and marked it RED.
+*   **Why the old mitigation failed:** suppressing the alarm via local frame differencing
+    (`local_motion > 0.05`) worked during *active* typing but failed the moment the user
+    rested a hand still on the item — the exact case this section documented.
+
+### The fix — occlusion is not a decision, it is a reason to withhold one
+
+The physical limitation is real and unchanged: **you still cannot see through a hand.** What
+changed is that the system no longer has to guess. A hand matches neither the "item here"
+template nor the "item gone" template, so it lands in a distinct **OCCLUDED** state which
+*holds* the confirmation timers rather than advancing them.
+
+That is the correct epistemic response: while the view is blocked, no evidence is
+accumulating in either direction, so no verdict is reached. It does not depend on the hand
+moving, which is why the still-hand case is now handled.
+
+The removal-through-hand sequence resolves correctly and in the right order:
+
+```
+hand reaches in    -> OCCLUDED -> timers hold
+hand leaves w/item -> ABSENT   -> timer accumulates -> RED after 1.0s
+```
+
+Displayed as a distinct blue box, so an operator can tell at a glance that nothing is wrong —
+someone's hand is simply in the way.
+
+**Bounded 2026-08-16.** Holding forever turned out to be its own failure mode when the "item
+gone" template is uninformative (see the stuck-occlusion entry in §2). The hold is now capped
+at `OCCLUDED_MAX_SEC = 5.0`, but **only while the ROI is also motionless**
+(`OCCLUDED_STILL_MOTION = 0.02`) — which preserves everything this section argues, because a
+real hand is never perfectly still and therefore never triggers the escape.
+
+---
+
+## 3.4 Solid-Colour Background Bleed (Tumbler on Chair) — **SOLVED**
+
+*   **Symptom:** A red tumbler on a reddish-brown wooden chair seat stayed GREEN after removal.
+*   **Root cause:** low-edge-density items fell through to a colour-difference fallback, and
+    the warm chair seat passed the absolute `color_diff < 12.0` test.
+*   **Resolution:** the fallback is gone. The tumbler is handled by the same dual-template
+    test as everything else — measured `sim_present` 1.000 present vs 0.614 removed,
+    `sim_empty` 0.604 present vs 0.811 removed. Correct in all six lighting/removal variants.
+
+---
+
+## 3.5 Remaining Genuine Limitations (for Chapter 5)
+
+These are **not** solved and should be documented honestly as findings:
+
+1.  **Total occlusion is undecidable.** If an item is permanently hidden — a bag left on top
+    of it for an hour — the system holds in OCCLUDED and reports neither present nor missing.
+    This is correct behaviour rather than a bug, but it means the system cannot detect a theft
+    that occurs entirely under cover and is never re-exposed. *Recommendation: physical IoT
+    weight sensors or RFID under high-value equipment as a redundant modality.* (Partially
+    bounded since 2026-08-16 — a **motionless** total occlusion now resolves to ABSENT after
+    5 s; a moving one still holds indefinitely, by design.)
+2.  **Baseline must contain the item.** Calibration derives the item footprint by comparing
+    the reference frame against its inpainted version. If the baseline is captured while the
+    item is already absent, no footprint is found and the ROI is skipped with a warning. This
+    is a workflow constraint on the recalibration UI, not a detection failure.
+3.  **ROI boxes must reasonably bound the item.** Detection weakens if a box is mostly empty
+    surface. Startup warns when an item fills less than 3% of its box.
+4.  **Very large flat items** that fill their entire box leave little surrounding texture for
+    inpainting to reconstruct from. **Confirmed as a real failure on 2026-08-16**, no longer
+    theoretical: over a large mask `cv2.inpaint` returns a diffused smear, and `sim_empty`
+    measured 0.39 present vs 0.41 removed — no separation whatsoever. The stuck-occlusion
+    escape works around it, but the underlying template is genuinely uninformative for such
+    items. Re-check when full-size lab equipment (monitors, UPS) is registered.
+5.  **Camera resolution still bounds everything.** The above works at 2K on ~60 px items.
+    A 4K camera would extend the same method to smaller items at greater distance.
+
+---
+
+## 3.6 Reproducing These Measurements
+
+The numbers in §3.1–§3.4 come from exercising the real functions in `main.py` (extracted by AST,
+so the tested code cannot drift from the running code) against
+`photos/ref_image_ROOM_1.jpg`. Removals are simulated with a *different* inpainting algorithm
+(Navier-Stokes, radius 9) than the one used to build the template (Telea, radius 5), plus
+sensor noise, so the comparison is not circular.
+
+Live-run metrics accumulate in `photos/detection_metrics.csv`:
+
+```
+ts, room, label, change_pct, sim_present, sim_empty, used_dnn, state,
+absent_time, present_time, scene_motion
+```
+
+Rows are written on every state transition and at most twice per second otherwise. This is
+the raw material for the Chapter 4 TP/FP/FN/TN table.
+
+For the head-to-head against `main_classical_only.py`, use the replay harness rather than two
+live cameras: `SPOTIT_SOURCE=<clip.mp4>` feeds a recorded file through either script so both
+arms score **byte-identical frames**, and it auto-disables API posting so a scoring run cannot
+pollute `detections`. Per-arm events land in `photos/ab_events_gatekeeper.csv` /
+`ab_events_classical.csv`, whose `arm` column records the pipeline that actually produced each
+row. Full protocol: [AB_ACCURACY_PROTOCOL.md](file:///c:/xampp/htdocs/spotit/md_files/AB_ACCURACY_PROTOCOL.md).
 

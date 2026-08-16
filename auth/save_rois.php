@@ -57,8 +57,12 @@ try {
     if (!$checkRoom->fetchColumn()) {
         $monitorPdo->prepare("
             INSERT INTO rooms (room_id, room_name, floor, room_type, camera_count, camera_ip, camera_user, camera_pass, baseline_count, monitoring_status, is_active)
-            VALUES (?, ?, '1st Floor', 'Lab', 1, '192.168.18.11', 'SpotItCamera', 'spotittapo232', 0, 'active', 1)
-        ")->execute([$roomId, $roomId === 'DESK' ? 'Sandbox Desk' : "Room {$roomId}"]);
+            VALUES (?, ?, '1st Floor', 'Lab', 1, ?, ?, ?, 0, 'active', 1)
+        ")->execute([
+            $roomId,
+            $roomId === 'DESK' ? 'Sandbox Desk' : "Room {$roomId}",
+            DESK_CAMERA_IP, DESK_CAMERA_USER, DESK_CAMERA_PASS,
+        ]);
     }
 
     $monitorPdo->beginTransaction();

@@ -10,9 +10,9 @@ Follow this on the day you deploy. It assumes nothing is bought or set up yet.
 
 This is the single thing to understand before anything else makes sense.
 
-Your camera lives at `192.168.18.11`. Addresses starting `192.168.` are **private** —
+Your camera lives at `192.168.18.14`. Addresses starting `192.168.` are **private** —
 they only mean something inside one local network, and are not unique in the world.
-A server in a data centre asking for `192.168.18.11` gets no meaningful answer, and
+A server in a data centre asking for `192.168.18.14` gets no meaningful answer, and
 the school's router would refuse the connection anyway: NAT lets devices inside reach
 out, but blocks anything outside from reaching in.
 
@@ -22,7 +22,7 @@ So detection cannot run on Hostinger. Ever. It has to run on a machine in the la
    INSIDE THE CEAT LAB                        ON THE INTERNET
 
    Tapo TC65  ──RTSP──▶  mini-PC                  Hostinger
-   192.168.18.11         running main.py          your-domain.com
+   192.168.18.14         running main.py          your-domain.com
                               │                    (dashboards, claiming)
                               └───── HTTPS ──────────▶   allowed
                               ◀───── blocked ───────────
@@ -189,7 +189,7 @@ pip install -r requirements.txt
 **Confirm it can see the camera before going further:**
 
 ```powershell
-ping 192.168.18.11
+ping 192.168.18.14
 ```
 
 **Install the service** (elevated PowerShell — Run as Administrator):

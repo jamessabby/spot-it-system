@@ -102,7 +102,7 @@ if ($dbRoom && !empty($dbRoom['camera_ip'])) {
             2 => ['ip' => getenv('TAPO_MLH305_CAM2_IP') ?: '192.168.1.104', 'user' => 'admin', 'pass' => getenv('TAPO_MLH305_CAM2_PASS') ?: ''],
         ],
         'DESK' => [
-            1 => ['ip' => '192.168.18.11', 'user' => 'SpotItCamera', 'pass' => 'spotittapo232'],
+            1 => ['ip' => DESK_CAMERA_IP, 'user' => DESK_CAMERA_USER, 'pass' => DESK_CAMERA_PASS],
         ],
     ];
     $camRoomId = isset($cameraConfig[$roomId][$camNum]) ? $roomId : 'DESK';

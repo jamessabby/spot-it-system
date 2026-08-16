@@ -6,6 +6,17 @@ import time
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
 
 import sys
+
+# Windows consoles default to cp1252, which cannot encode the arrows and dashes
+# used throughout the status prints — a UnicodeEncodeError there would kill the
+# detector mid-session over a print statement. Must run before any output.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+import atexit
 import cv2
 import json
 import numpy as np
@@ -85,11 +96,72 @@ SCENE_MOTION_LIMIT = (
     0.20  # % of frame-to-frame motion allowed before pausing monitoring
 )
 CONSISTENCY_FRAMES = 25  # 25 consecutive frames (~0.8s @ 30 FPS) for balanced stability
-RTSP_URL = "rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1"
+# ── DESK / SANDBOX CAMERA ────────────────────────────────────────────────
+# Single source of truth for the sandbox camera. It used to be pasted into
+# three places in this file plus four PHP files, so a DHCP lease change or a
+# factory reset broke the system in several places at once, each failing with a
+# different symptom. Mirrors config/env.php's DESK_CAMERA_* constants — keep the
+# two in step, or set the env vars and neither needs editing.
+#
+# Production rooms ignore this entirely: they read camera_ip/user/pass from
+# spotit_monitor_db.rooms via auth/get_room_camera.php.
+CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "192.168.18.14")
+CAMERA_USER = os.environ.get("SPOTIT_CAMERA_USER", "SpotItCamera")
+CAMERA_PASS = os.environ.get("SPOTIT_CAMERA_PASS", "spotitcamera232")
+RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/stream1"
 ROTATE_CAMERA = False  # Set to True for portrait iPhone, False for Tapo CCTV
+
+# ── A/B REPLAY MODE (Chapter 4 accuracy comparison) ──────────────────────
+# SPOTIT_SOURCE=<path to .mp4> replays a recorded clip instead of the live
+# camera, so this script and main_classical_only.py can be scored on
+# byte-identical frames (md_files/AB_ACCURACY_PROTOCOL.md). Replaying rather
+# than running both arms live also dodges the Tapo's concurrent-RTSP-client
+# limit, which would silently drop one arm to /stream2 at 640x360.
+#
+# Replay implies OFFLINE: no API posts, no heartbeats, no live-frame pushes.
+# A scoring run must never write into the real detections table.
+AB_SOURCE = os.environ.get("SPOTIT_SOURCE", "").strip()
+AB_REPLAY = bool(AB_SOURCE)
+AB_CLIP = os.path.splitext(os.path.basename(AB_SOURCE))[0] if AB_REPLAY else ""
+AB_EVENTS_CSV = "photos/ab_events_gatekeeper.csv"
+
+# ── ML DUTY-CYCLE INSTRUMENTATION ────────────────────────────────────────
+# Answers the adviser's real question — "isn't this just an AI system?" — with
+# a measurement instead of an argument. The classical absdiff stage runs on
+# every ROI-frame; MobileNetV2 is consulted only on the ones it already
+# flagged. dnn_calls / roi_frames IS the duty cycle of the ML stage, and it is
+# the single most useful number in the A/B run. Always on: the cost is four
+# integer increments per frame, and having it live means the figure quoted at
+# the defense comes from a real session, not a replay.
+AB_STATS = {
+    "roi_frames": 0,  # ROI x frame evaluations handled by the classical stage
+    "dnn_eligible": 0,  # ...of those, the ones the classical gate flagged
+    "dnn_calls": 0,  # actual MobileNetV2 forward passes
+    "dnn_seconds": 0.0,  # total wall time inside those forward passes
+}
 MATCH_SCORE_THRESHOLD = (
     0.48  # legacy template-match score — retained only by main_classical_only.py A/B baseline
 )
+
+# ── LIVE PIPELINE SWITCH (dashboard-controlled A/B demo) ─────────────────
+# "gatekeeper" = dual-template presence test with the MobileNetV2 embedding.
+# "classical"  = the pre-ML baseline: template match only, no network at all.
+#
+# Switched at runtime from the room monitor page via detection_mode.json, the
+# same mtime-polled path that already carries mode / tracking_mode / timer_mode.
+# Doing it inside ONE process rather than launching main_classical_only.py
+# alongside is deliberate: the Tapo allows only a couple of concurrent RTSP
+# clients, and when the second one is refused main.py silently falls back to
+# /stream2 at 640x360 — so a side-by-side demo would compare pipelines running
+# at different resolutions without ever saying so. One process, one stream, one
+# feed, one set of ROIs; the ONLY thing the switch changes is the presence test.
+PIPELINE_MODE = os.environ.get("SPOTIT_PIPELINE", "gatekeeper").strip().lower()
+if PIPELINE_MODE not in ("gatekeeper", "classical"):
+    PIPELINE_MODE = "gatekeeper"
+
+# The A/B baseline's own value (main_classical_only.py), not main.py's 0.48, so
+# the live demo behaves exactly like the arm scored in AB_ACCURACY_PROTOCOL.md.
+CLASSICAL_MATCH_THRESHOLD = 0.55
 
 # ── DUAL-TEMPLATE PRESENCE TUNING (registered ROIs) ──────────────────────
 # Measured on the real ROOM_1 reference frame across present / removed /
@@ -125,6 +197,29 @@ _left_reject_log_t = 0.0
 # "Instant Stage Escalation in Loop" — same fix already applied to left items).
 MISSING_CONFIRM_SEC = 1.0   # continuous ABSENT time before an item is flagged RED
 RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before a RED alert auto-resolves
+
+# ── STUCK-OCCLUSION ESCAPE ───────────────────────────────────────────────
+# The dual-template test can only declare ABSENT when the "item gone" template
+# wins. That template is an inpainted reconstruction, and inpainting is
+# unreliable for large items: over a big mask cv2.inpaint returns a diffused
+# smear that resembles neither the item nor the real bare surface. Measured on
+# the sandbox laptop, sim_empty read 0.39 with the item present and 0.41 with it
+# removed — no information at all — so removal parked in OCCLUDED forever while
+# sim_present correctly collapsed 0.86 -> 0.46. The item could be carried out of
+# the room and the box would stay blue.
+#
+# Escape: occlusion is by nature TEMPORARY — something is in the way, and things
+# that get in the way move. An empty surface does not. So when an ROI has been
+# continuously OCCLUDED for OCCLUDED_MAX_SEC *and* has shown no pixel motion of
+# its own for that whole window, the ambiguity is resolved as absence.
+#
+# The motion requirement is what keeps a hand resting on an item safe: skin at
+# this resolution is never perfectly still, and any flicker above
+# OCCLUDED_STILL_MOTION resets the accumulator. This is why the escape is not a
+# plain timeout — a plain timeout would eventually alarm on a motionless hand,
+# which is the exact false positive BUGS.md §3.3 exists to avoid.
+OCCLUDED_MAX_SEC = 5.0        # continuous still-occlusion before it counts as absence
+OCCLUDED_STILL_MOTION = 0.02  # ROI frame-to-frame motion below which it is "not moving"
 METRICS_CSV = "photos/detection_metrics.csv"
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -313,7 +408,7 @@ else:
 # ═══════════════════════════════════════════════════════════════════════════
 # MOBILENETV2 AS A PERCEPTUAL SIMILARITY METRIC  (secondary gate)
 # ═══════════════════════════════════════════════════════════════════════════
-# md_files/unfixable_limitations.md §2 correctly found that CLASSIFICATION fails
+# md_files/BUGS.md §3.2 correctly found that CLASSIFICATION fails
 # here: asking the network to name an 80x60 blurry mouse crop against ImageNet's
 # 1000 classes returns noise, because the features it needs were destroyed by
 # the camera before inference ever started.
@@ -358,7 +453,10 @@ def dnn_embed(bgr_crop):
         normalized = (rgb - IMAGENET_MEAN) / IMAGENET_STD
         blob = normalized.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32)
         dnn_net.setInput(blob)
+        _t0 = time.perf_counter()
         vec = dnn_net.forward(DNN_EMBED_LAYER).flatten().astype(np.float32)
+        AB_STATS["dnn_calls"] += 1
+        AB_STATS["dnn_seconds"] += time.perf_counter() - _t0
         norm = float(np.linalg.norm(vec))
         if norm < 1e-6:
             return None
@@ -662,20 +760,88 @@ class VideoStream:
                 pass
 
 
-# ── CONNECT TO RTSP STREAM ────────────────────────────────────────────────
-print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
-cap = VideoStream(RTSP_URL).start()
+class FileStream:
+    """VideoStream's interface, backed by a recorded clip instead of RTSP.
 
-# Wait up to 15 seconds for the background connection to resolve
-start_wait = time.time()
-while not cap.isOpened() and time.time() - start_wait < 15.0:
-    time.sleep(0.5)
+    Deliberately synchronous, unlike VideoStream: a background reader thread
+    would race to the end of the file while the detection loop was still
+    working on frame 3, so most of the clip would never be scored. Here one
+    read_seq() call yields exactly one frame, which is what makes the replay
+    a fair, repeatable comparison — both arms see every frame, in order.
+    """
 
-if not cap.isOpened():
-    print("[ERROR] Cannot open RTSP stream. Check:")
-    print("  1. Camera and laptop are on the same WiFi network")
-    print(f"  2. URL is correct: {RTSP_URL}")
-    exit()
+    def __init__(self, path):
+        self.path = path
+        self.cap = cv2.VideoCapture(path)
+        self.ret, self.frame = (False, None)
+        self.seq = 0
+        self.finished = False
+        fps = self.cap.get(cv2.CAP_PROP_FPS) if self.cap.isOpened() else 0
+        # A clip with broken FPS metadata would otherwise divide by zero below.
+        self.fps = fps if fps and 1.0 < fps < 120.0 else 15.0
+        self.frame_dt = 1.0 / self.fps
+        self.total_frames = (
+            int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)) if self.cap.isOpened() else 0
+        )
+
+    def start(self):
+        return self
+
+    def read_seq(self):
+        if self.finished:
+            return False, self.frame, self.seq
+        ret, frame = self.cap.read()
+        if not ret or frame is None:
+            self.finished = True
+            return False, self.frame, self.seq
+        self.ret, self.frame = True, frame
+        self.seq += 1
+        return True, frame, self.seq
+
+    def read(self):
+        ret, frame, _ = self.read_seq()
+        return ret, frame
+
+    def isOpened(self):
+        return self.cap is not None and self.cap.isOpened() and not self.finished
+
+    def release(self):
+        self.finished = True
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+
+
+# ── CONNECT TO STREAM ─────────────────────────────────────────────────────
+if AB_REPLAY:
+    if not os.path.exists(AB_SOURCE):
+        print(f"[ERROR] A/B replay file not found: {AB_SOURCE}")
+        exit()
+    print(f"[SPOT-IT][A/B] REPLAY MODE — source: {AB_SOURCE}")
+    cap = FileStream(AB_SOURCE).start()
+    if not cap.isOpened():
+        print(f"[ERROR] Cannot decode video file: {AB_SOURCE}")
+        exit()
+    print(
+        f"[SPOT-IT][A/B] Clip: {cap.total_frames} frames @ {cap.fps:.1f} fps "
+        f"(~{cap.total_frames / cap.fps:.1f}s) | API posting DISABLED"
+    )
+else:
+    print(f"[SPOT-IT] Connecting to stream: {RTSP_URL}")
+    cap = VideoStream(RTSP_URL).start()
+
+    # Wait up to 15 seconds for the background connection to resolve
+    start_wait = time.time()
+    while not cap.isOpened() and time.time() - start_wait < 15.0:
+        time.sleep(0.5)
+
+    if not cap.isOpened():
+        print("[ERROR] Cannot open RTSP stream. Check:")
+        print("  1. Camera and laptop are on the same WiFi network")
+        print(f"  2. URL is correct: {RTSP_URL}")
+        exit()
 
 print("[SPOT-IT] Stream connected. Starting detection loop...")
 print("[SPOT-IT] Press Q to quit.\n")
@@ -747,6 +913,10 @@ roi_templates = {}
 # because the loop outruns the RTSP frame rate (see VideoStream.seq).
 absent_time = {roi["label"]: 0.0 for roi in roi_list}
 present_time = {roi["label"]: 0.0 for roi in roi_list}
+# Continuous *motionless* OCCLUDED time — drives the stuck-occlusion escape.
+occluded_time = {roi["label"]: 0.0 for roi in roi_list}
+# One "confirming..." line per absence, cleared when the item is seen again.
+absence_announced = {roi["label"]: False for roi in roi_list}
 roi_state = {roi["label"]: "PRESENT" for roi in roi_list}
 prev_roi_gray_prev = {roi["label"]: None for roi in roi_list}
 last_tick_time = time.time()
@@ -804,6 +974,21 @@ prev_frame_blur = None
 
 def is_scene_stable(frame_blur):
     global prev_frame_blur
+
+    # In classical mode this must behave like the pre-MobileNetV2 system, which
+    # measured motion against the BASELINE photo, not against the previous frame
+    # (main_classical_only.py: cv2.absdiff(ref_blur, frame_blur)). The two are
+    # not equivalent — vs-baseline stays elevated for as long as the scene
+    # differs from the reference, vs-previous-frame falls back to zero as soon as
+    # movement stops. Reproducing the old gate is what makes "Classical Only"
+    # an honest reproduction of the old system rather than a lookalike.
+    if PIPELINE_MODE == "classical" and ref_blur is not None:
+        full_diff = cv2.absdiff(ref_blur, frame_blur)
+        _, full_thr = cv2.threshold(full_diff, THRESHOLD, 255, cv2.THRESH_BINARY)
+        motion_pct = cv2.countNonZero(full_thr) / (TARGET_SIZE[0] * TARGET_SIZE[1])
+        prev_frame_blur = frame_blur.copy()  # keep warm for a switch back
+        return motion_pct < SCENE_MOTION_LIMIT, motion_pct
+
     if prev_frame_blur is None:
         prev_frame_blur = frame_blur.copy()
         return True, 0.0
@@ -828,7 +1013,7 @@ def check_roi(roi, thresh_mask):
 # ═══════════════════════════════════════════════════════════════════════════
 # DUAL-TEMPLATE PRESENCE DETECTION
 # ═══════════════════════════════════════════════════════════════════════════
-# THE PROBLEM (md_files/unfixable_limitations.md §1)
+# THE PROBLEM (md_files/BUGS.md §3.1)
 # The old pipeline asked "can I find the item's reference crop near this ROI?"
 # and answered it with cv2.matchTemplate. On a textured wooden desk that
 # question is unanswerable: the reference crop is mostly desk, so BARE DESK
@@ -863,7 +1048,7 @@ def check_roi(roi, thresh_mask):
 # A hand matches neither template, so it lands in OCCLUDED, which HOLDS the
 # timers rather than advancing them. A motionless hand resting on the mouse
 # therefore cannot raise an alarm — the case the old local_motion > 0.05 hack
-# structurally could not handle (unfixable_limitations.md §3).
+# structurally could not handle (BUGS.md §3.3).
 #
 # ML BOUNDARY (CLAUDE.md §3a, §8)
 # The classical absdiff/threshold gate (check_roi) still does the first pass and
@@ -1028,7 +1213,7 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     #
     # Without the comparison the last row fell through to ABSENT purely because
     # gone cleared an absolute floor, and a hand resting on the mouse raised an
-    # alarm — the exact failure unfixable_limitations.md §3 exists to prevent.
+    # alarm — the exact failure BUGS.md §3.3 exists to prevent.
     # SIM_EMPTY now acts only as a floor beneath that comparison.
     if sim_p >= present_threshold:
         state = "PRESENT"
@@ -1101,6 +1286,65 @@ def calibrate_roi_baselines(ref_image_bgr, rois):
 
 _metrics_header_written = False
 _metrics_last = {}  # label -> last_state (for state-transition detection)
+_ab_events_header = False
+
+
+def ab_log_event(label, state, elapsed_sec):
+    """Append one row per state change to photos/ab_events_gatekeeper.csv.
+
+    Deliberately a separate, tiny file from detection_metrics.csv: this one is
+    keyed by clip name so a scoring run produces a table you can read straight
+    across against the classical arm's file, with no filtering by timestamp.
+    """
+    global _ab_events_header
+    if not AB_REPLAY:
+        return
+    try:
+        if not _ab_events_header:
+            _ab_events_header = True
+            if not os.path.exists(AB_EVENTS_CSV) or os.path.getsize(AB_EVENTS_CSV) == 0:
+                with open(AB_EVENTS_CSV, "w", encoding="utf-8") as f:
+                    f.write("clip,arm,label,state,clip_time_sec\n")
+        with open(AB_EVENTS_CSV, "a", encoding="utf-8") as f:
+            # Label the row with the pipeline that actually produced it — the
+            # classical arm can now run inside this process too, and an event
+            # file that says "gatekeeper" for a classical verdict is worse than
+            # no file at all.
+            f.write(f"{AB_CLIP},{PIPELINE_MODE},{label},{state},{elapsed_sec:.2f}\n")
+        print(f"    [A/B] t={elapsed_sec:6.2f}s  {label:<14} -> {state}")
+    except Exception:
+        pass  # instrumentation must never break detection
+
+
+def ab_print_summary():
+    """Print the duty-cycle figures. Registered with atexit so a Ctrl-C or a
+    clip reaching EOF still produces the numbers — losing a 30-minute session's
+    measurement to an ungraceful exit would be maddening."""
+    r = AB_STATS["roi_frames"]
+    if r == 0:
+        return
+    calls = AB_STATS["dnn_calls"]
+    secs = AB_STATS["dnn_seconds"]
+    print("\n" + "=" * 68)
+    print("  ML DUTY CYCLE  (evidence that the ML stage is secondary)")
+    print("=" * 68)
+    print(
+        f"  Active pipeline                       : "
+        f"{'CLASSICAL ONLY (no ML)' if PIPELINE_MODE == 'classical' else 'MOBILENETV2 GATEKEEPER'}"
+    )
+    print(f"  ROI-frames handled by classical stage : {r:,} (100.0%)")
+    print(
+        f"  ...flagged as changed (ML eligible)    : {AB_STATS['dnn_eligible']:,} "
+        f"({AB_STATS['dnn_eligible'] / r:.2%})"
+    )
+    print(f"  MobileNetV2 forward passes            : {calls:,} ({calls / r:.2%})")
+    if calls:
+        print(f"  Mean latency per forward pass         : {secs / calls * 1000:.1f} ms")
+        print(f"  Total time inside the network         : {secs:.2f} s")
+    print("=" * 68 + "\n")
+
+
+atexit.register(ab_print_summary)
 
 
 def log_roi_metrics(
@@ -1123,6 +1367,13 @@ def log_roi_metrics(
         if state == prev_state:
             return
         _metrics_last[label] = state
+
+        # Same transition, second consumer: the A/B scoring log (replay only).
+        if AB_REPLAY:
+            try:
+                ab_log_event(label, state, cap.seq * cap.frame_dt)
+            except Exception:
+                pass
 
         if not _metrics_header_written:
             _metrics_header_written = True
@@ -1248,6 +1499,7 @@ def sync_remote_config():
                         "mode": cfg.get("mode", "testing"),
                         "tracking_mode": cfg.get("tracking_mode", "registered"),
                         "timer_mode": cfg.get("timer_mode", "testing_speed"),
+                        "pipeline": cfg.get("pipeline", "gatekeeper"),
                         "room_id": cfg.get("room_id", ROOM_ID),
                         "reset_paused": False,
                         "reset_rois": False,
@@ -1329,6 +1581,9 @@ def push_live_frame(output_frame, clean_frame):
     """
     global _last_live_push, _remote_viewers_active
 
+    if AB_REPLAY:
+        return
+
     now = time.time()
     interval = LIVE_FRAME_ACTIVE_SEC if _remote_viewers_active else LIVE_FRAME_IDLE_SEC
     if now - _last_live_push < interval:
@@ -1386,6 +1641,8 @@ def send_heartbeat(fps=None, camera_state="unknown"):
     fail.
     """
     global _last_heartbeat
+    if AB_REPLAY:
+        return
     now = time.time()
     if now - _last_heartbeat < HEARTBEAT_SEC:
         return
@@ -1597,10 +1854,76 @@ def find_item_template_match(
     return False, 0, 0, 0.0
 
 
+def evaluate_roi_presence_classical(frame_bgr, roi):
+    """Pre-ML baseline presence test — the control arm, running live.
+
+    Ported verbatim from main_classical_only.py so the dashboard toggle shows
+    the panel the *actual* baseline, not a paraphrase of it: fixed assets fall
+    straight through on pixel change, everything else gets one expanding-zone
+    template match against the reference crop.
+
+    Returns the same 4-tuple as evaluate_roi_presence() so the caller does not
+    care which pipeline produced it. sim_present carries the match score and
+    sim_empty is always 0.0 — the baseline has no "item is gone" hypothesis at
+    all, which is precisely the weakness the A/B run is designed to expose.
+    OCCLUDED is never returned: the baseline cannot represent "I can't see",
+    so a hand over an item reads as removal. That is the point, not a bug.
+    """
+    label = roi["label"]
+    x, y, w, h = roi["x"], roi["y"], roi["w"], roi["h"]
+
+    # ── Tier 1 (fixed lab equipment): pixel change IS the verdict ─────────
+    # The old system sent fixed assets straight to MISSING on any ROI change,
+    # with no template rescue — that unforgiving behaviour is the classical
+    # pipeline's defining characteristic and the source of its false alarms.
+    #
+    # It decided "is this a fixed asset?" by looking for words like "monitor" or
+    # "laptop" IN THE LABEL TEXT. That silently fails for generically named
+    # zones: `zone_1` matches no keyword, so every registered lab item fell
+    # through to template matching, which then false-matched the bare desk at
+    # ~0.60 against a 0.55 threshold and reported everything present forever.
+    # The classical arm looked deceptively good because it was never actually
+    # running the classical rule for these items.
+    #
+    # The tier is recorded in rois.json at registration, so read it instead of
+    # inferring it from a string. Falls back to the old keyword sniff when a
+    # legacy ROI has no tier field.
+    tier = str(roi.get("tier", "")).lower()
+    if tier in ("tier1", "1"):
+        is_fixed = True
+    elif tier:
+        is_fixed = False
+    else:
+        fixed_keywords = [
+            "monitor", "keyboard", "mouse", "pc", "laptop", "ups",
+            "computer", "fan", "headphones", "mini_fan",
+        ]
+        is_fixed = any(kw in label.lower() for kw in fixed_keywords)
+
+    if is_fixed:
+        return "ABSENT", 0.0, 0.0, False
+
+    if ref_bgr is None:
+        return "ABSENT", 0.0, 0.0, False
+
+    ref_crop = ref_bgr[y : y + h, x : x + w]
+    if ref_crop.size == 0:
+        return "ABSENT", 0.0, 0.0, False
+
+    found, _fx, _fy, score = find_item_template_match(
+        frame_bgr, ref_crop, roi, match_threshold=CLASSICAL_MATCH_THRESHOLD
+    )
+    return ("PRESENT" if found else "ABSENT"), float(score), 0.0, False
+
+
 def post_to_api(label, snapshot_path, change_pct):
     """
     POST detection event (Snapshot A) to ingest_detection.php
     """
+    if AB_REPLAY:
+        print(f"  → [A/B] event suppressed (replay mode): {label} MISSING")
+        return None
+
     live_count = BASELINE_COUNT - count_missing_items()
 
     payload = {
@@ -1645,6 +1968,8 @@ def post_snapshot_b(label, detection_id, snapshot_path_b):
     """
     POST Snapshot B (evidence of who touched/took the missing item)
     """
+    if AB_REPLAY:
+        return
     if not detection_id:
         print("[WARN] Cannot post Snapshot B: No active detection_id found.")
         return
@@ -1679,6 +2004,8 @@ def post_mass_deviation():
     """
     POST mass deviation event to pause room monitoring in the backend database.
     """
+    if AB_REPLAY:
+        return
     payload = {
         "api_key": API_KEY,
         "action": "mass_deviation",
@@ -1703,6 +2030,9 @@ def post_item_recovered(label):
     """
     POST item_recovered event to auto-resolve detection when item physically returns to ROI.
     """
+    if AB_REPLAY:
+        print(f"  → [A/B] recovery suppressed (replay mode): {label} RECOVERED")
+        return
     payload = {
         "api_key": API_KEY,
         "action": "item_recovered",
@@ -1740,7 +2070,7 @@ def get_camera_rtsp_url(room_id):
                     f"[SPOT-IT][INFO] Room '{room_id}' has NO camera configured in database."
                 )
                 if room_id == "DESK":
-                    return "rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1"
+                    return RTSP_URL
                 return None
         else:
             print(
@@ -1750,17 +2080,26 @@ def get_camera_rtsp_url(room_id):
         print(f"[SPOT-IT][ERROR] Error fetching dynamic camera credentials: {e}")
 
     if room_id == "DESK":
-        return "rtsp://SpotItCamera:spotittapo232@192.168.18.11:554/stream1"
+        return RTSP_URL
     return None
 
 
 # ── INITIALIZE RUNNING STATE FOR DYNAMIC ROOM MONITORING ──────────────────
 current_running_room = ROOM_ID
-CURRENT_RTSP_URL = get_camera_rtsp_url(ROOM_ID)
+# In replay mode the "camera" is the clip already opened above. Skipping the DB
+# lookup matters: get_camera_rtsp_url() returns None for a room with no camera
+# assigned, which would drop the loop into STANDBY and score nothing.
+CURRENT_RTSP_URL = AB_SOURCE if AB_REPLAY else get_camera_rtsp_url(ROOM_ID)
 
 # Establish per-ROI occupancy baselines from the reference frame before the
 # detection loop starts — every presence ratio is measured against these.
 calibrate_roi_baselines(ref_bgr, roi_list)
+
+# Calibration itself runs 2 forward passes per ROI. Those are a startup cost,
+# not steady-state detection cost — counting them would overstate the duty cycle.
+AB_STATS.update(
+    {"roi_frames": 0, "dnn_eligible": 0, "dnn_calls": 0, "dnn_seconds": 0.0}
+)
 
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 while True:
@@ -1831,6 +2170,29 @@ while True:
                 IS_PRODUCTION_MODE = mode == "production"
                 SANDBOX_TRACKING_MODE = mode_data.get("tracking_mode", "registered")
                 TIMER_MODE = mode_data.get("timer_mode", "testing_speed")
+
+                # Live pipeline switch. Ignored when SPOTIT_PIPELINE pinned the
+                # value at launch, mirroring how CLI_ROOM_ID overrides room_id —
+                # an A/B scoring run must not be re-routed by someone clicking
+                # the dashboard mid-run.
+                if not os.environ.get("SPOTIT_PIPELINE", "").strip():
+                    new_pipeline = str(mode_data.get("pipeline", "gatekeeper")).lower()
+                    if new_pipeline not in ("gatekeeper", "classical"):
+                        new_pipeline = "gatekeeper"
+                    if new_pipeline != PIPELINE_MODE:
+                        PIPELINE_MODE = new_pipeline
+                        print(
+                            f"[SPOT-IT] Detection pipeline switched -> "
+                            f"{'CLASSICAL (no ML)' if PIPELINE_MODE == 'classical' else 'MOBILENETV2 GATEKEEPER'}"
+                        )
+                        # Presence history from the other pipeline is not
+                        # comparable — carrying it over would let a verdict made
+                        # by one pipeline confirm an event under the other.
+                        for _r in roi_list:
+                            absent_time[_r["label"]] = 0.0
+                            present_time[_r["label"]] = 0.0
+                            occluded_time[_r["label"]] = 0.0
+                            roi_state[_r["label"]] = None
                 # Only accept room_id from JSON if NOT launched with a CLI room argument
                 if CLI_ROOM_ID is None:
                     new_room = mode_data.get("room_id", "DESK").upper()
@@ -1974,6 +2336,10 @@ while True:
                     absent_time[lbl] = 0.0
                 if lbl not in present_time:
                     present_time[lbl] = 0.0
+                if lbl not in occluded_time:
+                    occluded_time[lbl] = 0.0
+                if lbl not in absence_announced:
+                    absence_announced[lbl] = False
                 if lbl not in roi_state:
                     roi_state[lbl] = "PRESENT"
                 if lbl not in prev_roi_gray_prev:
@@ -2024,6 +2390,11 @@ while True:
     ret, frame, frame_seq = cap.read_seq()
 
     if not ret or frame is None:
+        # A finished clip is a normal end, not a dropped stream — without this
+        # the loop would spin forever on the last frame at EOF.
+        if AB_REPLAY and cap.finished:
+            print(f"\n[SPOT-IT][A/B] Clip finished: {AB_CLIP} ({cap.seq} frames scored)")
+            break
         time.sleep(0.1)
         continue
 
@@ -2223,7 +2594,7 @@ while True:
                 # positionally — an uncaught TypeError that killed the process on
                 # the first left-item contour. It also asked the wrong question:
                 # ImageNet classification cannot name a small CCTV crop (see
-                # md_files/unfixable_limitations.md §2). What this gate actually
+                # md_files/BUGS.md §3.2). What this gate actually
                 # needs is objectness — "is this a real object or a flat shadow?"
                 # — which validate_presence_classical() already answers via
                 # Laplacian variance + edge density.
@@ -2411,7 +2782,15 @@ while True:
     # accumulated in seconds, not frames, because the loop spins faster than the
     # camera delivers and frame counts therefore do not measure time.
     _now = time.time()
-    tick_dt = min(0.5, max(0.0, _now - last_tick_time))  # clamp to survive stalls
+    if AB_REPLAY:
+        # Replay decodes far faster than real time, so wall-clock here would make
+        # MISSING_CONFIRM_SEC fire after the wrong number of *video* seconds. Using
+        # the clip's own frame interval means a 1.0 s confirmation is 1.0 s of
+        # recorded footage — the replay behaves exactly like the live run, and the
+        # timing results stay comparable to Protocol B.
+        tick_dt = cap.frame_dt if frame_is_new else 0.0
+    else:
+        tick_dt = min(0.5, max(0.0, _now - last_tick_time))  # clamp to survive stalls
     last_tick_time = _now
 
     for roi in roi_list:
@@ -2478,6 +2857,9 @@ while True:
         # (CLAUDE.md §3a) — on a quiet frame the network is never invoked at all,
         # which is also why the added cost is negligible.
         changed, change_pct = check_roi(roi, thresh)
+        AB_STATS["roi_frames"] += 1
+        if changed:
+            AB_STATS["dnn_eligible"] += 1
 
         # ══════════════════════════════════════════════════════════════════
         # GATE 3: PRESENCE DECISION — dual-template (see evaluate_roi_presence)
@@ -2488,6 +2870,14 @@ while True:
         if not changed:
             # Nothing changed against the baseline — the item is where it was.
             state, sim_present, sim_empty, used_dnn = "PRESENT", 1.0, 0.0, False
+        elif PIPELINE_MODE == "classical":
+            # Baseline arm, live. Everything up to this line is identical to the
+            # gatekeeper path — same frame, same ROIs, same absdiff gate, same
+            # confirmation timers below. Only the presence test differs, which is
+            # what makes the on-screen comparison honest.
+            state, sim_present, sim_empty, used_dnn = evaluate_roi_presence_classical(
+                frame, roi
+            )
         else:
             state, sim_present, sim_empty, used_dnn = evaluate_roi_presence(
                 frame, roi, prev_state=roi_state.get(label)
@@ -2497,13 +2887,34 @@ while True:
         # Only advance timers on genuinely new camera frames; re-reads of the
         # cached frame carry no new evidence.
         if frame_is_new:
+            if state == "OCCLUDED":
+                # Still-occlusion escape (see OCCLUDED_MAX_SEC). Any motion inside
+                # the box means something is genuinely in the way, so the clock
+                # restarts; only a motionless, unexplained void accumulates.
+                if local_motion <= OCCLUDED_STILL_MOTION:
+                    occluded_time[label] = occluded_time.get(label, 0.0) + tick_dt
+                else:
+                    occluded_time[label] = 0.0
+
+                if occluded_time.get(label, 0.0) >= OCCLUDED_MAX_SEC:
+                    if roi_state.get(label) != "ABSENT":
+                        print(
+                            f"[SPOT-IT] '{label}' occluded and motionless for "
+                            f"{OCCLUDED_MAX_SEC:.0f}s — resolving as ABSENT "
+                            f"(here={sim_present:.2f} gone={sim_empty:.2f})"
+                        )
+                    state = "ABSENT"
+            else:
+                occluded_time[label] = 0.0
+
             if state == "ABSENT":
                 absent_time[label] = absent_time.get(label, 0.0) + tick_dt
                 present_time[label] = 0.0
             elif state == "PRESENT":
                 present_time[label] = present_time.get(label, 0.0) + tick_dt
                 absent_time[label] = 0.0
-            # OCCLUDED holds both accumulators exactly where they are
+                absence_announced[label] = False  # re-arm for the next absence
+            # OCCLUDED still holds both accumulators exactly where they are
 
         roi_state[label] = state
         is_actually_missing = absent_time.get(label, 0.0) >= MISSING_CONFIRM_SEC
@@ -2544,7 +2955,13 @@ while True:
 
         if state == "ABSENT" and not active_events[label]:
             ok_consistency_count[label] = 0
-            if absent_time[label] <= tick_dt * 1.5:  # first frame of this absence
+            # Announce once per absence, not once per loop iteration. The old
+            # guard ("absent_time still within one tick") assumed the loop ran
+            # once per camera frame; it does not — it spins ~2x faster than the
+            # stream delivers, and tick_dt jitters on stalls, so the window kept
+            # re-opening and flooded the terminal with the identical line.
+            if not absence_announced.get(label):
+                absence_announced[label] = True
                 print(
                     f"[SPOT-IT] '{label}' surface revealed where the item was "
                     f"(match vs item {sim_present:.2f}, vs empty surface "
@@ -2788,6 +3205,27 @@ while True:
             0.4,
             (200, 200, 200),
             1,
+        )
+
+        # Burn the active pipeline into the frame itself. A screenshot or a
+        # recording of the demo is then self-evidencing — nobody has to take our
+        # word for which pipeline produced the verdict on screen.
+        # Top-right, not bottom-left: the dashboard draws its own HTML overlays
+        # ("CHANNEL 01", the LIVE pill) along the bottom and top-left of the
+        # video box, which covered this. On a screen recording this badge is the
+        # only proof of which pipeline produced the verdict, so it has to sit
+        # where nothing can obscure it.
+        _is_classical = PIPELINE_MODE == "classical"
+        _pipe_text = "CLASSICAL ONLY (no ML)" if _is_classical else "MOBILENETV2 GATEKEEPER"
+        _pipe_colour = (0, 165, 255) if _is_classical else (0, 255, 128)
+        (_tw, _th), _ = cv2.getTextSize(_pipe_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+        _px = max(10, TARGET_SIZE[0] - _tw - 14)
+        cv2.rectangle(
+            output, (_px - 8, 10), (_px + _tw + 8, 20 + _th + 6), (0, 0, 0), -1
+        )
+        cv2.putText(
+            output, _pipe_text, (_px, 20 + _th),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, _pipe_colour, 2,
         )
 
     # ── WRITE REAL-TIME PHYSICAL ROI STATE FOR PHP ENDPOINTS ──────────────
