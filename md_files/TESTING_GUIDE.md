@@ -303,6 +303,90 @@ templates are rebuilt automatically, no restart needed.
 
 ---
 
+## Part 5a — Auto-escalation (`pending` -> `potential` -> `confirmed_missing`)
+
+The escalation thresholds are 30 and 60 minutes, so the honest test would take an hour.
+Instead, seed a detection whose `detected_at` is already old — the job compares against
+`detected_at`, so an aged row is indistinguishable from one that really waited.
+
+**This writes to the database. Do it on the local XAMPP install, not the hosted site.**
+
+### Step 1 — seed two aged detections
+
+```bash
+C:/xampp/mysql/bin/mysql.exe -u root -e "
+USE spotit_monitor_db;
+INSERT INTO detections (room_id, object_type, object_zone, detected_at, baseline_count, live_count, status, notes)
+VALUES ('DESK','TEST','ESCALATION-TEST-A', NOW() - INTERVAL 35 MINUTE, 1, 0, 'pending', 'escalation test'),
+       ('DESK','TEST','ESCALATION-TEST-B', NOW() - INTERVAL 70 MINUTE, 1, 0, 'pending', 'escalation test');"
+```
+
+35 minutes is past the 30-minute threshold only; 70 is past both.
+
+### Step 2 — run the job once
+
+```bash
+C:/xampp/php/php.exe auth/escalate_detections.php
+```
+
+Expected console output:
+
+```
+[<timestamp>] Escalation run complete:
+  potential:  2 detection(s) (IDs: 1,2)
+  confirmed:  1 detection(s) (IDs: 2)
+```
+
+Both rows cross the 30-minute line in pass 1; the 70-minute one then crosses the
+60-minute line in pass 2 of the **same run**, which is why it is counted twice. That is
+correct behaviour, not a double-escalation — a detection that has been sitting since
+before the job was last run should not need two cycles to reach its true state.
+
+### Step 3 — confirm the three side effects
+
+```bash
+C:/xampp/mysql/bin/mysql.exe -u root -e "
+SELECT object_zone, status FROM spotit_monitor_db.detections WHERE notes='escalation test';
+SELECT event_type, LEFT(event_message,80) FROM spotit_monitor_db.monitoring_logs
+  WHERE event_type='auto_escalation' ORDER BY log_id DESC LIMIT 3;
+SELECT type, LEFT(title,45) FROM spotit_auth_db.notifications ORDER BY notification_id DESC LIMIT 3;"
+```
+
+| What | Expected |
+|---|---|
+| `ESCALATION-TEST-A` | `potential` |
+| `ESCALATION-TEST-B` | `confirmed_missing` |
+| `monitoring_logs` | three `auto_escalation` rows |
+| `notifications` | one row **per admin/staff user** per escalation |
+
+Then open `pages/dashboard-admin.php` — the bell badge should carry the new
+notifications and the timeline should show the `auto_escalation` entries.
+
+### Step 4 — clean up (do not leave test rows in the thesis data)
+
+```bash
+C:/xampp/mysql/bin/mysql.exe -u root -e "
+DELETE FROM spotit_auth_db.notifications WHERE title LIKE '%ESCALATION-TEST%';
+DELETE FROM spotit_monitor_db.monitoring_logs WHERE event_message LIKE '%ESCALATION-TEST%';
+DELETE FROM spotit_monitor_db.detections WHERE notes='escalation test';"
+```
+
+### Step 5 — confirm the schedule, not just the job
+
+Passing steps 1–4 proves the *logic* works. It does not prove anything is *calling* it —
+which was the actual bug. Check the scheduler itself:
+
+```powershell
+nssm status SpotItEscalation
+Get-Content C:\xampp\htdocs\spotit\logs\escalation.log -Wait -Tail 20
+```
+
+`SERVICE_RUNNING` plus a fresh `Escalation run complete:` line every 5 minutes is the
+proof. Installation and the hosted-cron equivalent are in
+[DEPLOYMENT_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/DEPLOYMENT_GUIDE.md) §10a.
+
+---
+
 ## Part 6 — A/B comparison for Chapter 4
 
 This is the evidence that the ML gatekeeper is doing real work.

@@ -25,7 +25,26 @@ $timer_mode    = trim($_POST['timer_mode']     ?? '');
 $pipeline      = trim($_POST['pipeline']       ?? '');
 
 if ($room_id !== '') {
-    $current['room_id'] = strtoupper($room_id);
+    $room_id = strtoupper($room_id);
+
+    // Refuse to aim the detector at a room an admin has taken out of service.
+    // DESK is the local sandbox and has no rooms row of its own to check.
+    if ($room_id !== 'DESK') {
+        $roomStmt = $monitorPdo->prepare(
+            "SELECT room_name, is_enabled FROM rooms WHERE room_id = ? AND is_active = 1 LIMIT 1"
+        );
+        $roomStmt->execute([$room_id]);
+        $roomRow = $roomStmt->fetch();
+        if ($roomRow && !(int)$roomRow['is_enabled']) {
+            echo json_encode([
+                'success' => false,
+                'message' => "Room {$room_id} is disabled. Enable it on Room Setup before monitoring it."
+            ]);
+            exit;
+        }
+    }
+
+    $current['room_id'] = $room_id;
 }
 
 if ($tracking_mode && in_array($tracking_mode, ['registered', 'unregistered'], true)) {

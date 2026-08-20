@@ -19,7 +19,10 @@
  *   1. An audit row is written FIRST, so the deletion itself is accountable even
  *      if a later step fails. A purge with no record of who ran it is worse than
  *      no purge at all.
- *   2. claims rows + their webcam selfies — these are photographs of students.
+ *   2. claim webcam selfies — these are photographs of students. The claim ROW
+ *      is kept and marked 'archived': who collected which item is the audit
+ *      record the claiming flow exists to produce, and it is not personal
+ *      imagery. Only the photo is purged (column nulled, file unlinked).
  *   3. detections rows + Snapshot A/B — the CCTV evidence trail.
  *   4. The recovered_items row is KEPT, marked archived, description preserved.
  *      It becomes the permanent tombstone: what the item was, when it was found,
@@ -66,7 +69,8 @@ $note = trim((string) ($_POST['note'] ?? ''));
 $placeholders = implode(',', array_fill(0, count($ids), '?'));
 
 $filesToDelete = [];
-$purged = ['items' => 0, 'claims' => 0, 'detections' => 0, 'files' => 0];
+// 'claims' counts rows ARCHIVED, not deleted — see the UPDATE in step 2.
+$purged = ['items' => 0, 'claims_archived' => 0, 'detections' => 0, 'files' => 0];
 
 try {
     // ── Gather everything first, inside no transaction ────────────────────────
@@ -130,7 +134,7 @@ try {
     )->execute([
         $items[0]['room_id'] ?? null,
         sprintf(
-            'Donated and purged %d unclaimed item(s): [%s]. Detections purged: %d. %s',
+            'Donated %d unclaimed item(s): [%s]. Detections purged: %d. Claim records archived, photos removed. %s',
             count($eligibleIds),
             implode(', ', array_map(fn($i) => $i['item_description'], $items)),
             count($detectionIds),
@@ -142,9 +146,21 @@ try {
     // ── 2. Lost & Found service ───────────────────────────────────────────────
     $lfPdo->beginTransaction();
 
-    $cd = $lfPdo->prepare("DELETE FROM claims WHERE recovery_id IN ($ep)");
+    // Soft-archive, not delete. The selfie goes (column nulled here, file
+    // unlinked in step 4); the record that a handoff happened stays, because
+    // that is what auth/export_records.php reports to the lab at year end.
+    // Already-archived rows are excluded so a re-run cannot overwrite the
+    // original archived_at with a later date.
+    $cd = $lfPdo->prepare(
+        "UPDATE claims
+            SET status = 'archived',
+                archived_at = NOW(),
+                webcam_snapshot = NULL
+          WHERE recovery_id IN ($ep)
+            AND status <> 'archived'"
+    );
     $cd->execute($eligibleIds);
-    $purged['claims'] = $cd->rowCount();
+    $purged['claims_archived'] = $cd->rowCount();
 
     // Tombstone, not deletion: what/when/where survives, the imagery does not.
     // 'unclaimed_archived' is the existing terminal status — no schema change is
@@ -206,8 +222,8 @@ foreach (array_unique($filesToDelete) as $rel) {
 ms_json([
     'success' => true,
     'message' => sprintf(
-        'Donated %d item(s). Purged %d claim record(s), %d detection(s) and %d image file(s).',
-        $purged['items'], $purged['claims'], $purged['detections'], $purged['files']
+        'Donated %d item(s). Archived %d claim record(s), purged %d detection(s) and %d image file(s).',
+        $purged['items'], $purged['claims_archived'], $purged['detections'], $purged['files']
     ),
     'purged'  => $purged,
 ]);

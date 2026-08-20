@@ -80,7 +80,7 @@ spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
 │   ├── user/       db.php, schema.sql   → spotit_user_db   (user_profiles, user_settings)
 │   ├── community/  schema.sql           → spotit_community_db (announcements, forum_posts,
 │   │                                       forum_comments, forum_votes, announcement_views)
-│   └── migration_*.sql        ← four migrations, run in the §7a order
+│   └── migration_*.sql        ← eight migrations; four are ordered, see §7a
 ├── auth/                      ← backend POST/GET handlers (the ONLY place SQL should be written)
 │   ├── service_bootstrap.php  ← loads the service DBs + shared helpers (e.g. ms_detection_stage())
 │   ├── ingest_detection.php   ← POST target for main.py — writes to spotit_monitor_db.detections
@@ -421,7 +421,11 @@ snapshot files on disk.
   Detected → Flagged → Recovered → Claimed **or** Unclaimed → Donated
   (end of academic year, per SWAFO Director + CEAT technician interview).
   When an item is processed as donated on the donation page, associated
-  records (detection logs, snapshots, claim records) are purged. This is
+  records (detection logs, snapshots, claimant selfies) are purged. **Claim
+  rows themselves are kept, marked `archived`** (changed 2026-08-21): who
+  collected which item is an audit record the lab needs; the photograph is the
+  personal data with a retention limit. Export the year's records first —
+  `auth/export_records.php`, reachable from the admin dashboard. This is
   the system's garbage collection — no manual cleanup needed.
 - **Donation page:** A separate UI page for admin to process end-of-year
   donations of unclaimed items. When items are donated, their DB records
@@ -561,18 +565,27 @@ Run these after any change, in this order, before considering a fix done:
    php -l auth/<file>.php
    php -l pages/<file>.php
    ```
-2. **DB migrations**, if schema changed, run in this exact order (never skip
-   or reorder) — all four live in `services/`:
+2. **DB migrations**, if schema changed. All live in `services/`. The first four are
+   ordered — never skip or reorder them:
    ```
    migration_workflow_audit.sql → migration_confidence.sql →
    migration_notifications.sql → migration_snapshot_b.sql
    ```
-   **`migration_accuracy_trials.sql` was listed here but has never existed.** The
-   `accuracy_trials` table is read/written by four call sites yet has no `CREATE TABLE`
-   anywhere in the repo — it works locally only because it was made by hand in phpMyAdmin.
-   A fresh deploy will fatal on the sandbox metrics panel and both room-status endpoints.
-   Tracked in BUGS.md §1; write the migration before deploying or submitting the §3.6.8
-   database-design text, which now names this table.
+   The rest are independent, but **check which database each targets** — they are not all
+   `spotit_monitor_db`:
+   ```
+   migration_room_camera_columns.sql → migration_room_enabled.sql   (monitor; in this order)
+   migration_accuracy_trials.sql                                     (monitor)
+   migration_claims_archive.sql                                      (LOST & FOUND db)
+   ```
+   All are safe to re-run (`IF NOT EXISTS`, or an idempotent `MODIFY COLUMN`).
+   Full commands: DEPLOYMENT_GUIDE.md §2.
+
+   **The recurring failure here is schema drift, not ordering.** `accuracy_trials` and
+   the `rooms.camera_*` columns were each created by hand in phpMyAdmin and never written
+   back, so they existed on the dev laptop and nowhere else; both would have fataled a
+   fresh deploy. Both are fixed (2026-08-21). If you add a column through phpMyAdmin, add
+   it to the schema file **in the same sitting** — see BUGS.md §1.
 3. **Manual browser pass** against the live XAMPP instance
    (`http://localhost/spotit/`) — exact page(s) and click path to hit, plus
    the expected resulting DB row/state, should be spelled out per-fix (see
@@ -616,6 +629,56 @@ Run these after any change, in this order, before considering a fix done:
 
 
 ## 9. Change Log & Project History
+
+- **2026-08-21 (Room enable/disable + one-camera-one-room; claims archived not deleted;
+  escalation actually scheduled):** Four structural changes worth knowing before touching
+  the affected code.
+
+  **`rooms.is_enabled` is a NEW flag and is not `is_active`.** There is one physical Tapo
+  and several candidate rooms, so staff need to move the camera between rooms during
+  testing. `ms_camera_ip_conflict()` (`auth/service_bootstrap.php`) now refuses to save a
+  `camera_ip` that an *enabled* room already holds, naming the conflicting room; disabling
+  a room releases that claim while keeping its baseline, registered items and detection
+  history. `is_active` was deliberately **not** reused: it is the soft-delete flag that
+  every listing query filters on and that `add_room.php` treats as "a deleted room being
+  re-created", so disabling through it would have hidden the room from the only page that
+  can re-enable it. Rule of thumb: `is_active` = does the row exist; `is_enabled` = is the
+  room in service. `room-setup.php` lists disabled rooms (it has the Enable button);
+  every other room list filters them out. `get_room_camera.php` returns
+  `configured:false` for a disabled room, which is what actually stops `main.py` — note
+  that `get_detector_config.php` reads no database at all and gets its room from
+  `detection_mode.json`, so the gate could not go there.
+
+  **Claim rows are archived, not deleted, by the donation purge.** `process_donation.php`
+  used to `DELETE FROM claims`, which destroyed the handoff record in order to delete the
+  selfie attached to it. Those are different things with different retention needs, so it
+  now sets `status='archived'`, `archived_at=NOW()`, `webcam_snapshot=NULL` and still
+  unlinks the image file. `claims.status` gained `'archived'`
+  (`migration_claims_archive.sql`) — any code matching on that enum needs to expect it.
+  `auth/export_records.php` is the companion: admin-only CSV of confirmed claimants and
+  unclaimed/donated items, optional `?year=`, **confirmed outcomes only** — raw
+  `pending`/`potential` detections are excluded on purpose, because exporting the system's
+  unverified guesses into a document the lab treats as a record would misrepresent what
+  the system established. CSV rather than XLSX because `ZipArchive` is not enabled in this
+  PHP build.
+
+  **Auto-escalation now has a caller.** `auth/escalate_detections.php` was correct but
+  nothing ran it on a timer, so the 30/60-minute stages existed only in the manuscript —
+  masked by `ms_detection_stage()`, which *displays* the stage from elapsed time whether
+  or not the DB status ever moved. Local: NSSM service via
+  `deploy/install-escalation-service.ps1`. Hosted: control-panel cron, DEPLOYMENT_GUIDE.md
+  §10a. **Exactly one, never both.** Its HTTP path also read `getenv('SPOTIT_CRON_KEY')`
+  directly, bypassing `env.php`'s resolution chain and therefore ignoring the real key in
+  `env.local.php`; it now uses the constant and returns 503 while the key is still the
+  placeholder.
+
+  **Schema drift is the recurring bug here, not any one column.** `rooms.camera_*` and
+  `accuracy_trials` were both created by hand in phpMyAdmin and never written back, so
+  they existed on the dev laptop and nowhere else; each would have fataled a fresh deploy
+  with a different symptom. Both now have schema entries and migrations. A third
+  (`claims.read_at`) is logged in BUGS.md §1 and left alone because nothing reads it.
+  **If you add a column through phpMyAdmin, add it to the schema file in the same
+  sitting.**
 
 - **2026-08-16 (Sandbox camera address centralised):** The DESK camera moved
   `192.168.18.11 → .14` after a factory reset, and the address turned out to be pasted into

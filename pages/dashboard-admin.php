@@ -9,7 +9,7 @@ $active_page = 'dashboard';
 $user_role   = 'admin';
 
 // Live statistics calculations
-$statRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1")->fetchColumn();
+$statRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND is_enabled = 1")->fetchColumn();
 $statMissing = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0")->fetchColumn();
 $statPending = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE validation_status IN ('pending_review', 'needs_review') AND is_removed = 0")->fetchColumn();
 $statToday = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE DATE(detected_at) = CURDATE()")->fetchColumn();
@@ -305,6 +305,40 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
             </div>
             <?php endforeach; ?>
             <?php endif; ?>
+          </div>
+
+          <!-- ══ Year-end records export ══
+               The companion to the donation purge: the lab keeps a durable copy
+               of confirmed outcomes before the evidence trail is deleted.
+               Confirmed outcomes only — raw pending detections are excluded. -->
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title"><i class="fa-solid fa-file-arrow-down"></i> Export Records</div>
+            </div>
+            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+              <div style="font-size:.72rem;color:var(--text-muted);line-height:1.5;">
+                Confirmed outcomes only, for the lab's own records. Export before
+                processing donations &mdash; the purge removes the photo evidence.
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label class="form-label" style="font-size:.68rem;">Period</label>
+                <select class="form-control" id="exportYear" style="font-size:.75rem;padding:6px 10px;">
+                  <option value="">All records</option>
+                  <?php for ($y = (int)date('Y'); $y >= (int)date('Y') - 4; $y--): ?>
+                  <option value="<?= $y ?>"<?= $y === (int)date('Y') ? ' selected' : '' ?>><?= $y ?></option>
+                  <?php endfor; ?>
+                </select>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="exportRecords('claimants')" style="width:100%;">
+                <i class="fa-solid fa-user-check"></i> Confirmed Claimants
+              </button>
+              <button class="btn btn-sm" onclick="exportRecords('unclaimed')" style="width:100%;">
+                <i class="fa-solid fa-box-archive"></i> Unclaimed / Donated Items
+              </button>
+              <div style="font-size:.64rem;color:var(--text-dim);font-family:var(--font-mono);">
+                CSV &middot; opens in Excel
+              </div>
+            </div>
           </div>
 
           <div class="card">
@@ -760,6 +794,17 @@ function toggleFullRoomsView() {
     if (label) label.textContent = 'Full View';
     if (icon) icon.className = 'fa-solid fa-expand';
   }
+}
+</script>
+<script>
+// Year-end export. A plain navigation, not fetch: the endpoint streams a file
+// with Content-Disposition, so the browser's own download handling is what we
+// want — fetch would just buffer the CSV into memory with nowhere to put it.
+function exportRecords(dataset) {
+  const year = document.getElementById('exportYear').value;
+  const qs = new URLSearchParams({ dataset });
+  if (year) qs.set('year', year);
+  window.location = '../auth/export_records.php?' + qs.toString();
 }
 </script>
 </body>

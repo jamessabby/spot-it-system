@@ -17,26 +17,78 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
 - [ ] **Test data initialization:** Need real room records inserted into `spotit_monitor_db.rooms` and `registered_lab_items` beyond the temporary `TESTROOM` desk setup before Table 3.5 scenarios can be run against actual CEAT laboratory rooms.
 - [ ] **First-admin bootstrap setup:** Admin accounts can only be provisioned by an existing admin—but no admin exists on a fresh install.
   - **Resolution path:** Need a one-time SQL seed directly in `spotit_auth_db.users`. Check `services/auth/schema.sql` and `login_handler.php` for the hash format.
-- [ ] **`accuracy_trials` table has no schema file — a fresh deploy will 500.** Four call
-  sites read or write it (`auth/log_sandbox_trial.php`, `auth/get_desk_status.php`,
-  `auth/get_room_status.php`, `pages/desk-sandbox.php`) but **no `CREATE TABLE` exists
-  anywhere in the repo**. CLAUDE.md §7a lists a `services/migration_accuracy_trials.sql`
-  in the migration order that was never written. It works locally only because the table
-  was created by hand in phpMyAdmin at some point. On Hostinger the sandbox metrics panel
-  and both room-status endpoints will fatal.
-  - **Resolution path:** write `services/migration_accuracy_trials.sql` in
-    `spotit_monitor_db` with the columns the INSERT in `log_sandbox_trial.php` uses —
-    `expected_state`, `detected_state`, `classification` (TP/TN/FP/FN), `notes`,
-    `trial_timestamp` — plus an AUTO_INCREMENT PK, then run `SHOW CREATE TABLE
-    accuracy_trials` against the local DB and reconcile so the file matches what is
-    already there. Thesis §3.6.8 database-design text now names this table, so it has to
-    exist before the manuscript is submitted.
+- [x] **`accuracy_trials` table has no schema file — a fresh deploy will 500.**
+  *(Fixed 2026-08-21.)* Four call sites read or write it (`auth/log_sandbox_trial.php`,
+  `auth/get_desk_status.php`, `auth/get_room_status.php`, `auth/reset_system_state.php`,
+  plus the metrics panel in `pages/desk-sandbox.php`) but no `CREATE TABLE` existed
+  anywhere in the repo — it had been made by hand in phpMyAdmin, so only this laptop had
+  it. On Hostinger the sandbox metrics panel and both room-status endpoints would fatal.
+  - **Resolution:** `services/migration_accuracy_trials.sql`. The definition was taken
+    from `SHOW CREATE TABLE accuracy_trials` on the working local install rather than
+    inferred from the INSERT, then **verified by building the table from the migration in
+    a scratch database and diffing the columns against the live one — identical**. That
+    matters because the recorded trials behind the Chapter 4 figures were captured on the
+    local table; a migrated deploy that differed in, say, `notes` being `text` instead of
+    `varchar(300)` would be a silent divergence. Added to the migration order in
+    DEPLOYMENT_GUIDE.md §2 and CLAUDE.md §7a.
 - [ ] **`recalibrations` is deleted but never created — dead code.**
   `auth/reset_room_state.php:30` and `auth/reset_system_state.php:60` both run
   `DELETE FROM recalibrations`, each inside a `try/catch (Throwable)` that swallows the
   error, so the missing table has never been noticed. Nothing inserts into it, selects
   from it, or defines it. Either build the table or drop the two statements — leaving a
   silenced query against a non-existent table hides real failures on the same code path.
+- [x] **`spotit_monitor_db.rooms` was missing three columns from its schema file.**
+  *(Fixed 2026-08-21.)* `camera_ip` / `camera_user` / `camera_pass` were added by hand in
+  phpMyAdmin during the 2026-07-26 dynamic-camera work and never written back into
+  `services/monitoring/schema.sql`, while six handlers already bound them
+  (`add_room.php`, `edit_room.php`, `capture_frame.php`, `get_room_camera.php`,
+  `tapo_stream.php`, `save_rois.php`). A fresh clone would have fataled on the first room
+  creation. Same failure mode as `accuracy_trials` above, same cause: **the schema file
+  was never the thing being read.** Whatever produced the Fig 3.10 ERD read the live
+  database or the PHP, so the drift stayed invisible.
+  - **Resolution:** columns added to `services/monitoring/schema.sql`, plus
+    `services/migration_room_camera_columns.sql` for installs already created from the old
+    file. Both verified against the live table.
+  - **Watch for this class of bug.** Any column added through phpMyAdmin is invisible to
+    every fresh deploy. If you add one, add it to the schema file in the same sitting.
+
+- [ ] **`spotit_lf_db.claims.read_at` exists live but is in no schema file — and nothing
+  reads it.** Found 2026-08-21 while auditing the same drift class as above. Unlike the
+  two fixed entries this one is harmless: a repo-wide grep finds no PHP that references
+  `claims.read_at`, so a fresh deploy without it breaks nothing. Left alone deliberately —
+  adding it to `schema.sql` would enshrine a dead column.
+  - **Decide before submission:** either drop it from the live DB so the schema file is
+    the whole truth, or document why it is there. Right now the live DB and the repo
+    disagree, and that is exactly what made the two bugs above so expensive to find.
+
+- [x] **Auto-escalation was never scheduled — every detection sat at `pending` forever.**
+  *(Fixed 2026-08-21.)* `auth/escalate_detections.php` was written correctly and its logic
+  worked when run by hand, but **nothing invoked it on a timer** on either machine. The
+  30-minute "Potentially Lost" and 60-minute "Confirmed Missing" stages therefore existed
+  only in the manuscript: in the running system a detection stayed `pending` until a human
+  clicked something. Easy to miss because the dashboard's `ms_detection_stage()` helper
+  *displays* the stage a detection ought to be in from elapsed time, so the UI looked
+  right while the persisted `status` never moved.
+  - **Resolution:** two schedulers, one per environment.
+    Local/Windows — `deploy/install-escalation-service.ps1` registers an NSSM service
+    (`SpotItEscalation`) running `deploy/escalation-runner.ps1` every 5 min via PHP CLI,
+    mirroring the detector service. Hosted — Hostinger control-panel cron fetching
+    `escalate_detections.php?cron_key=<SPOTIT_CRON_KEY>`, documented in
+    DEPLOYMENT_GUIDE.md §10a. **Run exactly one** — both at once double every notification.
+  - **Also fixed while in there:** the HTTP path compared the supplied key against
+    `getenv('SPOTIT_CRON_KEY')`, bypassing `config/env.php`'s resolution chain — so a key
+    set in `env.local.php` (the only place it is actually set on Hostinger) was ignored
+    and the comparison ran against the `CHANGE_ME_CRON_KEY` placeholder. Now uses the
+    `SPOTIT_CRON_KEY` constant, and refuses over HTTP with 503 while the key is still that
+    placeholder. CLI is unaffected.
+  - **How to confirm it is running:** `nssm status SpotItEscalation` → `SERVICE_RUNNING`,
+    and a timestamped `Escalation run complete:` line every 5 minutes in
+    `logs/escalation.log`. On the host, recent `auto_escalation` rows in `monitoring_logs`.
+    End-to-end test that does not need a real 30-minute wait: TESTING_GUIDE.md Part 5a.
+  - **Verified 2026-08-21:** two detections seeded at 35 and 70 minutes old escalated to
+    `potential` and `confirmed_missing` respectively in a single run, with three
+    `auto_escalation` log rows and one notification per admin/staff user. Test rows removed.
+
 - [x] **Double snapshot logic in pipeline:** `main.py` needs to implement the secondary camera snapshot (Snapshot B) when an item's empty ROI is physically interacted with or shifted while in the RED/MISSING state.
 
 ### Automatic Movement Snapshot Purge Endpoint (`auth/clear_snapshots.php`)

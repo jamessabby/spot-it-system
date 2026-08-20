@@ -104,6 +104,37 @@ function ms_is_locked(PDO $authPdo, string $identifier): array {
     return ['locked' => true, 'seconds_left' => $secsLeft, 'count' => (int)$row['attempt_count']];
 }
 
+// ── Room camera exclusivity ───────────────────────────────────────────────────
+/**
+ * One camera, one active room.
+ *
+ * There is a single physical Tapo on the project, but several candidate rooms
+ * are registered for testing, so the same camera_ip kept getting pasted into
+ * two rooms at once. Two rooms pointing at one camera means two detector
+ * sessions competing for the same RTSP stream — and the Tapo only allows a
+ * couple of concurrent clients, so the loser silently drops to /stream2 at
+ * 640x360 (CLAUDE.md §9) rather than failing loudly. Rejecting the duplicate
+ * up front is the only place this is cheap to catch.
+ *
+ * A DISABLED room does not hold a claim: disabling is how staff free a camera
+ * for reassignment without deleting the room's baseline, registered items or
+ * detection history. Soft-deleted rooms (is_active = 0) do not hold one either.
+ *
+ * @return array|null  The conflicting room row (room_id, room_name), or null if free.
+ */
+function ms_camera_ip_conflict(PDO $monitorPdo, string $cameraIp, string $exceptRoomId = ''): ?array {
+    $cameraIp = trim($cameraIp);
+    if ($cameraIp === '') return null;   // no camera assigned = nothing to conflict with
+
+    $stmt = $monitorPdo->prepare(
+        "SELECT room_id, room_name FROM rooms
+         WHERE camera_ip = ? AND room_id != ? AND is_active = 1 AND is_enabled = 1
+         LIMIT 1"
+    );
+    $stmt->execute([$cameraIp, strtoupper(trim($exceptRoomId))]);
+    return $stmt->fetch() ?: null;
+}
+
 // ── DLSU-D domain check ───────────────────────────────────────────────────────
 
 function ms_is_dlsud_email(string $email): bool {

@@ -31,6 +31,17 @@ if (!$roomId || !$roomName || !$floor || !$roomType) {
     ms_json(['success' => false, 'message' => 'All fields (Room ID, Name, Floor, Type) are required.']);
 }
 
+// One camera = one active room. Excludes this room, so re-saving a room that
+// already owns the IP is not treated as a conflict with itself.
+$conflict = ms_camera_ip_conflict($monitorPdo, $cameraIp, $roomId);
+if ($conflict) {
+    ms_json([
+        'success' => false,
+        'message' => "Camera {$cameraIp} is already assigned to {$conflict['room_id']} ({$conflict['room_name']}). "
+                   . "Disable that room first to free the camera, then try again."
+    ]);
+}
+
 try {
     // Check if room exists
     $stmt = $monitorPdo->prepare("SELECT COUNT(*) FROM rooms WHERE room_id = ? AND is_active = 1");

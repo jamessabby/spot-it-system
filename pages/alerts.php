@@ -46,7 +46,7 @@ $totalAlerts = $cctvCount + $missingCount + $claimsCount;
 
 $offlineRoomsStmt = $monitorPdo->query(
     "SELECT room_id, room_name, floor, monitoring_status
-     FROM rooms WHERE is_active = 1 AND monitoring_status != 'active'
+     FROM rooms WHERE is_active = 1 AND is_enabled = 1 AND monitoring_status != 'active'
      ORDER BY room_id"
 );
 $offlineRooms = $offlineRoomsStmt->fetchAll();

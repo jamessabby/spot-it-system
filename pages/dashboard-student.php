@@ -32,7 +32,7 @@ try {
     $statTotalRecovered = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status IN ('recovered', 'pending_claim')")->fetchColumn();
 
     // 4. Rooms monitored (from monitor DB)
-    $statRoomsMonitored = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1")->fetchColumn();
+    $statRoomsMonitored = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND is_enabled = 1")->fetchColumn();
 
     // 5. Fetch student claim history (join with recovered_items to get item details)
     $stmt = $lfPdo->prepare("

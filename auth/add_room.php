@@ -34,6 +34,16 @@ if (strlen($roomId) > 20) {
     ms_json(['success' => false, 'message' => 'Room ID must be 20 characters or less.']);
 }
 
+// One camera = one active room. Disable the other room first to free its IP.
+$conflict = ms_camera_ip_conflict($monitorPdo, $cameraIp, $roomId);
+if ($conflict) {
+    ms_json([
+        'success' => false,
+        'message' => "Camera {$cameraIp} is already assigned to {$conflict['room_id']} ({$conflict['room_name']}). "
+                   . "Disable that room first to free the camera, then try again."
+    ]);
+}
+
 // Check if room_id already exists in spotit_monitor_db
 try {
     $stmt = $monitorPdo->prepare("SELECT is_active FROM rooms WHERE room_id = ? LIMIT 1");

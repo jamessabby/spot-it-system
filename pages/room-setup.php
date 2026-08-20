@@ -11,7 +11,10 @@ $active_page = 'setup';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 
 // Fetch rooms dynamically (excluding DESK system room from management list)
-$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated, camera_ip, camera_user, camera_pass FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY floor, room_id");
+// Disabled rooms are listed here on purpose — this is the only page that can
+// re-enable them, so filtering on is_enabled would strand them. Every other
+// room list filters them out. is_active = 0 is the separate soft-delete flag.
+$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated, camera_ip, camera_user, camera_pass, is_enabled FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY is_enabled DESC, floor, room_id");
 $roomsList = $roomsStmt->fetchAll();
 ?>
 <!DOCTYPE html>
@@ -77,11 +80,18 @@ $roomsList = $roomsStmt->fetchAll();
             </tr>
             <?php else: ?>
             <?php foreach ($roomsList as $r):
-                $status = $r['monitoring_status'] === 'active' ? 'active' : 'offline';
+                $isEnabled = (int)($r['is_enabled'] ?? 1) === 1;
+                $status = !$isEnabled ? 'disabled' : ($r['monitoring_status'] === 'active' ? 'active' : 'offline');
                 $cal = $r['last_calibrated'] ? date('M j, Y', strtotime($r['last_calibrated'])) : '—';
-                $ip = $r['camera_ip'] ? htmlspecialchars($r['camera_ip']) : '<span style="color:var(--text-dim);font-style:italic;">None</span>';
+                // A disabled room keeps its camera_ip on record but no longer holds a
+                // claim on it, so show the IP struck through rather than hiding it.
+                $ip = $r['camera_ip']
+                    ? ($isEnabled
+                        ? htmlspecialchars($r['camera_ip'])
+                        : '<span style="text-decoration:line-through;color:var(--text-dim);" title="Released — free to assign to another room">' . htmlspecialchars($r['camera_ip']) . '</span>')
+                    : '<span style="color:var(--text-dim);font-style:italic;">None</span>';
             ?>
-            <tr>
+            <tr<?= $isEnabled ? '' : ' style="opacity:.55;"' ?>>
               <td><span style="font-family:var(--font-mono);font-weight:800;"><?= htmlspecialchars($r['room_id']) ?></span></td>
               <td><?= htmlspecialchars($r['room_name']) ?></td>
               <td><?= htmlspecialchars($r['floor']) ?></td>
@@ -93,6 +103,10 @@ $roomsList = $roomsStmt->fetchAll();
               <td style="font-size:.72rem;color:var(--text-dim);font-family:var(--font-mono);"><?= $cal ?></td>
               <td>
                 <button class="btn btn-sm" data-room="<?= htmlspecialchars(json_encode($r), ENT_QUOTES, 'UTF-8') ?>" onclick="openEditRoomModal(this)" title="Edit"><i class="fa-solid fa-pencil"></i></button>
+                <button class="btn btn-sm" onclick="toggleRoomEnabled('<?= htmlspecialchars($r['room_id']) ?>', <?= $isEnabled ? 0 : 1 ?>)"
+                        title="<?= $isEnabled ? 'Disable — takes the room out of service and frees its camera' : 'Enable — put the room back in service' ?>">
+                  <i class="fa-solid <?= $isEnabled ? 'fa-circle-pause' : 'fa-circle-play' ?>"></i>
+                </button>
                 <button class="btn btn-sm btn-alert" onclick="deleteRoom('<?= htmlspecialchars($r['room_id']) ?>')" title="Delete"><i class="fa-solid fa-trash"></i></button>
               </td>
             </tr>
@@ -365,6 +379,34 @@ async function submitEditRoom() {
   if (data && data.success) {
     showToast('success', data.message || 'Room configuration updated successfully.');
     closeModal('editRoomModal');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showToast('error', data?.message || 'Failed to update room.');
+  }
+}
+
+// Disable takes a room out of service without touching its baseline, registered
+// items or detection history — the only way to hand the single physical camera
+// to another room. Enable puts it back.
+async function toggleRoomEnabled(roomId, enable) {
+  if (!enable && !confirm(
+      `Disable room "${roomId}"?
+
+` +
+      `Monitoring stops and its camera is freed for another room. ` +
+      `The baseline, registered items and detection history are all kept, ` +
+      `and you can re-enable it any time.`)) {
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('room_id', roomId);
+  fd.append('enabled', enable);
+
+  const data = await spotitFetch('../auth/toggle_room_enabled.php', { method: 'POST', body: fd });
+
+  if (data && data.success) {
+    showToast('success', data.message || 'Room updated.');
     setTimeout(() => location.reload(), 1000);
   } else {
     showToast('error', data?.message || 'Failed to update room.');

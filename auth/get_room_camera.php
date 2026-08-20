@@ -26,12 +26,26 @@ if ($roomId === '') {
 }
 
 try {
-    $stmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass FROM rooms WHERE room_id = ? LIMIT 1");
+    $stmt = $monitorPdo->prepare("SELECT camera_ip, camera_user, camera_pass, is_enabled FROM rooms WHERE room_id = ? LIMIT 1");
     $stmt->execute([$roomId]);
     $room = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$room) {
         ms_json(['success' => false, 'message' => 'Room not found'], 404);
+    }
+
+    // A disabled room has released its camera. This is the gate that actually
+    // stops main.py monitoring a parked room: it reports configured=false, which
+    // main.py already handles by dropping to STANDBY rather than crashing.
+    // Reported as success:true so the detector treats it as "nothing to watch"
+    // instead of a transport failure it should retry.
+    if (!(int)($room['is_enabled'] ?? 1)) {
+        ms_json([
+            'success'    => true,
+            'configured' => false,
+            'disabled'   => true,
+            'message'    => 'Room is disabled. Its camera has been released for reassignment.'
+        ]);
     }
 
     if (empty($room['camera_ip'])) {

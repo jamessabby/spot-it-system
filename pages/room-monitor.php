@@ -7,7 +7,7 @@ $active_page = 'rooms';
 $user_role = $_SESSION['user_role'] ?? 'admin';
 
 // Fetch all active production rooms from DB (excluding system DESK room)
-$activeRooms = $monitorPdo->query("SELECT room_id, room_name, baseline_count, floor FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY room_id")->fetchAll();
+$activeRooms = $monitorPdo->query("SELECT room_id, room_name, baseline_count, floor FROM rooms WHERE is_active = 1 AND is_enabled = 1 AND room_id != 'DESK' ORDER BY room_id")->fetchAll();
 $room_ids = array_column($activeRooms, 'room_id');
 
 // Read detection_mode.json state

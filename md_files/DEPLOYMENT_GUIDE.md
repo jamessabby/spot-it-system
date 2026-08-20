@@ -78,15 +78,32 @@ mysql -u USER -p u000000000_spotit_lf        < services/lostfound/schema.sql
 mysql -u USER -p u000000000_spotit_user      < services/user/schema.sql
 ```
 
-Then the migrations, **in exactly this order** (CLAUDE.md §7a — they depend on each other):
+Then the migrations. The first four **must run in exactly this order** — they depend on
+each other (CLAUDE.md §7a). The rest are independent and can run in any order after them,
+but watch the database each one targets: they are not all the monitoring DB.
 
 ```bash
-mysql -u USER -p u000000000_spotit_monitor < migration_workflow_audit.sql
-mysql -u USER -p u000000000_spotit_monitor < migration_confidence.sql
-mysql -u USER -p u000000000_spotit_monitor < migration_notifications.sql
-mysql -u USER -p u000000000_spotit_monitor < migration_snapshot_b.sql
+# Ordered — each builds on the last.
+mysql -u USER -p u000000000_spotit_monitor < services/migration_workflow_audit.sql
+mysql -u USER -p u000000000_spotit_monitor < services/migration_confidence.sql
+mysql -u USER -p u000000000_spotit_monitor < services/migration_notifications.sql
+mysql -u USER -p u000000000_spotit_monitor < services/migration_snapshot_b.sql
+
+# Independent. migration_room_enabled needs camera_ip, so keep these two in order.
+mysql -u USER -p u000000000_spotit_monitor < services/migration_room_camera_columns.sql
+mysql -u USER -p u000000000_spotit_monitor < services/migration_room_enabled.sql
 mysql -u USER -p u000000000_spotit_monitor < services/migration_accuracy_trials.sql
+
+# LOST & FOUND database, not monitoring.
+mysql -u USER -p u000000000_spotit_lf      < services/migration_claims_archive.sql
 ```
+
+`migration_workflow_audit.sql` also writes into the **auth** database — it creates
+`notifications` and `user_activity` there via its own `USE` statements — so run it with an
+account that can reach both, or split it by hand.
+
+All of these are safe to re-run: every one uses `IF NOT EXISTS` or an idempotent
+`MODIFY COLUMN`.
 
 ---
 
@@ -283,11 +300,98 @@ Storage is bounded by the donation purge (§10) rather than growing forever.
 
 ## 10. End-of-year cleanup
 
-**Donation & Retention** in the sidebar (admin only) processes unclaimed items: it keeps
-the item description and dates as a record, and deletes the CCTV snapshots, detection
-rows and claimant selfies. An audit entry naming you is written first.
+**Export the records first.** The admin dashboard has an **Export Records** card in its
+right-hand column: one CSV of confirmed claimants, one of unclaimed/donated items,
+optionally filtered to a year. The purge is irreversible, so take these before running it.
+Confirmed outcomes only — unverified `pending` detections are deliberately excluded.
+
+**Donation & Retention** in the sidebar (admin only) then processes unclaimed items: it
+keeps the item description and dates as a record, and deletes the CCTV snapshots and
+detection rows. Claimant selfies are deleted too, but the **claim row itself is kept**,
+marked `archived` — who collected what is an audit record the lab needs; the photograph is
+personal data with a retention limit. An audit entry naming you is written first.
 
 This is both the SWAFO-mandated donation process and the system's garbage collection.
+
+---
+
+## 10a. Scheduled job — auto-escalation
+
+`auth/escalate_detections.php` is what moves a detection from `pending` to `potential` at
+30 minutes and to `confirmed_missing` at 60 (`TIMER_POTENTIAL_MIN` / `TIMER_CONFIRMED_MIN`
+in `config/env.php`). It also writes the `auto_escalation` audit log and notifies every
+admin and staff account.
+
+**Nothing calls it on its own.** Until it is scheduled, every detection sits at `pending`
+forever and the two-stage escalation exists only on paper. Set up **exactly one** of the
+two options below — running both would escalate each detection twice and duplicate every
+notification.
+
+### Hosted (Hostinger) — control-panel cron
+
+hPanel -> **Advanced** -> **Cron Jobs** -> Create. Every 5 minutes:
+
+```
+*/5 * * * *   curl -fsS "https://your-domain.com/auth/escalate_detections.php?cron_key=YOUR_CRON_KEY" > /dev/null
+```
+
+If the plan offers a PHP-CLI cron instead, prefer it — CLI skips the key check entirely,
+so the secret never appears in a cron table or a server log:
+
+```
+*/5 * * * *   /usr/bin/php /home/uXXXXXXX/domains/your-domain.com/public_html/auth/escalate_detections.php
+```
+
+`YOUR_CRON_KEY` is `SPOTIT_CRON_KEY` from **`config/env.local.php`** — the same gitignored
+file that holds every other secret. It is never hardcoded:
+
+```php
+'SPOTIT_CRON_KEY' => '<32+ random hex chars, different from SPOTIT_DETECTION_KEY>',
+```
+
+Generate one with `php -r "echo bin2hex(random_bytes(24));"`.
+
+While `SPOTIT_CRON_KEY` is still the shipped `CHANGE_ME_CRON_KEY` placeholder, the HTTP
+trigger returns **503** and refuses to run. That is deliberate: the endpoint changes
+detection status and fans out notifications, so on a public host a key printed in the repo
+is no key at all.
+
+### Local / Windows — NSSM service
+
+Same approach as the detector service, for the same reasons (no logged-in user, no open
+terminal, restarts after a crash or reboot). From an **elevated** PowerShell:
+
+```powershell
+cd C:\xampp\htdocs\spotit\deploy
+.\install-escalation-service.ps1
+```
+
+It runs the job once first, so a bad DB config shows up as readable output rather than as
+a silent service that never escalates anything. Then it registers `SpotItEscalation`,
+which loops every 5 minutes. `deploy/escalation-runner.ps1` is the loop itself — NSSM
+supervises processes, not schedules, so the interval has to live in a script.
+
+Remove it with `.\uninstall-escalation-service.ps1` (do this before switching to the
+hosted cron).
+
+### Confirming it is actually running
+
+```powershell
+nssm status SpotItEscalation
+Get-Content C:\xampp\htdocs\spotit\logs\escalation.log -Wait -Tail 20
+```
+
+`SERVICE_RUNNING`, plus a timestamped `Escalation run complete:` line every 5 minutes, is
+the proof. On Hostinger the same evidence is in the database instead:
+
+```sql
+SELECT logged_at, event_message FROM monitoring_logs
+ WHERE event_type = 'auto_escalation' ORDER BY log_id DESC LIMIT 10;
+```
+
+An end-to-end test that does not require waiting 30 real minutes is in
+[TESTING_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/TESTING_GUIDE.md) under
+"Auto-escalation".
 
 ---
 
@@ -303,6 +407,11 @@ This is both the SWAFO-mandated donation process and the system's garbage collec
 | No detections in the DB | API key mismatch | `logs/detector.err.log` will show 401s |
 | Detector restarts repeatedly | Bad config or camera | `logs/detector.err.log`; NSSM throttles after 10s |
 | Uploaded image 403s | Working as intended | `uploads/.htaccess` only serves jpg/png/gif/webp |
+| Detections never leave `pending` | Escalation job not scheduled | §10a — install the service or add the cron |
+| Escalation URL returns 503 | `SPOTIT_CRON_KEY` still the placeholder | Set a real key in `env.local.php` |
+| Escalation URL returns 401 | Key in the cron does not match `env.local.php` | Re-copy it; no quotes, no trailing space |
+| Every alert notified twice | Both the NSSM service *and* a cron are running | Run only one — `.\uninstall-escalation-service.ps1` |
+| Camera IP rejected on save | Another enabled room already holds it | Disable that room on Room Setup first — the error names it |
 
 **Offline fallback for the defense.** If campus internet is unreliable on the day, run
 the whole system on one laptop with XAMPP: leave `SPOTIT_DEPLOY` as `local` (or unset)

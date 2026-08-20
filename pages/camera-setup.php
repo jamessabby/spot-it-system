@@ -13,7 +13,7 @@ $active_page = 'camerasetup';
 $user_role   = 'admin';
 
 // 1. Fetch active production rooms (excluding DESK sandbox)
-$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, baseline_image, last_calibrated FROM rooms WHERE is_active = 1 AND room_id != 'DESK' ORDER BY room_id");
+$roomsStmt = $monitorPdo->query("SELECT room_id, room_name, floor, room_type, baseline_image, last_calibrated FROM rooms WHERE is_active = 1 AND is_enabled = 1 AND room_id != 'DESK' ORDER BY room_id");
 $prodRooms = $roomsStmt->fetchAll();
 
 // 2. Select default room

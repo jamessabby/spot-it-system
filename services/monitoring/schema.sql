@@ -24,15 +24,21 @@ CREATE TABLE `rooms` (
   `floor`              varchar(30)  DEFAULT NULL COMMENT 'e.g. 3rd Floor MLH',
   `room_type`          varchar(60)  DEFAULT NULL COMMENT 'e.g. Computer Lab',
   `camera_count`       tinyint(4)   NOT NULL DEFAULT 2,
+  `camera_ip`          varchar(100) DEFAULT NULL COMMENT 'Private LAN address of the room camera e.g. 192.168.18.14',
+  `camera_user`        varchar(100) DEFAULT NULL COMMENT 'RTSP account username (Tapo camera account, not the TP-Link cloud login)',
+  `camera_pass`        varchar(100) DEFAULT NULL COMMENT 'RTSP account password',
   `baseline_image`     varchar(300) DEFAULT NULL COMMENT 'Path to reference frame image',
   `baseline_count`     int(11)      NOT NULL DEFAULT 0 COMMENT 'Expected total item count',
   `monitoring_status`  enum('active','inactive','calibrating') NOT NULL DEFAULT 'inactive',
   `last_calibrated`    datetime     DEFAULT NULL,
-  `is_active`          tinyint(1)   NOT NULL DEFAULT 1,
+  `is_active`          tinyint(1)   NOT NULL DEFAULT 1 COMMENT 'Row lifecycle: 0 = soft-deleted, hidden everywhere',
+  `is_enabled`         tinyint(1)   NOT NULL DEFAULT 1 COMMENT 'Service state: 0 = taken out of service by an admin. Keeps all data, releases its camera_ip claim',
   `created_at`         datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`room_id`),
   KEY `idx_status`  (`monitoring_status`),
-  KEY `idx_active`  (`is_active`)
+  KEY `idx_active`  (`is_active`),
+  KEY `idx_enabled` (`is_enabled`),
+  KEY `idx_camera_ip` (`camera_ip`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── registered_lab_items ──────────────────────────────────────────────────────

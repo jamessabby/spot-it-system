@@ -20,8 +20,8 @@ $user_role   = $_SESSION['user_role'] ?? 'staff';
 $is_admin    = $user_role === 'admin';
 
 // Live statistics calculations for inventory strip
-$sumRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1")->fetchColumn();
-$sumBaseline = (int)$monitorPdo->query("SELECT IFNULL(SUM(baseline_count), 0) FROM rooms WHERE is_active = 1")->fetchColumn();
+$sumRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND is_enabled = 1")->fetchColumn();
+$sumBaseline = (int)$monitorPdo->query("SELECT IFNULL(SUM(baseline_count), 0) FROM rooms WHERE is_active = 1 AND is_enabled = 1")->fetchColumn();
 $potentialCount = (int)$monitorPdo->query("SELECT COUNT(DISTINCT room_id) FROM detections WHERE status = 'potential' AND is_removed = 0")->fetchColumn();
 $missingCount = (int)$monitorPdo->query("SELECT COUNT(DISTINCT room_id) FROM detections WHERE status = 'confirmed_missing' AND is_removed = 0")->fetchColumn();
 $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
@@ -189,7 +189,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
             $monitorPdo = getMonitorDB();
             
             // 1. Fetch all active rooms
-            $roomStmt = $monitorPdo->prepare("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 ORDER BY floor, room_id");
+            $roomStmt = $monitorPdo->prepare("SELECT room_id, room_name, floor, room_type, camera_count, baseline_count, monitoring_status, last_calibrated FROM rooms WHERE is_active = 1 AND is_enabled = 1 ORDER BY floor, room_id");
             $roomStmt->execute();
             $dbRooms = $roomStmt->fetchAll();
             

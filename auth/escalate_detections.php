@@ -3,8 +3,18 @@
  * S.P.O.T.-IT — Detection Escalation Cron Handler  [FIXES G3, G11]
  * auth/escalate_detections.php
  *
- * Run every 5 minutes via cron:
- *   * /5 * * * *  php /var/www/html/spotit/auth/escalate_detections.php >> /var/log/spotit_escalate.log 2>&1
+ * NOTHING CALLS THIS ON ITS OWN — it must be scheduled. Two supported ways:
+ *
+ *   Local / Windows (XAMPP, defense demo):
+ *     deploy/install-escalation-service.ps1   — NSSM service, CLI, every 5 min
+ *
+ *   Hosted (Hostinger):
+ *     control-panel cron, every 5 min, fetching
+ *     https://<site>/auth/escalate_detections.php?cron_key=<SPOTIT_CRON_KEY>
+ *
+ * Both are written up in md_files/DEPLOYMENT_GUIDE.md. Without one of them the
+ * 30-minute and 60-minute escalations below never fire and every detection
+ * stays 'pending' forever.
  *
  * What this does:
  *   1. Finds all 'pending' detections that have elapsed >= TIMER_POTENTIAL_MIN
@@ -26,11 +36,32 @@ require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../services/monitoring/db.php';
 require_once __DIR__ . '/../services/auth/db.php';
 
-// Allow either CLI execution or HTTP with cron key
+// Allow either CLI execution or HTTP with cron key.
+//
+// CLI is how the Windows/NSSM runner drives this locally (deploy/escalation-runner.ps1);
+// HTTP is for shared hosting whose control-panel cron can only fetch a URL.
 $isCli = (php_sapi_name() === 'cli');
 if (!$isCli) {
     $cronKey = trim($_GET['cron_key'] ?? $_SERVER['HTTP_X_CRON_KEY'] ?? '');
-    $expectedKey = getenv('SPOTIT_CRON_KEY') ?: 'CHANGE_ME_CRON_KEY';
+
+    // Use the SPOTIT_CRON_KEY constant, not getenv() directly: env.php resolves
+    // env.local.php first, and env.local.php is where the real key actually
+    // lives on Hostinger. Reading getenv() straight would have ignored it and
+    // silently compared against the placeholder.
+    $expectedKey = SPOTIT_CRON_KEY;
+
+    // Refuse over HTTP while the key is still the shipped placeholder. This
+    // endpoint mutates detection status and fans out notifications; exposed on a
+    // public host with a key that is printed in the repo, it is effectively
+    // unauthenticated. CLI is unaffected, so local testing still works.
+    if ($expectedKey === 'CHANGE_ME_CRON_KEY') {
+        http_response_code(503);
+        echo json_encode([
+            'error' => 'SPOTIT_CRON_KEY is unset. Set it in config/env.local.php before using the HTTP cron trigger.',
+        ]);
+        exit();
+    }
+
     if (!hash_equals($expectedKey, $cronKey)) {
         http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
