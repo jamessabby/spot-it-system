@@ -204,6 +204,21 @@ if (!$ffmpegPath) {
     }
 }
 
+if (!$ffmpegPath && strncasecmp(PHP_OS, 'WIN', 3) === 0) {
+    $winCandidates = [
+        (getenv('LOCALAPPDATA') ?: '') . '\Microsoft\WinGet\Links\ffmpeg.exe',
+        'C:\Users\James\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe',
+        'C:\ffmpeg\bin\ffmpeg.exe',
+        'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
+    ];
+    foreach ($winCandidates as $cand) {
+        if (!empty($cand) && file_exists($cand)) {
+            $ffmpegPath = $cand;
+            break;
+        }
+    }
+}
+
 // ── MJPEG snapshot (one frame) — attempts RTSP pull via ffmpeg if available ───
 if ($action === 'snapshot') {
     header('Content-Type: application/json');

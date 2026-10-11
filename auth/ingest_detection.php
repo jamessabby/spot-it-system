@@ -279,11 +279,15 @@ $confidence_factors = json_encode([
 // ── G1: Strict Duplicate suppression per object zone ──────────────────────────
 try {
     $monitorPdo = getMonitorDB();
-    // Match any active detection for this zone OR any detection logged in the last 15 minutes
+    // Match any active detection for this zone (within 24h) OR recent dismissed alert within 15 min.
+    // Recovered items are considered resolved and will create a new detection row when removed again.
     $existing = $monitorPdo->prepare(
         "SELECT detection_id, status FROM detections
          WHERE room_id = ? AND object_zone = ?
-           AND (status IN ('pending','potential','confirmed_missing') OR detected_at >= NOW() - INTERVAL 15 MINUTE)
+           AND (
+             (status IN ('pending','potential','confirmed_missing') AND detected_at >= NOW() - INTERVAL 24 HOUR)
+             OR (status = 'dismissed' AND detected_at >= NOW() - INTERVAL 15 MINUTE)
+           )
          ORDER BY detection_id DESC LIMIT 1"
     );
     $existing->execute([$room_id, $object_zone]);

@@ -87,11 +87,16 @@ function detector_atomic_write(string $path, string $bytes): bool
     if (DIRECTORY_SEPARATOR === '\\' && file_exists($path)) {
         @unlink($path);
     }
-    if (!@rename($tmp, $path)) {
-        @unlink($tmp);
-        return false;
+    if (@rename($tmp, $path)) {
+        return true;
     }
-    return true;
+    // Fallback: If rename failed due to Windows process file locks, copy over
+    if (@copy($tmp, $path)) {
+        @unlink($tmp);
+        return true;
+    }
+    @unlink($tmp);
+    return false;
 }
 
 // ── State read / write ────────────────────────────────────────────────────────

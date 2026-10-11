@@ -189,8 +189,9 @@ $flash_msg   = match($flash_error) {
 
         <!-- ── Manual email/password form ── -->
         <form id="loginForm" novalidate>
-          <!-- CSRF token (in production: generate server-side) -->
-          <input type="hidden" name="csrf_token" id="csrfToken" value="<?= bin2hex(random_bytes(16)) ?>" />
+          <!-- CSRF token. Session-backed and actually validated by
+               login_handler.php since 2026-08-22 (config/security.php). -->
+          <input type="hidden" name="csrf_token" id="csrfToken" value="<?= htmlspecialchars(spotit_csrf_token(), ENT_QUOTES, 'UTF-8') ?>" />
 
           <!-- Email -->
           <div class="form-group">
@@ -236,17 +237,33 @@ $flash_msg   = match($flash_error) {
             <a href="forgot-password.php" class="forgot-link">Forgot password?</a>
           </div>
 
-          <!-- CAPTCHA -->
-          <div class="captcha-wrap" id="captchaWrap" onclick="solveCaptcha()" role="button" aria-label="Complete CAPTCHA">
-            <div class="captcha-check" id="captchaCheck">
-              <div class="captcha-spinner" id="capSpinner"></div>
-              <i class="fa-solid fa-check captcha-check-icon" id="capCheck"></i>
-            </div>
-            <span class="captcha-text">I'm not a robot</span>
-            <div class="captcha-brand">
-              <i class="fa-solid fa-shield-halved"></i>
-              <span>reCAPTCHA</span>
-            </div>
+          <!-- Shown only after login is refused for an unconfirmed address. -->
+          <div id="resendVerifyBox" style="display:none;margin-bottom:1rem;padding:12px 14px;
+               border:1px solid rgba(183,121,31,.35);background:rgba(183,121,31,.07);
+               border-radius:var(--radius-sm);font-size:.78rem;line-height:1.6;color:var(--text-muted);">
+            <i class="fa-solid fa-envelope-circle-check" style="color:#b7791f;"></i>
+            Your email address is not confirmed yet.
+            <button type="button" id="resendVerifyBtn" onclick="resendVerification()"
+                    style="background:none;border:none;padding:0;margin-left:2px;
+                           color:var(--green-main);font-weight:700;cursor:pointer;font-size:.78rem;">
+              Resend confirmation
+            </button>
+          </div>
+
+          <!-- CAPTCHA. The first challenge is rendered server-side so a normal
+               visitor never waits on a round trip; auth/captcha.php supplies
+               replacements, which are needed because each one is single-use. -->
+          <div class="captcha-wrap" id="captchaWrap">
+            <i class="fa-solid fa-shield-halved captcha-icon"></i>
+            <label class="captcha-q" for="captchaAnswer">
+              Security check: what is <strong id="captchaQuestion"><?= htmlspecialchars(spotit_captcha_new(), ENT_QUOTES, 'UTF-8') ?></strong>?
+            </label>
+            <input type="number" class="captcha-input" id="captchaAnswer" name="captcha_answer"
+                   inputmode="numeric" autocomplete="off" required aria-label="Answer to the security check" />
+            <button type="button" class="captcha-refresh" id="captchaRefresh"
+                    onclick="refreshCaptcha()" title="Get a new question" aria-label="Get a new question">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
           </div>
 
           <!-- Submit -->
@@ -284,6 +301,7 @@ const MAX_ATTEMPTS   = 5;
 const WARN_AT        = 3;
 
 /* ── State ── */
+/* captchaDone is now derived from the input rather than set by a timer. */
 let captchaDone    = false;
 let failedAttempts = 0;
 let cooldownActive = false;
@@ -342,24 +360,61 @@ function isValidEmail(email) {
   return email.toLowerCase().endsWith(ALLOWED_DOMAIN) && email.includes('@');
 }
 
-/* ── CAPTCHA simulation ── */
-function solveCaptcha() {
-  if (captchaDone || cooldownActive) return;
-  const wrap = document.getElementById('captchaWrap');
-  wrap.classList.add('loading');
-  setTimeout(() => {
-    wrap.classList.remove('loading');
-    wrap.classList.add('done');
-    captchaDone = true;
-    updateSubmit();
-  }, 700 + Math.random() * 500);
+/* Set when login is refused for an unconfirmed address, so the resend button
+   targets the address that was actually rejected. */
+let pendingVerifyEmail = '';
+
+async function resendVerification() {
+  const btn = document.getElementById('resendVerifyBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  try {
+    const fd = new FormData();
+    fd.append('csrf_token', document.getElementById('csrfToken').value);
+    fd.append('email', pendingVerifyEmail);
+    const res  = await fetch('../auth/resend_verification.php', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data && data.csrf_invalid) {
+      showToast('error', data.message || 'Session expired. Reloading...');
+      setTimeout(() => window.location.reload(), 1600);
+      return;
+    }
+    /* Deliberately uniform: the endpoint says the same thing whether the
+       address exists, is already confirmed, or was throttled. */
+    showToast('success', (data && data.message) || 'If that address needs confirming, a new link is on its way.');
+  } catch (e) {
+    showToast('error', 'Network error. Please try again.');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Resend confirmation';
+}
+
+/* ── CAPTCHA ──
+   The answer is checked server-side and each challenge is single-use, so after
+   ANY submit — success or failure — the old question is already spent and the
+   page has to pull a new one. */
+async function refreshCaptcha() {
+  const btn = document.getElementById('captchaRefresh');
+  const q   = document.getElementById('captchaQuestion');
+  const ans = document.getElementById('captchaAnswer');
+  btn.classList.add('spinning');
+  try {
+    const res  = await fetch('../auth/captcha.php', { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.question) q.textContent = data.question;
+  } catch (e) {
+    /* Offline or the endpoint is unreachable. Leave the current question in
+       place rather than blanking it - a stale question the server may still
+       accept beats an empty box the user cannot answer at all. */
+  }
+  btn.classList.remove('spinning');
+  ans.value = '';
+  document.getElementById('captchaWrap').classList.remove('invalid');
+  updateSubmit();
 }
 
 function resetCaptcha() {
-  const wrap = document.getElementById('captchaWrap');
-  wrap.classList.remove('done', 'loading');
-  captchaDone = false;
-  updateSubmit();
+  refreshCaptcha();
 }
 
 /* ── Submit button state ── */
@@ -367,11 +422,13 @@ function updateSubmit() {
   const email = document.getElementById('email').value.trim();
   const pw    = document.getElementById('password').value;
   const btn   = document.getElementById('submitBtn');
+  captchaDone = document.getElementById('captchaAnswer').value.trim() !== '';
   btn.disabled = !(isValidEmail(email) && pw.length >= 1 && captchaDone && !cooldownActive);
 }
 
 document.getElementById('email').addEventListener('input', updateSubmit);
 document.getElementById('password').addEventListener('input', updateSubmit);
+document.getElementById('captchaAnswer').addEventListener('input', updateSubmit);
 
 /* ── Attempt dots ── */
 function updateDots() {
@@ -449,7 +506,11 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     document.getElementById('pwError').classList.add('show');
     valid = false;
   }
-  if (!captchaDone) { showToast('error', 'Please complete the CAPTCHA first.'); return; }
+  if (!captchaDone) {
+    document.getElementById('captchaWrap').classList.add('invalid');
+    showToast('error', 'Please answer the security check first.');
+    return;
+  }
   if (!valid) return;
 
   btn.classList.add('loading'); btn.disabled = true;
@@ -465,6 +526,34 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
       showToast('success', 'Signed in successfully. Redirecting…');
       setTimeout(() => { window.location.href = data.redirect || 'dashboard-admin.php'; }, 900);
     } else {
+      /* A rejected CSRF token or a wrong CAPTCHA answer is not a failed
+         CREDENTIAL attempt - counting it would burn the user's 5 tries and
+         eventually lock an account whose password was never even submitted.
+         The server rejects both before it looks at the password. */
+      if (data.csrf_invalid) {
+        showToast('error', data.message || 'Your session expired. Reloading…');
+        setTimeout(() => window.location.reload(), 1600);
+        return;
+      }
+      if (data.captcha_failed) {
+        resetCaptcha();
+        document.getElementById('captchaWrap').classList.add('invalid');
+        btn.disabled = true;
+        showToast('error', data.message || 'Security check failed.');
+        return;
+      }
+
+      /* Correct password, unconfirmed address. Not a failed credential attempt
+         either - they proved they know the password, so counting it toward the
+         lockout would punish the one case we are certain is legitimate. */
+      if (data.unverified) {
+        resetCaptcha();
+        pendingVerifyEmail = data.email || document.getElementById('email').value.trim();
+        document.getElementById('resendVerifyBox').style.display = '';
+        showToast('error', data.message || 'Please confirm your email address first.');
+        return;
+      }
+
       failedAttempts++;
       updateDots();
       resetCaptcha();
@@ -508,6 +597,32 @@ function showToast(type, msg) {
   stack.appendChild(t);
   setTimeout(() => t.remove(), 4500);
 }
+
+/* ── Arrival banners ──
+   Signup and the verification link both redirect here with a flag, and until
+   now the page ignored all of them - so a user who had just confirmed their
+   email landed on a plain login form with no confirmation that anything had
+   happened. */
+(function () {
+  const q = new URLSearchParams(window.location.search);
+
+  if (q.get('verified') === '1') {
+    showToast('success', 'Email confirmed. You can sign in now.');
+  } else if (q.get('registered') === '1') {
+    if (q.get('mail_failed') === '1') {
+      showToast('error', 'Account created, but the confirmation email could not be sent. Sign in to resend it.');
+    } else {
+      showToast('success', 'Account created. Check your DLSU-D email for the confirmation link.');
+    }
+  } else if (q.get('error') === 'login_required') {
+    showToast('error', 'Please sign in to continue.');
+  }
+
+  /* Strip the flags so a refresh does not replay the toast. */
+  if (q.toString() !== '' && window.history.replaceState) {
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+})();
 </script>
 </body>
 </html>

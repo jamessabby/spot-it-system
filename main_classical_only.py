@@ -103,7 +103,7 @@ RECOVER_CONFIRM_SEC = 0.5  #                                 — aligned to main
 
 # Same env vars as main.py, so the A/B arms can never end up pointed at
 # different cameras (or at the same camera through different credentials).
-CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "192.168.18.14")
+CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "10.62.74.79")
 CAMERA_USER = os.environ.get("SPOTIT_CAMERA_USER", "SpotItCamera")
 CAMERA_PASS = os.environ.get("SPOTIT_CAMERA_PASS", "spotitcamera232")
 RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/stream1"
@@ -238,6 +238,87 @@ def ab_log_event(label, state):
         pass
 
 
+_last_console_log = {}
+_last_console_state = {}
+_last_console_changed = {}
+_metrics_last_write = {}
+_metrics_last_state = {}
+_classical_metrics_header = False
+CLASSICAL_METRICS_CSV = "photos/classical_metrics.csv"
+
+
+def log_realtime_console_classical(
+    label, state, change_pct, template_score, is_fixed, changed,
+    t_absent, t_present, elapsed_sec,
+):
+    now_ts = time.time()
+    interval = float(os.environ.get("SPOTIT_LOG_INTERVAL", "0.5" if os.environ.get("SPOTIT_TEST_REPLACEMENT") else "1.0"))
+
+    prev_state = _last_console_state.get(label)
+    prev_changed = _last_console_changed.get(label)
+
+    is_first_eval = (prev_state is None)
+    state_transition = (prev_state is not None and state != prev_state)
+    change_transition = (prev_changed is not None and changed != prev_changed)
+    time_elapsed = (now_ts - _last_console_log.get(label, 0.0) >= interval)
+
+    if not (is_first_eval or state_transition or change_transition or time_elapsed):
+        return
+
+    _last_console_log[label] = now_ts
+    _last_console_state[label] = state
+    _last_console_changed[label] = changed
+
+    tag = ""
+    if state_transition:
+        tag = f" [{prev_state} -> {state}]"
+    elif change_transition:
+        tag = f" [{'CHANGE >= 8%' if changed else 'SETTLED < 8%'}]"
+
+    if not changed:
+        tpl_desc = "Idle (<8% diff)"
+    elif is_fixed:
+        tpl_desc = f"{template_score:.4f} (ignored: fixed-asset rule)"
+    else:
+        tpl_desc = f"{template_score:.4f} (thr: {MATCH_SCORE_THRESHOLD:.2f})"
+
+    diff_tag = ">= 8%" if changed else "< 8%"
+    print(
+        f"[CLASSICAL]  t={elapsed_sec:6.2f}s | ROI: {label:<10} | State: {state:<8} | "
+        f"DiffMask: {change_pct:6.4f} ({change_pct*100:5.1f}%, {diff_tag}) | "
+        f"MobileNetV2: N/A (Classical Arm) | TemplateMatch: {tpl_desc} | "
+        f"Timers: abs={t_absent:.1f}s pres={t_present:.1f}s{tag}"
+    )
+
+
+def log_classical_metrics(label, change_pct, template_score, state, t_absent, t_present):
+    global _classical_metrics_header
+    test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+    now_ts = time.time()
+    prev_state = _metrics_last_state.get(label)
+    state_changed = (state != prev_state)
+
+    if not state_changed:
+        if not test_mode:
+            return
+        if now_ts - _metrics_last_write.get(label, 0.0) < 1.0:
+            return
+
+    _metrics_last_state[label] = state
+    _metrics_last_write[label] = now_ts
+
+    try:
+        if not _classical_metrics_header:
+            _classical_metrics_header = True
+            if not os.path.exists(CLASSICAL_METRICS_CSV) or os.path.getsize(CLASSICAL_METRICS_CSV) == 0:
+                with open(CLASSICAL_METRICS_CSV, "w", encoding="utf-8") as f:
+                    f.write("ts,room,label,change_pct,template_score,state,absent_time,present_time\n")
+        with open(CLASSICAL_METRICS_CSV, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='milliseconds')},{ROOM_ID},{label},{change_pct:.4f},{template_score:.4f},{state},{t_absent:.2f},{t_present:.2f}\n")
+    except Exception:
+        pass
+
+
 def ab_print_summary():
     """Mirror of main.py's duty-cycle summary. The zero on the ML line is the
     point: this arm reaches its verdict with no neural network at all."""
@@ -328,7 +409,7 @@ def find_item_template_match(frame, ref_crop, roi, match_threshold=MATCH_SCORE_T
 
 
 # ── API (suppressed unless SPOTIT_CLASSICAL_POST=1) ───────────────────────
-def post_to_api(label, snapshot_path, change_pct):
+def post_to_api(label, snapshot_path, change_pct, match_score=None):
     if not POST_ENABLED:
         print(f"  → [A/B] event suppressed (posting off): {label} MISSING")
         return None
@@ -343,6 +424,11 @@ def post_to_api(label, snapshot_path, change_pct):
         "live_count": live_count,
         "roi_change_pct": round(change_pct * 100, 1),
     }
+    if match_score is not None:
+        try:
+            payload["match_score"] = round(float(match_score), 4)
+        except (ValueError, TypeError):
+            pass
     try:
         with open(snapshot_path, "rb") as img_file:
             files = {
@@ -387,6 +473,7 @@ def post_mass_deviation():
 
 
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
+_loop_start_time = time.time()
 while True:
     ret, frame = cap.read()
 
@@ -483,11 +570,13 @@ while True:
         ]
         is_fixed = any(kw in label.lower() for kw in fixed_keywords)
 
-        if changed and not is_fixed:
-            # Run template matching for other items
+        template_score = 0.0
+        if changed:
+            # Run template matching to record score (and rescue non-fixed items)
             ref_crop = ref_bgr[y : y + h, x : x + w]
             found_match, fx, fy, f_score = find_item_template_match(frame, ref_crop, roi)
-            if found_match:
+            template_score = f_score
+            if not is_fixed and found_match:
                 is_actually_missing = False
                 shifted_locations[label] = (fx, fy, w, h)
 
@@ -504,7 +593,29 @@ while True:
                 snapshot_b_triggered[label] = False
                 shifted_locations[label] = None
 
-        ab_log_event(label, "ABSENT" if is_actually_missing else "PRESENT")
+        state_str = "ABSENT" if is_actually_missing else "PRESENT"
+        ab_log_event(label, state_str)
+
+        elapsed_sec = (clip_seq * FRAME_DT) if AB_REPLAY else (time.time() - _loop_start_time)
+        log_realtime_console_classical(
+            label=label,
+            state=state_str,
+            change_pct=change_pct,
+            template_score=template_score,
+            is_fixed=is_fixed,
+            changed=changed,
+            t_absent=absent_time[label],
+            t_present=present_time[label],
+            elapsed_sec=elapsed_sec,
+        )
+        log_classical_metrics(
+            label=label,
+            change_pct=change_pct,
+            template_score=template_score,
+            state=state_str,
+            t_absent=absent_time[label],
+            t_present=present_time[label],
+        )
 
         confirmed_missing = (
             absent_time[label] >= MISSING_CONFIRM_SEC and not active_events[label]
@@ -514,8 +625,8 @@ while True:
             active_events[label] = True
             snapshot_path = save_snapshot(frame, label)
 
-            print(f"[CANDIDATE EVENT (CLASSICAL-ONLY)] ROI: {label}")
-            det_id = post_to_api(label, snapshot_path, change_pct)
+            print(f"[CANDIDATE EVENT (CLASSICAL-ONLY)] ROI: {label} (match: {template_score:.4f})")
+            det_id = post_to_api(label, snapshot_path, change_pct, match_score=template_score)
             active_detection_ids[label] = det_id
             missing_timestamps[label] = time.time()
 
@@ -561,6 +672,15 @@ while True:
         cv2.putText(
             output, label, (x, y - 5),
             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1,
+        )
+        cv2.putText(
+            output,
+            f"diff={change_pct:.1%} match={template_score:.2f}",
+            (x, y + h + 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            (220, 220, 220),
+            1,
         )
 
     cv2.putText(

@@ -127,6 +127,21 @@ if (!$usedLive) {
         }
     }
 
+    if (!$ffmpegPath && strncasecmp(PHP_OS, 'WIN', 3) === 0) {
+        $winCandidates = [
+            (getenv('LOCALAPPDATA') ?: '') . '\Microsoft\WinGet\Links\ffmpeg.exe',
+            'C:\Users\James\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe',
+            'C:\ffmpeg\bin\ffmpeg.exe',
+            'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
+        ];
+        foreach ($winCandidates as $cand) {
+            if (!empty($cand) && file_exists($cand)) {
+                $ffmpegPath = $cand;
+                break;
+            }
+        }
+    }
+
     if (!$ffmpegPath) {
         ms_json(['success' => false, 'message' => 'FFmpeg is not installed or configured on the server PATH.']);
     }

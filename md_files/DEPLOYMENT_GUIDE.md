@@ -94,6 +94,9 @@ mysql -u USER -p u000000000_spotit_monitor < services/migration_room_camera_colu
 mysql -u USER -p u000000000_spotit_monitor < services/migration_room_enabled.sql
 mysql -u USER -p u000000000_spotit_monitor < services/migration_accuracy_trials.sql
 
+# AUTH database — email verification + password reset.
+mysql -u USER -p u000000000_spotit_auth    < services/migration_email_verification.sql
+
 # LOST & FOUND database, not monitoring.
 mysql -u USER -p u000000000_spotit_lf      < services/migration_claims_archive.sql
 ```
@@ -164,11 +167,86 @@ php -r "echo password_hash('YourStrongPassword', PASSWORD_BCRYPT).PHP_EOL;"
 ```
 
 ```sql
-INSERT INTO users (full_name, email, password_hash, role, is_active)
-VALUES ('Your Name', 'you@dlsud.edu.ph', '<paste the hash>', 'admin', 1);
+INSERT INTO users (full_name, email, password_hash, role, is_active, email_verified, email_verified_at)
+VALUES ('Your Name', 'you@dlsud.edu.ph', '<paste the hash>', 'admin', 1, 1, NOW());
 ```
 
+> `email_verified = 1` is **required**. Since 2026-08-22 login refuses an account
+> whose address has not been confirmed, and this admin has no confirmation email
+> to click — omit it and you lock yourself out of the site you just deployed.
+
 Log in at `https://your-domain.com/pages/login.php` and confirm the dashboard loads.
+
+---
+
+## 4a. Email (confirmation + password reset)
+
+Signup now emails a confirmation link, and password reset emails a 6-digit code.
+Both were non-functional before 2026-08-22 — reset in particular was a mock that
+told users their password had changed when nothing had. If mail is not
+configured, **new accounts cannot sign in** and nobody can recover a password.
+
+Everything is driven by `MAIL_DRIVER` in `config/env.local.php`. Three options:
+
+| Driver | Sends? | Use when |
+|---|---|---|
+| `log` (default) | No — writes to `logs/mail/` | Local XAMPP, and any time you want to test the flow without a domain |
+| `mail` | Yes, via PHP `mail()` | Quickest on Hostinger. No account needed. Deliverability to Outlook is mediocre without SPF/DKIM |
+| `resend` | Yes, via api.resend.com | Best deliverability. Needs a Resend account and a verified domain |
+
+### Local / no domain yet — `log`
+
+Nothing to configure; this is the default. Mail is written to
+`logs/mail/` instead of being sent:
+
+```bash
+cat logs/mail/index.log          # newest message last
+```
+
+Open the matching `.html` file in a browser — the confirmation link is clickable
+and the reset code is readable. `logs/` is gitignored and returns **403** over
+HTTP, so these never leak.
+
+### Hosted, simplest — `mail`
+
+```php
+'MAIL_DRIVER'    => 'mail',
+'MAIL_FROM'      => 'noreply@your-domain.com',
+'MAIL_FROM_NAME' => 'S.P.O.T.-IT System',
+```
+
+Send yourself a test signup. If it lands in spam, add an SPF record for your
+domain in Hostinger's DNS panel, or switch to `resend`.
+
+### Hosted, best deliverability — `resend`
+
+1. Create a free account at resend.com (3,000 emails/month, 100/day — far more
+   than this project needs).
+2. **Domains → Add Domain**, enter your Hostinger domain, and copy the DNS
+   records it gives you into Hostinger's DNS panel. Wait for it to show
+   *Verified*.
+3. **API Keys → Create**, then:
+
+```php
+'MAIL_DRIVER'    => 'resend',
+'MAIL_API_KEY'   => 're_xxxxxxxxxxxxxxxx',
+'MAIL_FROM'      => 'noreply@your-domain.com',
+'MAIL_FROM_NAME' => 'S.P.O.T.-IT System',
+```
+
+> **`MAIL_FROM` must be on a domain you own and have verified.** It is *not*
+> `@dlsud.edu.ph` — that is where mail is sent *to*. Claiming to send as the
+> university would be rejected outright, and until the domain is verified Resend
+> only delivers to the address that owns the Resend account.
+
+### Verifying it works
+
+```bash
+php -r "require 'config/env.php'; print_r(spotit_mail('you@dlsud.edu.ph','S.P.O.T.-IT test', spotit_mail_template('Test','<p>It works.</p>')));"
+```
+
+`[ok] => 1` means accepted. On `resend`, a failure body usually says exactly what
+is wrong — "domain not verified" is the common first one.
 
 ---
 
@@ -412,6 +490,10 @@ An end-to-end test that does not require waiting 30 real minutes is in
 | Escalation URL returns 401 | Key in the cron does not match `env.local.php` | Re-copy it; no quotes, no trailing space |
 | Every alert notified twice | Both the NSSM service *and* a cron are running | Run only one — `.\uninstall-escalation-service.ps1` |
 | Camera IP rejected on save | Another enabled room already holds it | Disable that room on Room Setup first — the error names it |
+| New users cannot sign in | Address not confirmed | Check `logs/mail/`, or configure a real `MAIL_DRIVER` (§4a) |
+| Confirmation email never arrives | `MAIL_DRIVER` still `log` | It was written to `logs/mail/`, not sent. Set `mail` or `resend` |
+| Resend returns "domain not verified" | DNS records not added or not propagated | Resend → Domains; until verified it only delivers to your own address |
+| Locked out after deploying | Seed admin has `email_verified = 0` | `UPDATE users SET email_verified = 1 WHERE email = '...';` |
 
 **Offline fallback for the defense.** If campus internet is unreliable on the day, run
 the whole system on one laptop with XAMPP: leave `SPOTIT_DEPLOY` as `local` (or unset)

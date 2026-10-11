@@ -85,14 +85,18 @@ try {
 
     // 3. Compute Confusion Matrix & Live Classification Report Metrics
     $tp = 0; $tn = 0; $fp = 0; $fn = 0;
-    $trialsStmt = $monitorPdo->query("SELECT classification, COUNT(*) as qty FROM accuracy_trials GROUP BY classification");
-    if ($trialsStmt) {
-        foreach ($trialsStmt->fetchAll() as $row) {
-            if ($row['classification'] === 'TP') $tp += (int)$row['qty'];
-            elseif ($row['classification'] === 'TN') $tn += (int)$row['qty'];
-            elseif ($row['classification'] === 'FP') $fp += (int)$row['qty'];
-            elseif ($row['classification'] === 'FN') $fn += (int)$row['qty'];
+    try {
+        $trialsStmt = $monitorPdo->query("SELECT classification, COUNT(*) as qty FROM accuracy_trials GROUP BY classification");
+        if ($trialsStmt) {
+            foreach ($trialsStmt->fetchAll() as $row) {
+                if ($row['classification'] === 'TP') $tp += (int)$row['qty'];
+                elseif ($row['classification'] === 'TN') $tn += (int)$row['qty'];
+                elseif ($row['classification'] === 'FP') $fp += (int)$row['qty'];
+                elseif ($row['classification'] === 'FN') $fn += (int)$row['qty'];
+            }
         }
+    } catch (Throwable $e) {
+        // Table may not exist yet on fresh unmigrated DB
     }
 
     $detCountsStmt = $monitorPdo->prepare("SELECT status, COUNT(*) as qty FROM detections WHERE room_id = ? GROUP BY status");

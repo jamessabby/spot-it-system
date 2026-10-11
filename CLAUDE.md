@@ -170,6 +170,16 @@ Full runbook: [DEPLOYMENT_GUIDE.md](file:///c:/xampp/htdocs/spotit/md_files/DEPL
    ask about it — only the session/routing layer merges it into admin.
    Admin is provisioned only by an existing admin, never self-signup (see §4
    for the bootstrap problem this creates and how to solve it).
+   **This rule is now actually enforced (2026-08-22).** It previously was not:
+   the signup form offered a "staff" role and `signup_handler.php` accepted it,
+   which — via the staff→admin normalisation above — made public signup a route
+   into the admin dashboard. `signup_handler.php` now hardcodes `student` and
+   **ignores** any submitted role, so putting a role picker back on the form
+   cannot silently re-open it. If a panelist ever asks for staff self-signup,
+   the normalisation is what has to change, not the whitelist.
+   CAPTCHA and CSRF are also real as of the same date — both were UI-only
+   before (see BUGS.md §1). They live in `config/security.php`, which
+   `config/env.php` loads for every page and handler.
 4. **Detection ingestion is API-key authenticated, not session-authenticated**
    (Python has no browser session). Key comes from `SPOTIT_DETECTION_KEY` env
    var / `env.php`, checked with `hash_equals()`.
@@ -576,6 +586,7 @@ Run these after any change, in this order, before considering a fix done:
    ```
    migration_room_camera_columns.sql → migration_room_enabled.sql   (monitor; in this order)
    migration_accuracy_trials.sql                                     (monitor)
+   migration_email_verification.sql                                  (AUTH db)
    migration_claims_archive.sql                                      (LOST & FOUND db)
    ```
    All are safe to re-run (`IF NOT EXISTS`, or an idempotent `MODIFY COLUMN`).

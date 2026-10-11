@@ -85,7 +85,8 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
 
         <!-- Manual form -->
         <form id="signupForm" novalidate>
-          <input type="hidden" name="csrf_token" value="<?= bin2hex(random_bytes(16)) ?>"/>
+          <!-- Session-backed and actually validated by signup_handler.php. -->
+          <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(spotit_csrf_token(), ENT_QUOTES, 'UTF-8') ?>"/>
 
           <!-- Personal info section -->
           <div class="form-section-label">Personal Information</div>
@@ -122,28 +123,21 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
             <div style="font-size:.7rem;color:var(--text-dim);margin-top:.3rem;">Format: YYYY-NNNNN (e.g. 2021-00001)</div>
           </div>
 
-          <!-- Role selection -->
-          <div class="form-section-label" style="margin-top:1.2rem;">Account Role</div>
-          <div class="role-selector" id="roleSelector">
-            <div class="role-option active" data-role="student" onclick="selectRole(this)">
-              <i class="fa-solid fa-graduation-cap"></i>
-              <div>
-                <div class="role-name">Student</div>
-                <div class="role-desc">Browse recovered items, submit claim requests</div>
-              </div>
-            </div>
-            <div class="role-option" data-role="staff" onclick="selectRole(this)">
-              <i class="fa-solid fa-user-tie"></i>
-              <div>
-                <div class="role-name">Staff</div>
-                <div class="role-desc">Verify detection events, manage lost-and-found</div>
-              </div>
-            </div>
-          </div>
-          <input type="hidden" id="role" name="role" value="student"/>
-          <div style="font-size:.68rem;color:var(--text-dim);margin-bottom:1.2rem;">
+          <!-- ROLE PICKER REMOVED 2026-08-22.
+               It offered "Staff", and login_handler.php normalises the staff
+               role into an admin SESSION (CLAUDE.md §2) - so this control was
+               a public self-service route into the admin dashboard. Signup is
+               now always a student account; signup_handler.php ignores any
+               submitted role rather than validating one, so restoring a picker
+               here cannot silently re-open the hole. -->
+          <div class="form-section-label" style="margin-top:1.2rem;">Account Type</div>
+          <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:1.2rem;line-height:1.6;">
+            <i class="fa-solid fa-graduation-cap" style="font-size:.66rem;color:var(--green-main);"></i>
+            Registering creates a <strong>Student</strong> account &mdash; browse recovered items
+            and submit claim requests.
+            <br/>
             <i class="fa-solid fa-lock" style="font-size:.6rem;"></i>
-            Admin accounts are provisioned separately by system administrators.
+            Staff and administrator access is granted by an existing administrator, never by signing up.
           </div>
 
           <!-- Password -->
@@ -180,17 +174,18 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
             <div class="field-error" id="cpwError"><i class="fa-solid fa-circle-exclamation"></i><span>Passwords do not match.</span></div>
           </div>
 
-          <!-- CAPTCHA -->
-          <div class="captcha-wrap" id="captchaWrap" onclick="solveCaptcha()">
-            <div class="captcha-check" id="captchaCheck">
-              <div class="captcha-spinner" id="capSpinner"></div>
-              <i class="fa-solid fa-check captcha-check-icon" id="capCheck"></i>
-            </div>
-            <span class="captcha-text">I'm not a robot</span>
-            <div class="captcha-brand">
-              <i class="fa-solid fa-shield-halved"></i>
-              <span>reCAPTCHA</span>
-            </div>
+          <!-- CAPTCHA. Verified server-side, single-use. See config/security.php. -->
+          <div class="captcha-wrap" id="captchaWrap">
+            <i class="fa-solid fa-shield-halved captcha-icon"></i>
+            <label class="captcha-q" for="captchaAnswer">
+              Security check: what is <strong id="captchaQuestion"><?= htmlspecialchars(spotit_captcha_new(), ENT_QUOTES, 'UTF-8') ?></strong>?
+            </label>
+            <input type="number" class="captcha-input" id="captchaAnswer" name="captcha_answer"
+                   inputmode="numeric" autocomplete="off" required aria-label="Answer to the security check" />
+            <button type="button" class="captcha-refresh" id="captchaRefresh"
+                    onclick="refreshCaptcha()" title="Get a new question" aria-label="Get a new question">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
           </div>
 
           <!-- Terms -->
@@ -249,12 +244,6 @@ function onEmailInput(input) {
   updateSubmit();
 }
 
-function selectRole(el) {
-  document.querySelectorAll('.role-option').forEach(r => r.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('role').value = el.dataset.role;
-}
-
 function checkPassword() {
   const pw = document.getElementById('password').value;
   const fill = document.getElementById('pwFill');
@@ -302,19 +291,33 @@ function checkConfirm() {
   updateSubmit();
 }
 
-function solveCaptcha() {
-  if (captchaDone) return;
-  const wrap = document.getElementById('captchaWrap');
-  wrap.classList.add('loading');
-  setTimeout(() => { wrap.classList.remove('loading'); wrap.classList.add('done'); captchaDone = true; updateSubmit(); }, 800 + Math.random() * 400);
+/* Each challenge is single-use server-side, so a spent one must be replaced
+   after any submit attempt. */
+async function refreshCaptcha() {
+  const btn = document.getElementById('captchaRefresh');
+  const q   = document.getElementById('captchaQuestion');
+  const ans = document.getElementById('captchaAnswer');
+  btn.classList.add('spinning');
+  try {
+    const res  = await fetch('../auth/captcha.php', { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.question) q.textContent = data.question;
+  } catch (e) { /* keep the current question rather than blanking it */ }
+  btn.classList.remove('spinning');
+  ans.value = '';
+  document.getElementById('captchaWrap').classList.remove('invalid');
+  updateSubmit();
 }
 
 function updateSubmit() {
   const name  = document.getElementById('full_name').value.trim();
   const idNum = document.getElementById('id_number').value.trim();
   const terms = document.getElementById('acceptTerms').checked;
+  captchaDone = document.getElementById('captchaAnswer').value.trim() !== '';
   document.getElementById('submitBtn').disabled = !(name && emailOk && idNum && pwOk && cpwOk && captchaDone && terms);
 }
+
+document.getElementById('captchaAnswer').addEventListener('input', updateSubmit);
 
 function togglePw(inputId, iconId) {
   const inp = document.getElementById(inputId);
@@ -337,6 +340,17 @@ document.getElementById('signupForm').addEventListener('submit', async function(
       showToast('success', 'Account created! Redirecting to login…');
       setTimeout(() => { window.location.href = 'login.php?registered=1'; }, 1200);
     } else {
+      /* The CAPTCHA is spent whether or not the rest of the form was valid, so
+         a new one is needed before the user can retry anything. */
+      if (data.csrf_invalid) {
+        showToast('error', data.message || 'Your session expired. Reloading…');
+        setTimeout(() => window.location.reload(), 1600);
+        return;
+      }
+      await refreshCaptcha();
+      if (data.captcha_failed) {
+        document.getElementById('captchaWrap').classList.add('invalid');
+      }
       showToast('error', data.message || 'Registration failed. Please try again.');
       btn.disabled = false;
     }

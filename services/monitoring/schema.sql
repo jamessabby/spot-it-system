@@ -107,6 +107,19 @@ CREATE TABLE `monitoring_logs` (
   KEY `idx_logged`  (`logged_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ── accuracy_trials ───────────────────────────────────────────────────────────
+-- Logged accuracy trials during Table 3.5 testing.
+CREATE TABLE IF NOT EXISTS `accuracy_trials` (
+  `trial_id`        int(11)  NOT NULL AUTO_INCREMENT,
+  `trial_timestamp` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expected_state`  enum('present','absent') NOT NULL COMMENT 'What the tester knows to be true',
+  `detected_state`  enum('present','absent') NOT NULL COMMENT 'What the system reported',
+  `classification`  enum('TP','FP','TN','FN') NOT NULL COMMENT 'Confusion-matrix cell.',
+  `notes`           varchar(300) DEFAULT NULL COMMENT 'Free-text trial condition',
+  PRIMARY KEY (`trial_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 -- ── Seed: MLH rooms ───────────────────────────────────────────────────────────
 INSERT INTO `rooms` (`room_id`, `room_name`, `floor`, `room_type`, `camera_count`, `baseline_count`, `monitoring_status`, `is_active`) VALUES
 ('MLH306', 'Systems & Application Development Lab', '3rd Floor MLH', 'Computer Lab', 2, 30, 'active', 1),

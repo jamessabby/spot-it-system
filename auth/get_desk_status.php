@@ -7,6 +7,9 @@
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
+// Release session lock early for high-frequency polling
+session_write_close();
+
 try {
     // 1. Fetch room baseline count from rois.json or DB
     $roi_file = __DIR__ . '/../rois.json';
@@ -76,14 +79,18 @@ try {
     $tp = 0; $tn = 0; $fp = 0; $fn = 0;
 
     // Read logged accuracy trials
-    $trialsStmt = $monitorPdo->query("SELECT classification, COUNT(*) as qty FROM accuracy_trials GROUP BY classification");
-    if ($trialsStmt) {
-        foreach ($trialsStmt->fetchAll() as $row) {
-            if ($row['classification'] === 'TP') $tp += (int)$row['qty'];
-            elseif ($row['classification'] === 'TN') $tn += (int)$row['qty'];
-            elseif ($row['classification'] === 'FP') $fp += (int)$row['qty'];
-            elseif ($row['classification'] === 'FN') $fn += (int)$row['qty'];
+    try {
+        $trialsStmt = $monitorPdo->query("SELECT classification, COUNT(*) as qty FROM accuracy_trials GROUP BY classification");
+        if ($trialsStmt) {
+            foreach ($trialsStmt->fetchAll() as $row) {
+                if ($row['classification'] === 'TP') $tp += (int)$row['qty'];
+                elseif ($row['classification'] === 'TN') $tn += (int)$row['qty'];
+                elseif ($row['classification'] === 'FP') $fp += (int)$row['qty'];
+                elseif ($row['classification'] === 'FN') $fn += (int)$row['qty'];
+            }
         }
+    } catch (Throwable $e) {
+        // Table may not exist yet on fresh unmigrated DB
     }
 
     // Factor in real-time sandbox detections

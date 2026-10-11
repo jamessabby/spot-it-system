@@ -59,11 +59,39 @@ define('ALLOWED_DOMAIN',  spotit_env('ALLOWED_DOMAIN', '@dlsud.edu.ph'));
 define('TIMEZONE',        spotit_env('TIMEZONE', 'Asia/Manila'));
 
 date_default_timezone_set(TIMEZONE);
+
+// ── Session cookie hardening ──────────────────────────────────────────────────
+// Must be set BEFORE session_start() or it has no effect on the cookie.
+//
+//   httponly  — JavaScript cannot read the session id, so an XSS bug in any one
+//               page cannot be escalated into stealing an admin session.
+//   samesite  — 'Lax' blocks the cookie on cross-site POSTs, which is a second
+//               line of defence behind the CSRF token in config/security.php.
+//   secure    — only over HTTPS. Set dynamically rather than hardcoded: the
+//               .htaccess HTTPS redirect deliberately exempts localhost, so
+//               forcing it on would break every XAMPP login and the offline
+//               defense demo.
+//
 // Guarded: several entry points include this file, and a second session_start()
 // emits a warning that corrupts JSON responses.
 if (session_status() === PHP_SESSION_NONE) {
+    $__spotitHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure'   => $__spotitHttps,
+    ]);
     session_start();
+    unset($__spotitHttps);
 }
+
+// CSRF + CAPTCHA helpers. Loaded here so every page and handler has them
+// without a second include; needs the session, hence after session_start().
+require_once __DIR__ . '/security.php';
 
 // ── Microsoft OAuth (Azure AD) ────────────────────────────────────────────────
 // MS_REDIRECT_URI derives from SITE_URL, so changing SITE_URL is enough — but the
@@ -95,7 +123,7 @@ define('TIMER_CONFIRMED_MIN',  60);  // minutes → "Confirmed Missing"
 //
 // If the address keeps moving, give the camera a DHCP reservation on the router
 // (or a static IP in the Tapo app) instead of chasing it here.
-define('DESK_CAMERA_IP',   spotit_env('DESK_CAMERA_IP',   '192.168.18.14'));
+define('DESK_CAMERA_IP',   spotit_env('DESK_CAMERA_IP',   '10.62.74.79'));
 define('DESK_CAMERA_USER', spotit_env('DESK_CAMERA_USER', 'SpotItCamera'));
 define('DESK_CAMERA_PASS', spotit_env('DESK_CAMERA_PASS', 'spotitcamera232'));
 define('DESK_CAMERA_RTSP', 'rtsp://' . DESK_CAMERA_USER . ':' . DESK_CAMERA_PASS
@@ -136,13 +164,42 @@ define('COMMUNITY_DB_PASS', spotit_env('COMMUNITY_DB_PASS', ''));
 define('SPOTIT_DETECTION_KEY', spotit_env('SPOTIT_DETECTION_KEY', 'CHANGE_ME_DETECTION_KEY'));
 define('SPOTIT_CRON_KEY',      spotit_env('SPOTIT_CRON_KEY',      'CHANGE_ME_CRON_KEY'));
 
-// ── Mail (PHPMailer) ──────────────────────────────────────────────────────────
+// ── Mail ──────────────────────────────────────────────────────────────────────
+// Until 2026-08-22 these constants were read by NO code at all — the whole mail
+// subsystem was six unused define()s. They are live now; see config/mailer.php.
+//
+// MAIL_DRIVER decides how mail leaves (or doesn't):
+//   'log'    — default. Writes to logs/mail/ instead of sending. Keeps the
+//              verification and password-reset flows fully testable on XAMPP
+//              before a sending domain exists.
+//   'mail'   — PHP's built-in mail(). Works out of the box on most shared
+//              hosting; XAMPP has no MTA, so this does nothing locally.
+//   'resend' — HTTPS to api.resend.com. Needs MAIL_API_KEY and a domain
+//              verified in the Resend dashboard.
+define('MAIL_DRIVER',   strtolower(spotit_env('MAIL_DRIVER', 'log')));
+
+// MAIL_FROM must be on a domain you control and have verified with your
+// provider. It is NOT @dlsud.edu.ph — that is the recipient domain; the
+// university's mail servers would reject anything claiming to send as them.
+define('MAIL_FROM',     spotit_env('MAIL_FROM', 'noreply@spotit.local'));
+define('MAIL_FROM_NAME',spotit_env('MAIL_FROM_NAME', 'S.P.O.T.-IT System'));
+
+// Resend (or any HTTP mail API) credential.
+define('MAIL_API_KEY',  spotit_env('MAIL_API_KEY', 'CHANGE_ME_MAIL_API_KEY'));
+
+// Retained for a future SMTP driver. Nothing reads them today — see
+// config/mailer.php for why SMTP was not implemented (it needs PHPMailer,
+// which needs composer, which is not installed).
 define('MAIL_HOST',     spotit_env('MAIL_HOST', 'smtp.gmail.com'));
 define('MAIL_PORT',     (int) spotit_env('MAIL_PORT', 587));
 define('MAIL_USER',     spotit_env('MAIL_USER', 'noreply@dlsud.edu.ph'));
 define('MAIL_PASS',     spotit_env('MAIL_PASS', 'CHANGE_ME_MAIL'));
-define('MAIL_FROM',     spotit_env('MAIL_FROM', 'noreply@dlsud.edu.ph'));
-define('MAIL_FROM_NAME',spotit_env('MAIL_FROM_NAME', 'S.P.O.T.-IT System'));
+
+require_once __DIR__ . '/mailer.php';
+
+// How long a signup verification link stays valid, and a password-reset code.
+define('VERIFY_LINK_TTL_HOURS', (int) spotit_env('VERIFY_LINK_TTL_HOURS', 24));
+define('RESET_CODE_TTL_MIN',    (int) spotit_env('RESET_CODE_TTL_MIN', 10));
 
 // ── Snapshot Upload Path ────────────────────────────────────────────────────────
 define('SNAPSHOT_PATH', __DIR__ . '/../uploads/snapshots/');

@@ -21,6 +21,7 @@ header('Cache-Control: no-cache, must-revalidate');
 ms_require_auth('../pages/login.php');
 
 $userId      = (int)$_SESSION['user_id'];
+session_write_close();
 $limit       = min((int)($_GET['limit']  ?? 30), 100);
 $offset      = (int)($_GET['offset'] ?? 0);
 $typeFilter  = trim($_GET['type'] ?? '');

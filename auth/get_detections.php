@@ -22,6 +22,9 @@ header('Cache-Control: no-cache, must-revalidate');
 
 ms_require_auth('../pages/login.php');
 
+// Release session lock early for high-frequency polling requests
+session_write_close();
+
 $summary = isset($_GET['summary']);
 
 // ── [G4 FIXED] Summary mode — correct status-based badge counts ───────────────

@@ -140,9 +140,8 @@ function setFilterTab(el) {
 }
 
 
-/* ══════════════════════════════════════
-   FETCH HELPER
-══════════════════════════════════════ */
+let _consecutiveFetchFailures = 0;
+
 async function spotitFetch(url, opts = {}) {
   try {
     const res = await fetch(url, {
@@ -150,9 +149,14 @@ async function spotitFetch(url, opts = {}) {
       ...opts,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _consecutiveFetchFailures = 0;
     return await res.json();
   } catch (err) {
-    console.error('[S.P.O.T.-IT fetch]', err);
+    _consecutiveFetchFailures++;
+    console.warn('[S.P.O.T.-IT fetch]', url, err);
+    if (_consecutiveFetchFailures === 3) {
+      showToast('warn', 'Connection unstable. Reconnecting to server...', 4000);
+    }
     return null;
   }
 }

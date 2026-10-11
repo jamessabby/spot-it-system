@@ -61,6 +61,166 @@ These are outstanding bugs, issues, or bootstrap items that need to be resolved.
     the whole truth, or document why it is there. Right now the live DB and the repo
     disagree, and that is exactly what made the two bugs above so expensive to find.
 
+- [x] **Public signup could create an ADMIN account. Login-form security was theatre.**
+  *(Fixed 2026-08-22. The first item here is the serious one.)*
+
+  **Privilege escalation.** `pages/signup.php` offered a role picker with a
+  "Staff" option, `auth/signup_handler.php` accepted `$_POST['role']` against a
+  `['student','staff']` whitelist, and `auth/login_handler.php` normalises the
+  `staff` role into an **admin session** (CLAUDE.md §2). Those three facts
+  combined into a public, unauthenticated route to the admin dashboard — room
+  data, user management, system logs, the donation purge. Nobody had to bypass
+  anything; the signup form offered it as a radio button.
+  - **Resolution:** the role picker is gone and `signup_handler.php` now
+    **ignores** any submitted role rather than validating one (`$role = 'student'`,
+    hardcoded). Ignoring rather than whitelisting is deliberate: re-adding a
+    picker to the form cannot silently re-open the hole.
+  - **Verified by attack:** POSTed `role=staff` to the live handler with a valid
+    CSRF token and CAPTCHA answer; the row came out `student`, and logging in
+    with it landed on `dashboard-student.php`. Test account deleted.
+
+  **The CAPTCHA was a `setTimeout`.** `pages/login.php:345` — its own comment
+  read `/* ── CAPTCHA simulation ── */`. It drew a counterfeit Google reCAPTCHA
+  badge, posted no token, and `login_handler.php` never looked for one, so
+  anything calling the endpoint directly never saw it. Same fake on signup.
+  Meanwhile `pages/privacy-policy.php` told users "Rate limiting (CAPTCHA +
+  progressive lockouts) protects against brute-force login attempts."
+  - **Resolution:** `config/security.php` — a server-side arithmetic challenge
+    whose answer lives only in the session, single-use (cleared on every verify,
+    pass or fail, so one solve cannot authorise repeated POSTs and a wrong
+    answer cannot be retried). Not reCAPTCHA, because that needs a Google
+    account and an outbound call on the auth path for a system that must demo
+    offline; not an image, because **ext-gd is not enabled in this PHP build**.
+  - **Verified:** wrong answer → rejected; correct answer → reaches the password
+    check; replaying a used answer → rejected as expired.
+
+  **CSRF tokens were emitted and never checked.** Both forms rendered
+  `bin2hex(random_bytes(16))` fresh on every page load, stored nowhere, verified
+  by nothing — two emitters, zero verifiers.
+  - **Resolution:** per-session token via `spotit_csrf_token()`, verified with
+    `hash_equals()` in both handlers. Per-session rather than per-form because a
+    per-form token breaks the moment a user opens two tabs.
+  - Rejection returns **403**, not 419 — 419 is a Laravel convention, not an
+    IANA code, and Apache rewrites unknown codes to a bare 500, which would log
+    every rejected token as a server fault. Confirmed on the wire.
+  - Both handlers reject CSRF/CAPTCHA failures **before** the credential check,
+    and the login page no longer counts them as failed attempts — otherwise a
+    wrong CAPTCHA would burn one of the user's five tries and could lock an
+    account whose password was never submitted.
+
+  **Session cookies had no flags.** `config/env.php` called `session_start()`
+  with defaults: no `httponly`, no `samesite`. Now set before `session_start()`,
+  with `secure` derived from the actual scheme — hardcoding it on would have
+  broken every XAMPP login, since the `.htaccess` HTTPS redirect deliberately
+  exempts localhost for the offline demo.
+
+  **Smaller correctness fixes in the same pass:**
+  - `users.last_login_at` has existed since the first schema and **nothing ever
+    wrote to it** — every account looked like it had never signed in. Now written
+    by both `login_handler.php` and `microsoft_callback.php`.
+  - `password_verify()` was called with a NULL `password_hash` for
+    Microsoft-only accounts, raising a PHP 8.1+ deprecation that prints into the
+    response body and corrupts the JSON the login page parses. Short-circuited,
+    with a deliberately generic message so an anonymous caller cannot learn that
+    an address exists as a Microsoft account.
+  - Microsoft-registered users never got a `user_profiles` row —
+    `signup_handler.php` always created one, `microsoft_callback.php` never did,
+    so any page joining that table found nothing for them.
+  - `spotit_auth_db.notifications` and `user_activity` were **missing from
+    `services/auth/schema.sql`**. `notifications` lived only inside
+    `migration_workflow_audit.sql`, so `migration_notifications.sql` would ALTER
+    a table the base schema never created; `user_activity` appeared in **no
+    `.sql` file at all** — created by hand, existing only on the dev laptop.
+    Same failure class as `rooms.camera_*` and `accuracy_trials`. Both added;
+    a fresh build from `schema.sql` alone now produces all 7 tables, was 5.
+  - The seed admin's `password_hash` is a placeholder string that
+    `password_verify()` can never match, while the comment above it claimed the
+    password was `Admin@2026!`. Comment corrected to say so and to give the
+    command that fixes it.
+
+- [x] **Password reset was entirely non-functional and told the user it worked.
+  Signup had no email verification. No code in the repo had ever sent an email.**
+  *(All fixed 2026-08-22.)*
+
+  **What was broken.** `pages/forgot-password.php` was a pure client-side mock:
+  `sendOTP()` was a `setTimeout` that toasted "Verification code sent" with no
+  network call; `verifyOTP()`'s own comment read `// Demo: any 6-digit code
+  works` and the typed digits were never read; `resetPassword()` **never read
+  the new password from the DOM and never transmitted it anywhere**, then
+  advanced to a success screen. The file's header cited
+  `auth/forgot_password.php`, which did not exist, and there was no
+  `password_resets` table. A user who forgot their password had no recovery path
+  at all, and the UI lied that the reset had succeeded.
+
+  Separately, signup created accounts that were active and loginable instantly,
+  with no proof the person owned the address — and the whole mail subsystem was
+  six unused `define()`s in `config/env.php` read by zero files.
+
+  **The mail layer.** `config/mailer.php`, one entry point `spotit_mail()`, three
+  drivers selected by `MAIL_DRIVER`:
+  - `log` (default) writes the message to `logs/mail/` instead of sending. This
+    is what makes the flow testable on XAMPP **before a domain exists** — you
+    open the `.html` file and click the link or read the code. `logs/` is
+    gitignored and returns 403 over HTTP, verified.
+  - `mail` uses PHP's built-in `mail()`; zero config on shared hosting.
+  - `resend` POSTs to api.resend.com over curl. Chosen over SMTP because SMTP
+    means PHPMailer, which means composer, which is not installed here —
+    hand-rolling an SMTP client to dodge one dependency is not a pre-defense
+    trade. Nothing outside `mailer.php` knows how mail is sent, so a fourth
+    driver is a local change.
+  - `spotit_mail()` never throws. A mail outage degrades signup into "we could
+    not send your link, use Resend confirmation" rather than 500ing on a
+    half-created account.
+
+  **Signup verification.** `migration_email_verification.sql` adds
+  `email_verified` / `verification_token` / `verification_sent_at` /
+  `email_verified_at` to `users`. Signup inserts `email_verified = 0` and mails a
+  link; `auth/verify_email.php` redeems it and **nulls the token**, so a link
+  that later leaks from a mailbox cannot be replayed. `auth/resend_verification.php`
+  issues a replacement, which invalidates the previous link, throttled to one per
+  minute per account.
+  - `is_active` was deliberately **not** reused for this. It is the admin's
+    disable switch and carries its own message ("contact an administrator"),
+    which is the wrong thing to tell someone who just needs to click a link.
+    login_handler checks both, separately.
+  - The verification check runs **after** the password check, on purpose:
+    answering "that address exists but is unverified" to anyone who has not
+    proved they know the password would be an account-enumeration oracle.
+  - Existing accounts were backfilled to verified by the migration, so nobody
+    was locked out retroactively.
+  - The bootstrap admin in `schema.sql` and in DEPLOYMENT_GUIDE §4 is seeded
+    `email_verified = 1` — it has no mailbox to click from, and omitting it would
+    lock you out of the site you just deployed.
+
+  **Password reset**, two-phase, matching the existing 4-step UI:
+  `request_password_reset.php` mails a 6-digit code and stores only its
+  `password_hash()`; `verify_reset_code.php` redeems it and issues a **separate**
+  random `reset_token`; `reset_password.php` takes that token and actually
+  changes the credential. The split exists so the final step does not have to
+  re-send the code — that would put it in a second request and a second log line
+  and keep it live across both.
+  - Codes hashed at rest, 10-minute expiry, 5 wrong tries destroys the request,
+    3 requests per address per 15 minutes, one live code per account at a time.
+  - Steps 1 and 3 reply identically for known and unknown addresses. Step 2
+    answers honestly, because receiving the code already proved control of the
+    mailbox.
+  - Completing a reset clears the `login_attempts` lockout: the owner just
+    proved mailbox control, so making them also wait out a lockout is pure
+    friction.
+  - The four password rules the page displays are now **enforced server-side**;
+    previously they were decoration.
+
+  **Verified end to end against live Apache**, both flows, with test data
+  removed afterwards:
+  - Signup → account is `email_verified = 0` → **login refused** → email written
+    to `logs/mail/` → clicking the link flips it to verified and nulls the token
+    → **replaying the same link is rejected** → login now succeeds.
+  - Reset → code stored hashed → unknown address gives an identical reply →
+    wrong code rejected and counted → correct code issues a token → weak
+    password rejected server-side → strong password **changes the bcrypt hash**
+    → replaying the token is rejected → new password logs in, **old password
+    does not**.
+
 - [x] **Auto-escalation was never scheduled — every detection sat at `pending` forever.**
   *(Fixed 2026-08-21.)* `auth/escalate_detections.php` was written correctly and its logic
   worked when run by hand, but **nothing invoked it on a timer** on either machine. The

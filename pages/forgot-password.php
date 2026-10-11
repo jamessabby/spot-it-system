@@ -103,6 +103,9 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
     <div class="form-container">
 
       <!-- ── STEP 1: Email ── -->
+      <!-- CSRF token for the three reset endpoints. Session-backed. -->
+      <input type="hidden" id="fpCsrf" value="<?= htmlspecialchars(spotit_csrf_token(), ENT_QUOTES, 'UTF-8') ?>"/>
+
       <div id="step1">
         <div class="form-header">
           <div class="form-eyebrow"><span class="dot"></span> Password Recovery</div>
@@ -288,6 +291,28 @@ function goStep(n) {
 }
 
 /* ── Step 1: Email ── */
+/* Reset session state. resetToken is issued by verify_reset_code.php once the
+   emailed code checks out, and is what authorises step 3. */
+let fpEmail    = '';
+let resetToken = '';
+const CSRF     = document.getElementById('fpCsrf').value;
+
+/* Shared POST helper. Every endpoint here takes the CSRF token and can answer
+   csrf_invalid, which means the session died and only a reload fixes it. */
+async function fpPost(url, fields) {
+  const fd = new FormData();
+  fd.append('csrf_token', CSRF);
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  const res  = await fetch(url, { method: 'POST', body: fd });
+  const data = await res.json();
+  if (data && data.csrf_invalid) {
+    showToast('error', data.message || 'Session expired. Reloading...');
+    setTimeout(() => window.location.reload(), 1600);
+    return null;
+  }
+  return data;
+}
+
 function checkFpEmail(input) {
   const val = input.value.trim().toLowerCase();
   const badge = document.getElementById('fpBadge');
@@ -302,18 +327,29 @@ function checkFpEmail(input) {
   document.getElementById('fpBtn1').disabled = !val.endsWith(ALLOWED_DOMAIN);
 }
 
-function sendOTP() {
-  const email = document.getElementById('fpEmail').value.trim();
+async function sendOTP() {
+  const email = document.getElementById('fpEmail').value.trim().toLowerCase();
   const btn   = document.getElementById('fpBtn1');
   btn.classList.add('loading'); btn.disabled = true;
-  setTimeout(() => {
+
+  try {
+    const data = await fpPost('../auth/request_password_reset.php', { email });
     btn.classList.remove('loading');
+    if (!data) return;
+
+    /* The server answers identically for a known and an unknown address, so
+       the UI always advances. Revealing "no such account" here would turn this
+       page into a free account-enumeration tool. */
+    fpEmail = email;
     document.getElementById('sentToEmail').textContent = email;
     goStep(2);
     startOtpExpiry();
     startResendCountdown();
-    showToast('success', 'Verification code sent to ' + email);
-  }, 1200);
+    showToast('success', data.message || 'If an account exists for that address, a code is on its way.');
+  } catch (e) {
+    btn.classList.remove('loading'); btn.disabled = false;
+    showToast('error', 'Network error. Please try again.');
+  }
 }
 
 /* ── Step 2: OTP ── */
@@ -372,25 +408,56 @@ function startResendCountdown() {
     }
   },1000);
 }
-function resendOTP() {
+async function resendOTP() {
+  const data = await fpPost('../auth/request_password_reset.php', { email: fpEmail });
+  if (!data) return;
+
   clearInterval(otpExpiryInterval);
   [1,2,3,4,5,6].forEach(i => { const el=document.getElementById('otp'+i); if(el) el.value=''; });
   document.getElementById('otp1').focus();
   startOtpExpiry(); startResendCountdown();
-  showToast('success','New verification code sent.');
+  /* The server throttles to 3 per 15 minutes and says nothing about it, so a
+     throttled resend looks identical here. That is intentional. */
+  showToast('success', data.message || 'A new code has been sent.');
 }
 
-function verifyOTP() {
+async function verifyOTP() {
   const code = [1,2,3,4,5,6].map(i=>document.getElementById('otp'+i).value).join('');
   const btn  = document.getElementById('fpBtn2');
   btn.classList.add('loading'); btn.disabled = true;
-  setTimeout(() => {
+
+  try {
+    const data = await fpPost('../auth/verify_reset_code.php', { email: fpEmail, code });
     btn.classList.remove('loading');
-    clearInterval(otpExpiryInterval);
-    // Demo: any 6-digit code works
-    goStep(3);
-    showToast('success','Identity verified. Please set your new password.');
-  },1000);
+    if (!data) return;
+
+    if (data.success) {
+      resetToken = data.reset_token;      /* authorises step 3 */
+      clearInterval(otpExpiryInterval);
+      goStep(3);
+      showToast('success', data.message || 'Code confirmed. Set your new password.');
+      return;
+    }
+
+    /* Expired, or five wrong tries used up: the request no longer exists
+       server-side, so send the user back to step 1 rather than leaving them
+       typing into a code box that can never succeed. */
+    if (data.expired) {
+      clearInterval(otpExpiryInterval);
+      goStep(1);
+      document.getElementById('fpBtn1').disabled = false;
+      showToast('error', data.message || 'That code is no longer valid. Request a new one.');
+      return;
+    }
+
+    [1,2,3,4,5,6].forEach(i => { document.getElementById('otp'+i).value = ''; });
+    document.getElementById('otp1').focus();
+    btn.disabled = true;
+    showToast('error', data.message || 'Incorrect code.');
+  } catch (e) {
+    btn.classList.remove('loading'); btn.disabled = false;
+    showToast('error', 'Network error. Please try again.');
+  }
 }
 
 /* ── Step 3: New password ── */
@@ -431,10 +498,40 @@ function togglePwReset(inputId, iconId) {
   if (inp.type === 'password') { inp.type='text'; ico.className='fa-regular fa-eye-slash'; }
   else { inp.type='password'; ico.className='fa-regular fa-eye'; }
 }
-function resetPassword() {
+async function resetPassword() {
   const btn = document.getElementById('fpBtn3');
+  const pw  = document.getElementById('newPw').value;
+  const cpw = document.getElementById('confirmPw').value;
   btn.classList.add('loading'); btn.disabled = true;
-  setTimeout(() => { btn.classList.remove('loading'); goStep(4); },1000);
+
+  try {
+    /* The password is finally READ and SENT. Until 2026-08-22 this function
+       touched neither field - it advanced straight to the success screen and
+       left the account password exactly as it was. */
+    const data = await fpPost('../auth/reset_password.php', {
+      email: fpEmail,
+      reset_token: resetToken,
+      password: pw,
+      confirm_password: cpw,
+    });
+    btn.classList.remove('loading');
+    if (!data) return;
+
+    if (data.success) { goStep(4); return; }
+
+    if (data.expired) {
+      goStep(1);
+      document.getElementById('fpBtn1').disabled = false;
+      showToast('error', data.message || 'This reset session expired. Start again.');
+      return;
+    }
+
+    btn.disabled = false;
+    showToast('error', data.message || 'Could not update your password.');
+  } catch (e) {
+    btn.classList.remove('loading'); btn.disabled = false;
+    showToast('error', 'Network error. Please try again.');
+  }
 }
 </script>
 </body>

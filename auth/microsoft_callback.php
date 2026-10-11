@@ -98,6 +98,20 @@ if (!$user) {
     $stmt->execute([$msName, $msEmail, $msId]);
     $userId = (int)$authPdo->lastInsertId();
 
+    // Profile row in the user service. signup_handler.php has always created
+    // one; this path never did, so every Microsoft-registered account was
+    // missing its user_profiles row and any page joining that table found
+    // nothing for them. Non-blocking, exactly as in signup_handler.php — a
+    // profile failure must not block the login itself.
+    try {
+        $userPdo->prepare(
+            "INSERT INTO user_profiles (user_id, name, email, role, created_at)
+             VALUES (?, ?, ?, 'student', NOW())"
+        )->execute([$userId, $msName, $msEmail]);
+    } catch (Throwable $e) {
+        error_log('[SPOT-IT] Microsoft signup: user_profiles insert failed: ' . $e->getMessage());
+    }
+
     // Re-fetch the new user
     $stmt = $authPdo->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
     $stmt->execute([$userId]);
@@ -124,6 +138,13 @@ if (($user['microsoft_id'] ?? '') !== $msId && $msId) {
     $authPdo->prepare("UPDATE users SET microsoft_id = ? WHERE id = ?")
             ->execute([$msId, $user['id']]);
 }
+
+// Same last_login_at write as login_handler.php, so the column means the same
+// thing regardless of which door the user came through.
+try {
+    $authPdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = ?")
+            ->execute([$user['id']]);
+} catch (Throwable $e) { /* non-critical */ }
 
 $redirect = match($sessionUser['role']) {
     'admin'  => '../pages/dashboard-admin.php',

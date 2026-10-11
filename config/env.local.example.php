@@ -63,6 +63,34 @@ return [
     'MS_TENANT_ID'     => '',
 
     // ── Mail ─────────────────────────────────────────────────────────────────
+    // Drives signup email confirmation and password reset. See config/mailer.php.
+    //
+    // MAIL_DRIVER options:
+    //   'log'    - DEFAULT. Writes messages to logs/mail/ instead of sending.
+    //              Leave it on 'log' for local XAMPP work: the whole flow stays
+    //              testable (open the .html file to click the link or read the
+    //              reset code) and nothing leaves the machine.
+    //   'mail'   - PHP's built-in mail(). Works on most shared hosting with no
+    //              configuration. XAMPP has no MTA, so this does nothing locally.
+    //   'resend' - HTTPS to api.resend.com. Best deliverability to Outlook.
+    //              Needs MAIL_API_KEY and a sending domain verified at
+    //              https://resend.com/domains (DNS records on YOUR domain).
+    'MAIL_DRIVER' => 'log',
+
+    // MAIL_FROM must be a domain YOU control and have verified with the
+    // provider. It is NOT @dlsud.edu.ph - that is where mail is sent TO. The
+    // university's servers will reject anything claiming to send as them.
+    'MAIL_FROM'      => 'noreply@your-domain.com',
+    'MAIL_FROM_NAME' => 'S.P.O.T.-IT System',
+
+    // Only needed when MAIL_DRIVER is 'resend'.
+    'MAIL_API_KEY' => '',
+
+    // How long a signup confirmation link and a reset code stay valid.
+    'VERIFY_LINK_TTL_HOURS' => 24,
+    'RESET_CODE_TTL_MIN'    => 10,
+
+    // Unused today - reserved for a future SMTP driver.
     'MAIL_HOST' => 'smtp.gmail.com',
     'MAIL_PORT' => 587,
     'MAIL_USER' => '',

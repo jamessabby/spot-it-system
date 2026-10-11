@@ -283,34 +283,43 @@ body::before {
 .forgot-link { font-size: .78rem; color: var(--green-main); font-weight: 500; transition: opacity var(--transition); }
 .forgot-link:hover { opacity: .75; }
 
-/* CAPTCHA */
+/* CAPTCHA
+   Replaced 2026-08-22. The previous block styled a fake "I'm not a robot"
+   checkbox with a counterfeit reCAPTCHA badge, driven by a setTimeout. This
+   styles a real arithmetic challenge whose answer is verified server-side
+   (config/security.php) — hence an actual input the user types into. */
 .captcha-wrap {
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 12px 14px; display: flex; align-items: center; gap: 12px;
-  background: var(--bg-input); cursor: pointer; user-select: none;
+  padding: 12px 14px; display: flex; align-items: center; gap: 10px;
+  background: var(--bg-input); user-select: none;
   transition: var(--transition); margin-bottom: 1rem;
 }
-.captcha-wrap:hover  { border-color: rgba(0,86,49,.25); }
-.captcha-wrap.done   { border-color: rgba(0,86,49,.4); background: var(--green-pale); pointer-events: none; }
-.captcha-wrap.loading { pointer-events: none; }
-.captcha-check {
-  width: 22px; height: 22px; border: 2px solid var(--border);
-  border-radius: 4px; display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; background: var(--bg-surface); transition: var(--transition);
+.captcha-wrap:focus-within { border-color: rgba(0,86,49,.4); }
+.captcha-wrap.invalid      { border-color: var(--danger, #c0392b); }
+.captcha-icon  { font-size: .85rem; color: var(--green-main); flex-shrink: 0; }
+.captcha-q     { font-size: .82rem; color: var(--text-muted); flex: 1; margin: 0; }
+.captcha-q strong {
+  font-family: var(--font-mono); font-size: .92rem; font-weight: 700;
+  color: var(--text-primary); letter-spacing: .04em; white-space: nowrap;
 }
-.captcha-wrap.done .captcha-check { border-color: var(--green-main); background: var(--green-pale); }
-.captcha-spinner {
-  width: 12px; height: 12px; border: 2px solid var(--border);
-  border-top-color: var(--green-main); border-radius: 50%;
-  animation: spotit-spin .6s linear infinite; display: none;
+.captcha-input {
+  width: 62px; flex-shrink: 0; text-align: center;
+  font-family: var(--font-mono); font-size: .88rem; font-weight: 700;
+  padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-surface); color: var(--text-primary);
+  /* Hide the number spinners - they make a 1-2 digit field look cluttered. */
+  -moz-appearance: textfield; appearance: textfield;
 }
-.captcha-wrap.loading .captcha-spinner { display: block; }
-.captcha-check-icon { display: none; color: var(--green-main); font-size: .72rem; }
-.captcha-wrap.done .captcha-check-icon { display: block; }
-.captcha-text { font-size: .82rem; color: var(--text-muted); flex: 1; }
-.captcha-brand { margin-left: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.captcha-brand i { font-size: .85rem; color: var(--text-dim); }
-.captcha-brand span { font-size: .48rem; font-family: var(--font-display); font-weight: 700; letter-spacing: .1em; color: var(--text-dim); }
+.captcha-input::-webkit-outer-spin-button,
+.captcha-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.captcha-input:focus { outline: none; border-color: var(--green-main); }
+.captcha-refresh {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: .78rem; padding: 4px;
+  transition: var(--transition);
+}
+.captcha-refresh:hover { color: var(--green-main); }
+.captcha-refresh.spinning i { animation: spotit-spin .6s linear infinite; }
 
 /* Submit button */
 .btn-submit {

@@ -14,13 +14,47 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     ms_json(['success' => false, 'message' => 'Method not allowed.'], 405);
 }
 
+// ── 0. CSRF + CAPTCHA ────────────────────────────────────────────────────────
+// Both were UI-only before 2026-08-22: the token was emitted and never checked,
+// the CAPTCHA was a setTimeout that posted nothing. See config/security.php.
+if (!spotit_csrf_verify($_POST['csrf_token'] ?? null)) {
+    ms_json([
+        'success' => false,
+        'csrf_invalid' => true,
+        'message' => 'Your session expired. Please reload the page and try again.',
+    ], 403);   // 403, not 419: 419 is a Laravel convention, not an IANA code,
+               // and Apache rewrites unknown codes to a bare 500 on the wire —
+               // which would log a rejected CSRF token as a server fault.
+}
+
+$captcha = spotit_captcha_verify($_POST['captcha_answer'] ?? null);
+if (!$captcha['ok']) {
+    ms_json([
+        'success' => false,
+        'captcha_failed' => true,
+        'message' => $captcha['error'],
+    ]);
+}
+
 // ── 1. Collect & sanitize inputs ─────────────────────────────────────────────
 $full_name = trim($_POST['full_name'] ?? '');
 $email     = strtolower(trim($_POST['email']     ?? ''));
 $id_number = trim($_POST['id_number'] ?? '');
 $password  = $_POST['password']  ?? '';
 $confirm   = $_POST['confirm_password'] ?? '';
-$role      = trim($_POST['role'] ?? 'student');
+
+// PRIVILEGE ESCALATION FIX (2026-08-22).
+// $_POST['role'] used to be accepted with a ['student','staff'] whitelist, and
+// the signup page offered "Staff" in a role picker. Because login_handler.php
+// normalises the 'staff' role to an 'admin' SESSION (CLAUDE.md §2), anyone on
+// the internet could register themselves straight into the admin dashboard —
+// room data, user management, system logs, the donation purge.
+//
+// Self-registration is now ALWAYS 'student'. The submitted value is ignored
+// rather than validated, so re-adding a picker to the form cannot silently
+// re-open this. Staff and admin are provisioned by an existing admin, which is
+// what CLAUDE.md §2 said all along.
+$role = 'student';
 
 // ── 2. Validation ─────────────────────────────────────────────────────────────
 if (!$full_name || !$email || !$id_number || !$password || !$confirm) {
@@ -37,12 +71,6 @@ if (strlen($password) < 8) {
 
 if ($password !== $confirm) {
     ms_json(['success' => false, 'message' => 'Passwords do not match.']);
-}
-
-// Only allow student and staff self-registration — admin is provisioned manually
-$allowed_roles = ['student', 'staff'];
-if (!in_array($role, $allowed_roles, true)) {
-    $role = 'student';
 }
 
 // Validate ID number format (YYYY-NNNNN)
@@ -71,9 +99,13 @@ $password_hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
 try {
     $authPdo->beginTransaction();
 
+    // email_verified = 0. is_active stays 1: 'inactive' is the admin's
+    // disable switch and carries its own message ("contact an administrator"),
+    // which is the wrong thing to tell someone who just needs to click a link.
+    // The two states are separate on purpose and login_handler checks both.
     $authPdo->prepare(
-        "INSERT INTO users (full_name, email, id_number, password_hash, role, auth_provider, is_active, created_at)
-         VALUES (?, ?, ?, ?, ?, 'manual', 1, NOW())"
+        "INSERT INTO users (full_name, email, id_number, password_hash, role, auth_provider, is_active, email_verified, created_at)
+         VALUES (?, ?, ?, ?, ?, 'manual', 1, 0, NOW())"
     )->execute([$full_name, $email, $id_number, $password_hash, $role]);
 
     $new_user_id = (int)$authPdo->lastInsertId();
@@ -103,8 +135,28 @@ try {
     )->execute(["New {$role} registered: {$email}"]);
 } catch (Throwable $e) { /* non-critical */ }
 
+// ── 9. Send the verification link ─────────────────────────────────────────────
+// The account exists either way. If mail fails we say so plainly and point at
+// the resend button rather than pretending the email is on its way — the old
+// forgot-password page's habit of claiming success is exactly what made it
+// useless (BUGS.md §1).
+require_once __DIR__ . '/account_mail.php';
+$mail = spotit_send_verification_email($authPdo, $new_user_id, $email, $full_name);
+
+if (!$mail['ok']) {
+    ms_json([
+        'success'      => true,
+        'mail_failed'  => true,
+        'needs_verify' => true,
+        'message'      => 'Account created, but we could not send the confirmation email. '
+                        . 'Use "Resend confirmation" on the sign-in page.',
+        'redirect'     => 'login.php?registered=1&mail_failed=1',
+    ]);
+}
+
 ms_json([
-    'success'  => true,
-    'message'  => 'Account created successfully.',
-    'redirect' => 'login.php?registered=1',
+    'success'      => true,
+    'needs_verify' => true,
+    'message'      => 'Account created. Check your DLSU-D email for the confirmation link.',
+    'redirect'     => 'login.php?registered=1',
 ]);

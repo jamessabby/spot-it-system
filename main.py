@@ -105,7 +105,7 @@ CONSISTENCY_FRAMES = 25  # 25 consecutive frames (~0.8s @ 30 FPS) for balanced s
 #
 # Production rooms ignore this entirely: they read camera_ip/user/pass from
 # spotit_monitor_db.rooms via auth/get_room_camera.php.
-CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "192.168.18.14")
+CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "10.62.74.79")
 CAMERA_USER = os.environ.get("SPOTIT_CAMERA_USER", "SpotItCamera")
 CAMERA_PASS = os.environ.get("SPOTIT_CAMERA_PASS", "spotitcamera232")
 RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/stream1"
@@ -1364,12 +1364,21 @@ def log_roi_metrics(
         # and create massive CSV files during long test runs. State transitions are what
         # matter: they mark the evidence for TP/FP/FN/TN classification.
         prev_state = _metrics_last.get(label)
-        if state == prev_state:
-            return
+        test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+        now_ts = time.time()
+        state_changed = (state != prev_state)
+
+        if not state_changed:
+            if not test_mode:
+                return
+            if now_ts - _metrics_last_write.get(label, 0.0) < 1.0:
+                return
+
         _metrics_last[label] = state
+        _metrics_last_write[label] = now_ts
 
         # Same transition, second consumer: the A/B scoring log (replay only).
-        if AB_REPLAY:
+        if AB_REPLAY and state_changed:
             try:
                 ab_log_event(label, state, cap.seq * cap.frame_dt)
             except Exception:
@@ -1391,6 +1400,68 @@ def log_roi_metrics(
             )
     except Exception:
         pass  # instrumentation must never break detection
+
+
+_last_console_log = {}
+_last_console_state = {}
+_last_console_changed = {}
+_metrics_last_write = {}
+
+
+def log_realtime_console(
+    pipeline, label, state, change_pct, sim_present, sim_empty, used_dnn, changed,
+    t_absent, t_present, elapsed_sec,
+):
+    """Outputs real-time console logging for item replacement / A/B verification tests.
+
+    Prints difference mask ratio and MobileNetV2 similarity score at a clean, throttled rate
+    (default: 0.5s if SPOTIT_TEST_REPLACEMENT=1, else 1.0s) and immediately on any state or change transition.
+    """
+    now_ts = time.time()
+    interval = float(os.environ.get("SPOTIT_LOG_INTERVAL", "0.5" if os.environ.get("SPOTIT_TEST_REPLACEMENT") else "1.0"))
+
+    prev_state = _last_console_state.get(label)
+    prev_changed = _last_console_changed.get(label)
+
+    is_first_eval = (prev_state is None)
+    state_transition = (prev_state is not None and state != prev_state)
+    change_transition = (prev_changed is not None and changed != prev_changed)
+    time_elapsed = (now_ts - _last_console_log.get(label, 0.0) >= interval)
+
+    if not (is_first_eval or state_transition or change_transition or time_elapsed):
+        return
+
+    _last_console_log[label] = now_ts
+    _last_console_state[label] = state
+    _last_console_changed[label] = changed
+
+    tag = ""
+    if state_transition:
+        tag = f" [{prev_state} -> {state}]"
+    elif change_transition:
+        tag = f" [{'CHANGE >= 8%' if changed else 'SETTLED < 8%'}]"
+
+    if pipeline == "classical":
+        sim_desc = f"TemplateMatch: {sim_present:.4f} | MobileNetV2: N/A (Classical Pipeline)"
+    else:
+        if used_dnn:
+            sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (empty: {sim_empty:.4f}) [DNN ACTIVE]"
+        elif not changed:
+            test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+            if test_mode:
+                sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (empty: {sim_empty:.4f}) [TEST EVAL]"
+            else:
+                sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (ML Idle, <8% diff)"
+        else:
+            sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (chroma fallback)"
+
+    pipe_tag = "GATEKEEPER" if pipeline == "gatekeeper" else "CLASSICAL"
+    diff_tag = ">= 8%" if changed else "< 8%"
+    print(
+        f"[{pipe_tag}] t={elapsed_sec:6.2f}s | ROI: {label:<10} | State: {state:<8} | "
+        f"DiffMask: {change_pct:6.4f} ({change_pct*100:5.1f}%, {diff_tag}) | "
+        f"{sim_desc} | Timers: abs={t_absent:.1f}s pres={t_present:.1f}s{tag}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1916,7 +1987,7 @@ def evaluate_roi_presence_classical(frame_bgr, roi):
     return ("PRESENT" if found else "ABSENT"), float(score), 0.0, False
 
 
-def post_to_api(label, snapshot_path, change_pct):
+def post_to_api(label, snapshot_path, change_pct, match_score=None):
     """
     POST detection event (Snapshot A) to ingest_detection.php
     """
@@ -1935,6 +2006,11 @@ def post_to_api(label, snapshot_path, change_pct):
         "live_count": live_count,
         "roi_change_pct": round(change_pct * 100, 1),
     }
+    if match_score is not None:
+        try:
+            payload["match_score"] = round(float(match_score), 4)
+        except (ValueError, TypeError):
+            pass
 
     try:
         with open(snapshot_path, "rb") as img_file:
@@ -2102,6 +2178,7 @@ AB_STATS.update(
 )
 
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
+_loop_start_time = time.time()
 while True:
     # ── CHECK FOR DYNAMIC ROOM SWITCH ─────────────────────────────────────
     if CLI_ROOM_ID is None and ROOM_ID != current_running_room:
@@ -2867,7 +2944,9 @@ while True:
         # Scores the ROI against BOTH "item is here" and "item is gone"
         # templates. Bare wood matches the empty template, so it can no longer
         # masquerade as the item the way it did under plain template matching.
-        if not changed:
+        test_replacement_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+
+        if not changed and not test_replacement_mode:
             # Nothing changed against the baseline — the item is where it was.
             state, sim_present, sim_empty, used_dnn = "PRESENT", 1.0, 0.0, False
         elif PIPELINE_MODE == "classical":
@@ -2945,6 +3024,21 @@ while True:
             absent_time.get(label, 0.0),
             present_time.get(label, 0.0),
             motion_pct,
+        )
+
+        elapsed_sec = (cap.seq * cap.frame_dt) if AB_REPLAY else (time.time() - _loop_start_time)
+        log_realtime_console(
+            pipeline=PIPELINE_MODE,
+            label=label,
+            state=state,
+            change_pct=change_pct,
+            sim_present=sim_present,
+            sim_empty=sim_empty,
+            used_dnn=used_dnn,
+            changed=changed,
+            t_absent=absent_time.get(label, 0.0),
+            t_present=present_time.get(label, 0.0),
+            elapsed_sec=elapsed_sec,
         )
 
         # NOTE: the old SHIFT-SEARCH MATCH GATE (cv2.matchTemplate + Canny edge
@@ -3039,8 +3133,11 @@ while True:
             print(
                 f"  Change       : {change_pct:.1%} over {CONSISTENCY_FRAMES} consecutive frames"
             )
+            print(f"  Match Score  : {sim_present:.4f}")
 
-            det_id = post_to_api(label, snapshot_path, change_pct)
+            det_id = post_to_api(
+                label, snapshot_path, change_pct, match_score=sim_present
+            )
             active_detection_ids[label] = det_id
             missing_timestamps[label] = time.time()
             print()
@@ -3175,13 +3272,23 @@ while True:
         # these visible, threshold tuning is guesswork.
         cv2.putText(
             output,
-            f"here={sim_present:.2f} gone={sim_empty:.2f}",
+            f"diff={change_pct:.1%} sim={sim_present:.2f}",
             (x, y + h + 14),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.38,
             (220, 220, 220),
             1,
         )
+        if PIPELINE_MODE != "classical":
+            cv2.putText(
+                output,
+                f"empty={sim_empty:.2f}",
+                (x, y + h + 27),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (180, 180, 180),
+                1,
+            )
 
     # ── STATUS BAR ────────────────────────────────────────────────────────
     if not monitoring_paused:
