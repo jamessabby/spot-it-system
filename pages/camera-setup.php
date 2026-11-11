@@ -327,6 +327,21 @@ if ($selectedRoomId !== '') {
 
         <!-- Details & list area -->
         <div style="display:flex; flex-direction:column; gap:12px; height:100%; max-height:540px;">
+          <!-- Automatic ROI suggestions (experimental, YOLO) -->
+          <div id="suggestPanel" style="padding:10px; border-radius:8px; border:1px dashed rgba(255,159,64,.6); background:rgba(255,159,64,.06); display:flex; flex-direction:column; gap:8px;">
+            <div style="font-weight:800; font-size:.74rem; color:var(--text-primary);"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest ROIs (YOLO, experimental)</div>
+            <div style="display:flex; flex-wrap:wrap; gap:10px; font-size:.7rem;">
+              <label><input type="checkbox" class="sugg-cls" value="keyboard" checked> Keyboards</label>
+              <label><input type="checkbox" class="sugg-cls" value="mouse" checked> Mice</label>
+              <label><input type="checkbox" class="sugg-cls" value="tv"> Monitors</label>
+              <label><input type="checkbox" class="sugg-cls" value="laptop"> Laptops</label>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-sm" id="btnSuggest" onclick="requestRoiSuggestions()" style="flex:1; justify-content:center;"><i class="fa-solid fa-magnifying-glass"></i> Suggest from live frame</button>
+              <button class="btn btn-sm" onclick="discardSuggestions()" title="Remove all suggested boxes that are still unreviewed">Discard suggestions</button>
+            </div>
+            <div id="suggestStatus" style="font-size:.66rem; color:var(--text-muted);">Proposals appear as dashed orange boxes. Keep, rename, delete, or draw your own. Oscilloscopes and power supplies are not detectable — draw those manually.</div>
+          </div>
           <div style="font-weight:800; font-size:.8rem; color:var(--text-primary);"><i class="fa-solid fa-list"></i> Target ROI Zones List</div>
           <div id="roiList" style="display:flex; flex-direction:column; gap:10px; flex:1; overflow-y:auto; min-height:200px;">
             <!-- Rendered dynamically -->
@@ -530,11 +545,13 @@ function redrawEditorCanvas(drawPreview = false) {
   }
 
   editorRois.forEach((roi, idx) => {
-    ctx.strokeStyle = '#5cffac';
+    ctx.strokeStyle = roi.suggested ? '#ff9f40' : '#5cffac';
     ctx.lineWidth = 2;
+    if (roi.suggested) ctx.setLineDash([6, 4]);
     ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
-    
-    ctx.fillStyle = 'rgba(92,255,172,0.85)';
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = roi.suggested ? 'rgba(255,159,64,0.85)' : 'rgba(92,255,172,0.85)';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillRect(roi.x, roi.y - 20, 110, 20);
     ctx.fillStyle = '#000';
@@ -556,7 +573,7 @@ function renderRoiList() {
   container.innerHTML = editorRois.map((roi, idx) => `
     <div style="display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:6px; border:1px solid var(--border); background:var(--bg-base);">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-weight:800; font-size:.7rem; color:var(--text-dim);">Zone #${idx+1}</span>
+        <span style="font-weight:800; font-size:.7rem; color:var(--text-dim);">Zone #${idx+1}${roi.suggested ? ` <span style="color:#ff9f40;">· suggested (${roi.sourceClass} ${roi.score})</span>` : ''}</span>
         <button class="btn btn-sm" onclick="deleteEditorRoi(${idx})" style="padding:2px 6px; font-size:.64rem; color:var(--red-main); background:rgba(220,53,69,0.1); border:1px solid rgba(220,53,69,0.2);">
           <i class="fa-solid fa-trash"></i>
         </button>
@@ -600,6 +617,96 @@ function deleteEditorRoi(idx) {
   editorRois.splice(idx, 1);
   renderRoiList();
   redrawEditorCanvas();
+}
+
+// ── Automatic ROI suggestions (experimental) ────────────────────────────────
+// Asks the detector (auth/suggest_rois.php -> main.py) to run YOLO on its
+// full-resolution frame. Proposals are added to editorRois marked `suggested`;
+// the admin keeps / renames / deletes / redraws them and saves with the normal
+// save button. Nothing is stored until Save.
+let suggestPollTimer = null;
+
+function _iou(a, b) {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const inter = ix * iy;
+  return inter / (a.w * a.h + b.w * b.h - inter || 1);
+}
+
+async function requestRoiSuggestions() {
+  const classes = [...document.querySelectorAll('.sugg-cls:checked')].map(c => c.value);
+  const status = document.getElementById('suggestStatus');
+  if (!classes.length) { showToast('warn', 'Choose at least one equipment type.'); return; }
+  const btn = document.getElementById('btnSuggest');
+  btn.disabled = true;
+  status.textContent = 'Asking the detector for proposals…';
+  let res = null;
+  try {
+    const r = await fetch('../auth/suggest_rois.php', {
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ room_id: ROOM_ID, classes: classes.join(',') }),
+    });
+    res = await r.json().catch(() => null);
+  } catch (e) { /* handled below */ }
+  if (!res || !res.success) {
+    btn.disabled = false;
+    status.textContent = (res && res.message) || 'Could not request suggestions.';
+    showToast('error', status.textContent);
+    return;
+  }
+  const started = Date.now();
+  clearInterval(suggestPollTimer);
+  suggestPollTimer = setInterval(async () => {
+    let g = null;
+    try { g = await (await fetch(`../auth/suggest_rois.php?room_id=${ROOM_ID}&t=${Date.now()}`)).json(); } catch (e) {}
+    if (g && g.result) {
+      clearInterval(suggestPollTimer);
+      btn.disabled = false;
+      applySuggestions(g.result);
+    } else if (Date.now() - started > 60000) {
+      clearInterval(suggestPollTimer);
+      btn.disabled = false;
+      status.textContent = 'No answer from the detector within 60 s. Is main.py running for this room?';
+      showToast('error', status.textContent);
+    }
+  }, 1500);
+}
+
+function applySuggestions(result) {
+  const status = document.getElementById('suggestStatus');
+  if (result.error) { status.textContent = result.error; showToast('error', result.error); return; }
+  // Resolution guard (Fix 1): boxes are in the detector frame's coordinates and
+  // must match the baseline this editor draws on, or they would land elsewhere.
+  if (result.frame_w !== editorImg.naturalWidth || result.frame_h !== editorImg.naturalHeight) {
+    status.textContent = `Proposals were made on a ${result.frame_w}x${result.frame_h} frame, but this baseline is `
+      + `${editorImg.naturalWidth}x${editorImg.naturalHeight}. Recapture the baseline, then try again.`;
+    showToast('error', 'Resolution mismatch — suggestions not applied.');
+    return;
+  }
+  const used = new Set(editorRois.map(r => r.label));
+  let added = 0, skipped = 0;
+  for (const s of result.suggestions) {
+    if (editorRois.some(r => _iou(r, s) > 0.5)) { skipped++; continue; }   // already registered
+    let label = s.label, n = 2;
+    while (used.has(label)) label = `${s.label}_${n++}`;
+    used.add(label);
+    editorRois.push({ label, tier: s.tier || detectRoiTier(label), x: s.x, y: s.y, w: s.w, h: s.h,
+                      suggested: true, sourceClass: s.class, score: s.score });
+    added++;
+  }
+  renderRoiList();
+  redrawEditorCanvas();
+  status.textContent = `${added} proposal(s) added from a ${result.source_w}x${result.source_h} frame`
+    + (skipped ? `, ${skipped} skipped (already registered)` : '')
+    + '. Review each one, then Save. Draw any missed items manually.';
+  showToast(added ? 'success' : 'warn', added ? `${added} ROI proposal(s) added for review.` : 'No new equipment found.');
+}
+
+function discardSuggestions() {
+  editorRois = editorRois.filter(r => !r.suggested);
+  renderRoiList();
+  redrawEditorCanvas();
+  document.getElementById('suggestStatus').textContent = 'Suggestions discarded.';
 }
 
 async function saveRoisToSystem() {

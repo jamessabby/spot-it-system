@@ -82,6 +82,25 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
       
       <div class="topbar-right">
         <!-- Room Selector -->
+        <!-- Detection mode: each option runs a different presence algorithm in main.py
+             (picked up from detection_mode.json within ~1 s, no restart). -->
+        <?php $curPipeline = in_array($dm['pipeline'] ?? '', ['classical', 'yolo'], true) ? $dm['pipeline'] : 'gatekeeper'; ?>
+        <select id="pipelineSelect" onchange="switchPipelineMode(this.value)" title="Detection mode used by the live detector"
+                style="font-family:var(--font-display);font-size:.75rem;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-primary);cursor:pointer;margin-right:8px;">
+          <option value="classical"  <?= $curPipeline === 'classical' ? 'selected' : '' ?>>Mode: Classical OpenCV</option>
+          <option value="gatekeeper" <?= $curPipeline === 'gatekeeper' ? 'selected' : '' ?>>Mode: OpenCV + MobileNetV2</option>
+          <option value="yolo"       <?= $curPipeline === 'yolo' ? 'selected' : '' ?>>Mode: YOLO (experimental)</option>
+        </select>
+        <!-- Equipment category (room-specific): DISPLAY ONLY. Hides other ROI boxes
+             on the video; every registered ROI keeps being monitored. Independent
+             of the detection mode above. -->
+        <select id="categorySelect" onchange="selectCategory(this.value)" title="Show only one equipment category on the video (monitoring of all items continues)"
+                style="font-family:var(--font-display);font-size:.75rem;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-primary);cursor:pointer;margin-right:4px;">
+          <option value="All">Show: All equipment</option>
+        </select>
+        <?php if ($user_role === 'admin'): ?>
+        <button class="btn btn-sm" onclick="openCategoryEditor()" title="Manage this room's equipment categories" style="margin-right:8px;"><i class="fa-solid fa-tags"></i></button>
+        <?php endif; ?>
         <select id="roomSelect" onchange="switchRoom(this.value)" style="font-family:var(--font-display);font-size:.75rem;font-weight:700;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-primary);cursor:pointer;">
           <?php foreach($activeRooms as $ar): ?>
           <option value="<?= htmlspecialchars($ar['room_id']) ?>" <?= $ar['room_id']===$room_id?'selected':'' ?>><?= htmlspecialchars($ar['room_id']) ?> — <?= htmlspecialchars($ar['room_name']) ?></option>
@@ -483,6 +502,153 @@ function toggleCamFullScreen() {
 // main.py posts a heartbeat every 10s; the server calls it offline after 30s.
 // Shows FPS as well as up/down, because a detector crawling at 2 fps is a real
 // fault that a binary badge would hide.
+// ── Detection mode selector ─────────────────────────────────────────────────
+// Writes `pipeline` to detection_mode.json via the existing endpoint; main.py
+// switches algorithms on its next poll and resets its confirmation timers, so a
+// verdict from one mode never confirms an event under another.
+// ── Room-specific equipment categories (display only) ────────────────────────
+let roomCategories = [];
+
+async function loadRoomCategories() {
+  const sel = document.getElementById('categorySelect');
+  let d = null;
+  try { d = await (await fetch(`../auth/room_categories.php?room_id=${encodeURIComponent(currentRoomId)}`, { cache: 'no-store' })).json(); } catch (e) {}
+  if (!d || !d.success) { sel.title = 'Categories unavailable'; return; }
+  roomCategories = d.categories;
+  sel.innerHTML = `<option value="All">Show: All equipment (${d.roi_total})</option>`
+    + d.categories.map(c => `<option value="${c.name.replace(/"/g, '&quot;')}">Show: ${c.name} (${c.roi_count})</option>`).join('');
+  sel.value = d.categories.some(c => c.name === d.selected) ? d.selected : 'All';
+  sel.title = (d.uncategorised.length ? `Not in any category: ${d.uncategorised.join(', ')}. ` : '')
+    + 'Display only — every registered item is still monitored.';
+}
+
+async function selectCategory(name) {
+  let res = null;
+  try {
+    const r = await fetch('../auth/room_categories.php', {
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ action: 'select', room_id: currentRoomId, name }),
+    });
+    res = await r.json().catch(() => null);
+  } catch (e) {}
+  if (res && res.success) {
+    showToast('success', name === 'All' ? 'Showing all equipment.'
+      : `Showing ${name} only — all other equipment is still being monitored.`);
+  } else {
+    showToast('error', (res && res.message) || 'Could not change the category filter.');
+    loadRoomCategories();
+  }
+}
+
+// Category editor (admin): a modal listing this room's SAVED ROIs with a category
+// picker each, plus the category names/keywords. Assignments are stored in
+// room_categories.json — the ROI/calibration files are never written here.
+let catEditorRois = [];
+let catEditorCats = [];
+
+async function openCategoryEditor() {
+  let d = null;
+  try { d = await (await fetch(`../auth/room_categories.php?room_id=${encodeURIComponent(currentRoomId)}`, { cache: 'no-store' })).json(); } catch (e) {}
+  if (!d || !d.success) { showToast('error', "Could not load this room's categories."); return; }
+  catEditorCats = d.categories.map(c => ({ name: c.name, keywords: c.keywords.slice() }));
+  catEditorRois = d.rois.map(r => ({ label: r.label, category: r.category, via: r.via }));
+  document.getElementById('catEditorRoom').textContent = currentRoomId;
+  renderCategoryEditor();
+  openModal('categoryModal');
+}
+
+function renderCategoryEditor() {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const catList = document.getElementById('catEditorCats');
+  catList.innerHTML = catEditorCats.map((c, i) => `
+    <div class="cat-row" data-i="${i}" style="display:grid;grid-template-columns:1fr 1.4fr auto;gap:8px;align-items:center;margin-bottom:8px;">
+      <input class="form-control cat-name" value="${esc(c.name)}" placeholder="Category name" maxlength="40" oninput="catEditorCats[${i}].name=this.value;renderCategoryRois()">
+      <input class="form-control cat-kw" value="${esc(c.keywords.join(', '))}" placeholder="label keywords, comma-separated" oninput="catEditorCats[${i}].keywords=this.value.split(',').map(k=>k.trim()).filter(Boolean);renderCategoryRois()">
+      <button class="btn btn-sm" type="button" title="Remove category" onclick="catEditorCats.splice(${i},1);renderCategoryEditor()"><i class="fa-solid fa-xmark"></i></button>
+    </div>`).join('') || '<div style="font-size:.78rem;color:var(--text-dim);">No categories yet — add one below.</div>';
+  renderCategoryRois();
+}
+
+function renderCategoryRois() {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const names = catEditorCats.map(c => c.name.trim()).filter(Boolean);
+  const kwMatch = label => { const low = label.toLowerCase(); const c = catEditorCats.find(c => c.keywords.some(k => k && low.includes(k.toLowerCase()))); return c ? c.name : null; };
+  const body = document.getElementById('catEditorRois');
+  if (!catEditorRois.length) {
+    body.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim);font-size:.78rem;padding:10px;">This room has no saved ROIs yet. Register items in Camera Setup first.</td></tr>';
+    return;
+  }
+  body.innerHTML = catEditorRois.map((r, i) => {
+    const auto = kwMatch(r.label);
+    const assigned = r.via === 'assigned' && names.includes(r.category) ? r.category : '';
+    const opts = ['<option value="">' + (auto ? `Auto: ${esc(auto)} (by keyword)` : '— none —') + '</option>']
+      .concat(names.map(n => `<option value="${esc(n)}" ${assigned === n ? 'selected' : ''}>${esc(n)}</option>`)).join('');
+    return `<tr>
+      <td style="font-family:var(--font-mono);font-size:.8rem;padding:6px 8px;">${esc(r.label)}</td>
+      <td style="padding:6px 8px;"><select class="form-control roi-cat" data-label="${esc(r.label)}" onchange="catEditorRois[${i}].category=this.value||null;catEditorRois[${i}].via=this.value?'assigned':null;renderCategoryRois()" style="padding:5px 8px;font-size:.78rem;">${opts}</select></td>
+      <td style="padding:6px 8px;font-size:.72rem;color:var(--text-dim);">${assigned ? 'assigned' : (auto ? 'keyword' : '<span style="color:var(--warn);">not in any category</span>')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function addCategoryRow() {
+  catEditorCats.push({ name: '', keywords: [] });
+  renderCategoryEditor();
+  const inputs = document.querySelectorAll('#catEditorCats .cat-name');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+async function saveCategoryEditor() {
+  const cats = catEditorCats.map(c => ({ name: c.name.trim(), keywords: c.keywords })).filter(c => c.name);
+  if (cats.length > 12) { showToast('error', 'At most 12 categories per room.'); return; }
+  const names = cats.map(c => c.name.toLowerCase());
+  if (new Set(names).size !== names.length) { showToast('error', 'Category names must be unique.'); return; }
+  const assignments = {};
+  document.querySelectorAll('#catEditorRois .roi-cat').forEach(sel => { if (sel.value) assignments[sel.dataset.label] = sel.value; });
+  const btn = document.getElementById('catEditorSave'); btn.disabled = true;
+  let res = null;
+  try {
+    const r = await fetch('../auth/room_categories.php', {
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ action: 'save', room_id: currentRoomId, categories: JSON.stringify(cats), assignments: JSON.stringify(assignments) }),
+    });
+    res = await r.json().catch(() => null);
+  } catch (e) {}
+  btn.disabled = false;
+  if (res && res.success) {
+    showToast('success', `Saved ${res.categories.length} categories and ${Object.keys(res.assignments).length} assignments for ${currentRoomId}.`);
+    closeModal('categoryModal');
+    loadRoomCategories();
+  } else {
+    showToast('error', (res && res.message) || 'Could not save categories.');
+  }
+}
+
+async function switchPipelineMode(mode) {
+  const sel = document.getElementById('pipelineSelect');
+  const names = { classical: 'Classical OpenCV', gatekeeper: 'OpenCV + MobileNetV2', yolo: 'YOLO (experimental)' };
+  if (!confirm(`Switch the live detector to ${names[mode]}?\n\nConfirmation timers restart; the badge on the video shows the active mode.`)) {
+    location.reload();
+    return;
+  }
+  sel.disabled = true;
+  let res = null;
+  try {
+    const r = await fetch('../auth/toggle_detection_mode.php', {
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ pipeline: mode }),
+    });
+    res = await r.json().catch(() => null);
+  } catch (e) { /* handled below */ }
+  sel.disabled = false;
+  if (res && res.success) {
+    showToast('success', `${names[mode]} selected — the detector switches within about a second.`);
+  } else {
+    showToast('error', (res && res.message) || 'Could not change the detection mode.');
+    setTimeout(() => location.reload(), 1200);
+  }
+}
+
 async function pollDetectorHealth() {
   const pill  = document.getElementById('detectorPill');
   const dot   = document.getElementById('detectorDot');
@@ -495,7 +661,17 @@ async function pollDetectorHealth() {
     );
     const data = await res.json();
     const h = (data && data.health) || {};
-    if (h.online) {
+    // WEB-07: "detector running" is not "camera live". feed_state says which.
+    const notLive = { CAMERA_OFFLINE: ['CAMERA OFFLINE', '#dc3545'],
+                      RECONNECTING:   ['RECONNECTING',   '#e6a700'],
+                      NO_CAMERA:      ['NO CAMERA',      '#888'] };
+    if (h.online && notLive[h.feed_state]) {
+      const [text, colour] = notLive[h.feed_state];
+      dot.style.background = colour;
+      label.textContent = h.last_frame_time ? `${text} · last frame ${h.last_frame_time}` : text;
+      pill.style.opacity = '1';
+      pill.title = h.feed_message || text;
+    } else if (h.online) {
       dot.style.background = '#00ff88';
       label.textContent = h.fps ? `LIVE · ${h.fps} FPS` : 'LIVE FEED';
       pill.style.opacity = '1';
@@ -518,7 +694,8 @@ document.addEventListener('DOMContentLoaded', () => {
   pollRoomStatus();
   setInterval(pollRoomStatus, 2000);
   pollDetectorHealth();
-  setInterval(pollDetectorHealth, 10000);
+  setInterval(pollDetectorHealth, 5000);
+  loadRoomCategories();
   initLiveFrameStream('camVideoBox', currentRoomId);
 });
 
@@ -529,5 +706,32 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { pollRoomStatus(); pollDetectorHealth(); }
 });
 </script>
+<!-- Equipment category editor (admin). Display-only categories; ROI files untouched. -->
+<div class="modal-overlay" id="categoryModal" onclick="if(event.target===this)closeModal('categoryModal')">
+  <div class="modal-box" style="max-width:720px;">
+    <div class="modal-head">
+      <div class="modal-title"><i class="fa-solid fa-tags"></i> Equipment categories — <span id="catEditorRoom"></span></div>
+      <div class="modal-close" onclick="closeModal('categoryModal')"><i class="fa-solid fa-xmark"></i></div>
+    </div>
+    <div class="modal-body" style="max-height:70vh;overflow:auto;">
+      <p style="font-size:.78rem;color:var(--text-muted);margin:0 0 12px;">
+        Categories only change what the <b>Show:</b> dropdown hides on the video. Every registered item stays monitored.
+        An ROI without an assignment follows the keywords (e.g. <code>pc, cpu, tower</code> matches <code>pc_unit3</code>).
+      </p>
+      <div style="font-family:var(--font-display);font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Categories</div>
+      <div id="catEditorCats"></div>
+      <button class="btn btn-sm" type="button" onclick="addCategoryRow()" style="margin:2px 0 16px;"><i class="fa-solid fa-plus"></i> Add category</button>
+      <div style="font-family:var(--font-display);font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Saved ROIs in this room</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="font-size:.7rem;color:var(--text-dim);text-align:left;"><th style="padding:4px 8px;">ROI label</th><th style="padding:4px 8px;">Category</th><th style="padding:4px 8px;">Source</th></tr></thead>
+        <tbody id="catEditorRois"></tbody>
+      </table>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <button class="btn btn-sm" type="button" onclick="closeModal('categoryModal')">Cancel</button>
+        <button class="btn btn-primary btn-sm" type="button" id="catEditorSave" onclick="saveCategoryEditor()"><i class="fa-solid fa-floppy-disk"></i> Save categories</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>

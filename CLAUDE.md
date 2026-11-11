@@ -642,6 +642,68 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-11 (Final demo stabilisation — end-to-end acceptance on an isolated environment):**
+  Verified the complete workflow with REAL writes on `spotit_test_*` databases (structure
+  cloned from the live DBs, seeded with the two rooms + a `ZZT1` test room), served by a
+  separate `php -S` process whose environment overrides the `*_DB_NAME` values — Apache and
+  the real DBs were never touched. 48 API/DB/page checks + 23 headless-Chrome checks on the
+  real pages pass. Fixed on the way (all small, all verified by re-running the suites):
+  - `complete_claim.php` printed `Undefined variable $receipt` before its JSON (computed
+    after the notification that quoted it) → the Claiming Station could not parse a
+    successful hand-off. Receipt now computed first.
+  - `submit_claim.php` stored `claim_id = NULL` on the staff "new claim" notification.
+  - `get_notifications.php`: `type=a,b,c` is now an `IN` list (the notifications page's
+    category pills sent a comma list that matched nothing); every notification about a
+    detection now carries the event's CURRENT state (`event_status`, `event_status_label`,
+    `event_closed`, `event_missing`) and a `link` to `dashboard-admin.php?event=<id>`, which
+    opens that event's pop-up (`openLinkedEvent()`); ties on `created_at` ordered by id.
+  - Admin dashboard: bell panel never opened (inline-styled panel toggled a class that only
+    `.notif-panel` has; `#notifPanelTs` missing → TypeError; "Mark all read" called an
+    undefined `markAllRead()`); validation buttons (`submitValidation`) showed a toast
+    without saving — now POST `validate_detection.php`; KPI cards are links (WEB-04) and
+    "Pending Validation" counts only OPEN events awaiting review (WEB-14; it used to include
+    41 already-recovered events). `ms_dashboard_kpis()` in `services/monitoring/db.php`.
+  - `inventory-monitor.php`: `#alerts` handler ran before `let currentFilter` (TDZ error).
+  - `my-posts.php` (WEB-08): missing `.stat-grid` wrapper closed `.page-body` early so only
+    the stat cards scrolled; "Post History" was hardcoded, now the user's own months.
+  - `spotit.js`: `markAllNotifsRead()` refreshes the sidebar badge immediately.
+  - Room Monitor: second dropdown = room-specific equipment categories (DISPLAY ONLY — the
+    detector keeps monitoring every ROI; verified by replay: only the selected label's box
+    is drawn and it still fires MISSING). `auth/room_categories.php` stores categories and
+    per-ROI assignments in `room_categories.json` (never in the ROI files); the editor is a
+    modal listing the room's saved ROIs (`registered_lab_items` ∪ `rois_<ROOM>.json`), no
+    `prompt()`. `display_filter.labels` is an exact list; `main.py` prefers it over keywords.
+  - YOLO ROI suggestions: cross-class duplicates (tv + laptop on one monitor) deduped.
+  Not verified tonight (needs hardware): live camera disconnect/reconnect (WEB-07 UI states
+  are unit-tested and the no-camera run passed), the real Turnstile login, and the lab
+  camera password stored for MLH301/MLH305. Startup/rollback: `md_files/LAB_STARTUP_2026-11-12.md`.
+
+- **2026-11-11 (Nov 12 lab readiness — UNCOMMITTED at time of writing):**
+  - **YOLO** (`yolo_detector.py`, `models/yolox_s.onnx` = OpenCV Model Zoo YOLOX-S, COCO-80,
+    Apache-2.0, run via cv2.dnn — no PyTorch). Names object classes → beyond §8's
+    presence-only gate: **experimental, needs adviser sign-off**. Uses: (1) `pipeline=yolo`
+    mode (expected class on ROI → PRESENT, person over ROI → OCCLUDED, else ABSENT; ROIs YOLO
+    cannot see on their own baseline, or with no COCO class — oscilloscopes, power supplies —
+    fall back to the MobileNetV2 gatekeeper and the console says so); (2) **person guard**
+    (`SPOTIT_PERSON_GUARD`, on; gatekeeper + yolo modes): ABSENT held as OCCLUDED while a
+    person covers ≥20% of the ROI, and the stuck-occlusion escape cannot fire — evidence:
+    obstruction trials 0.6–1.0 person coverage throughout, real removals only brief bursts;
+    (3) left-item person filter; (4) ROI suggestions.
+  - **Mode selector**: `pipeline` ∈ classical | gatekeeper | yolo — Room Monitor dropdown,
+    Desk Sandbox toggle, whitelisted in `toggle_detection_mode.php`.
+  - **ROI suggestions**: `auth/suggest_rois.php` → `runtime/suggest_{ROOM}.request.json` →
+    `main.py` runs tiled YOLO on the FULL-res frame → `runtime/suggest_{ROOM}.result.json` in
+    detection-frame coordinates → Camera Setup ROI editor (dashed orange, review, normal
+    Save). Refused on resolution mismatch. Local mode only (shared runtime/ folder).
+  - **Texture check limited** (`SPOTIT_TEXTURE_KEYWORDS`, default keyboard/oscilloscope/
+    power supply): Fix 3A had broken mouse removals (lifted mouse leaves pad edges) —
+    mouse2 removal caught again on the recordings.
+  - **Unregistered branch rewritten**: registered ROIs masked out; YOLO person filter;
+    IoU tracking so `objectN` ids/timers are stable; "taken" (Snapshot B) only after 1.5 s
+    gone; replay-aware clock (was wall-clock, so replays of this branch were meaningless).
+  - Also: `main.py` puts its own folder on `sys.path` (under `python -I` the YOLO import
+    silently failed); FileStream `__init__` repaired (WEB-07 edit had broken replay mode).
+
 - **2026-11-11 (Admin dashboard event pop-up made real; stage label fixed):**
   - The Admin Dashboard event pop-up was entirely mock: rows passed a room code into a
     hardcoded `modalData` object of three invented June events, and Recovered / Dismiss /

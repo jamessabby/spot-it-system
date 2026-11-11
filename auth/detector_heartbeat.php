@@ -35,9 +35,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
+    // frame_age = seconds since the detector last received a NEW camera frame,
+    // measured on the detector. Converted to an absolute time on THIS server's
+    // clock, so freshness stays correct even if the two machines' clocks differ.
+    $frameAge = (isset($_POST['frame_age']) && $_POST['frame_age'] !== '')
+        ? max(0.0, (float) $_POST['frame_age']) : null;
+
     detector_record_heartbeat($roomId, [
         'fps'      => isset($_POST['fps']) ? round((float) $_POST['fps'], 1) : null,
         'camera'   => substr(trim((string) ($_POST['camera'] ?? 'unknown')), 0, 32),
+        'last_frame_at' => $frameAge !== null ? (int) round(time() - $frameAge) : null,
         'deploy'   => substr(trim((string) ($_POST['deploy'] ?? 'unknown')), 0, 16),
         'rois'     => isset($_POST['roi_count']) ? (int) $_POST['roi_count'] : null,
         'missing'  => isset($_POST['missing_count']) ? (int) $_POST['missing_count'] : null,

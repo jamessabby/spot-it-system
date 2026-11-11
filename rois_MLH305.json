@@ -1,0 +1,50 @@
+[
+    {
+        "label": "keyboard1",
+        "tier": "tier1",
+        "x": 701,
+        "y": 345,
+        "w": 116,
+        "h": 67
+    },
+    {
+        "label": "keyboard2",
+        "tier": "tier1",
+        "x": 422,
+        "y": 250,
+        "w": 79,
+        "h": 42
+    },
+    {
+        "label": "mouse1",
+        "tier": "tier1",
+        "x": 287,
+        "y": 197,
+        "w": 24,
+        "h": 17
+    },
+    {
+        "label": "keyboard3",
+        "tier": "tier1",
+        "x": 804,
+        "y": 178,
+        "w": 83,
+        "h": 39
+    },
+    {
+        "label": "mouse2",
+        "tier": "tier1",
+        "x": 234,
+        "y": 507,
+        "w": 43,
+        "h": 35
+    },
+    {
+        "label": "keyboard4",
+        "tier": "tier1",
+        "x": 145,
+        "y": 382,
+        "w": 55,
+        "h": 68
+    }
+]

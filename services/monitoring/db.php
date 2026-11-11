@@ -38,3 +38,51 @@ function getMonitorDB(): PDO {
 // include only this file, not the full service_bootstrap.php. A second copy here
 // used to drift from the bootstrap one; require_once keeps exactly one.
 require_once __DIR__ . '/../../auth/event_kinds.php';
+
+/**
+ * Admin dashboard KPI cards, with the scope of each number stated (WEB-14).
+ *
+ * The card values are unchanged in meaning where they were right, and scoped
+ * where they were not:
+ *   rooms          enabled rooms (is_active AND is_enabled)
+ *   open           every unresolved event (pending/potential/confirmed_missing),
+ *                  any room, any age — these are real records nobody has closed,
+ *                  so they are still counted; the breakdown says where they are
+ *   open_enabled   ...of those, in rooms currently in service
+ *   open_stale     ...of those, older than 24 h
+ *   review_open    events awaiting staff validation that are STILL OPEN. The card
+ *                  used to count closed events too (41 of 47 on 2026-11-11 were
+ *                  already recovered), so it read "awaiting review" for events the
+ *                  detector had resolved
+ *   review_closed  closed events nobody validated (shown as a note, not the number)
+ *   today          events detected today
+ */
+function ms_dashboard_kpis(PDO $monitorPdo): array
+{
+    $open = "d.status IN ('pending','potential','confirmed_missing')";
+    $review = "d.validation_status IN ('pending_review','needs_review')";
+    $row = $monitorPdo->query("
+        SELECT
+          SUM($open)                                                       AS open_all,
+          SUM($open AND r.is_enabled = 1 AND r.is_active = 1)              AS open_enabled,
+          SUM($open AND d.detected_at < NOW() - INTERVAL 1 DAY)            AS open_stale,
+          SUM($review AND $open)                                           AS review_open,
+          SUM($review AND d.status IN ('recovered','dismissed'))           AS review_closed,
+          SUM(DATE(d.detected_at) = CURDATE())                             AS today
+        FROM detections d
+        LEFT JOIN rooms r ON r.room_id = d.room_id
+        WHERE d.is_removed = 0
+    ")->fetch() ?: [];
+    $rooms = (int) $monitorPdo->query(
+        "SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND is_enabled = 1"
+    )->fetchColumn();
+    return [
+        'rooms'         => $rooms,
+        'open'          => (int) ($row['open_all'] ?? 0),
+        'open_enabled'  => (int) ($row['open_enabled'] ?? 0),
+        'open_stale'    => (int) ($row['open_stale'] ?? 0),
+        'review_open'   => (int) ($row['review_open'] ?? 0),
+        'review_closed' => (int) ($row['review_closed'] ?? 0),
+        'today'         => (int) ($row['today'] ?? 0),
+    ];
+}

@@ -509,6 +509,13 @@ function alSetScope(btn) {
   alScope = btn.dataset.scope;
   alFilter();
 }
+// alerts.php?scope=cctv|offline|claim opens on that tab (the dashboard's
+// "Active Deviations" card links here — WEB-04).
+document.addEventListener('DOMContentLoaded', () => {
+  const scope = new URLSearchParams(location.search).get('scope');
+  const tab = scope && document.querySelector(`.filter-tab[data-scope="${CSS.escape(scope)}"]`);
+  if (tab) alSetScope(tab);
+});
 function alFilter() {
   const q = document.getElementById('alertSearch').value.trim().toLowerCase();
   document.querySelectorAll('#alertTableBody .al-row').forEach(row => {

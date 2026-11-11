@@ -329,9 +329,21 @@ function _renderNotifRow(n) {
     info: 'var(--info)', green: 'var(--green-main)', dim: 'var(--text-dim)',
   }[meta.color] || 'var(--info)';
 
+  // The stored title is written once at ingest; the server adds the event's
+  // CURRENT state so a recovered/dismissed event no longer reads as a new one.
+  let stateChip = '';
+  if (n.event_status_label && (n.event_missing || n.event_status !== 'pending')) {
+    const sc = n.event_missing ? 'var(--text-dim)'
+             : n.event_closed ? 'var(--ok)'
+             : n.event_status === 'confirmed_missing' ? 'var(--alert)' : 'var(--warn)';
+    stateChip = `<span class="notif-state-chip" style="color:${sc};border:1px solid ${sc};border-radius:4px;padding:0 4px;font-size:.68rem;">Now: ${_esc(n.event_status_label)}</span>`;
+  }
+  const link = n.link || n.action_url || meta.url;
+
   return `<div class="notif-row ${unread ? 'notif-unread' : ''}"
-               onclick="handleNotifClick(${n.notification_id}, '${n.action_url || meta.url}', this)"
-               role="button" tabindex="0">
+               data-url="${_esc(link)}"
+               onclick="handleNotifClick(${parseInt(n.notification_id)}, this.dataset.url, this)"
+               role="button" tabindex="0"${n.event_closed || n.event_missing ? ' style="opacity:.72;"' : ''}>
     <div class="notif-icon-wrap" style="background:${colorVar}1a;border:1px solid ${colorVar}33;">
       <i class="fa-solid ${meta.icon}" style="color:${colorVar};font-size:.82rem;"></i>
     </div>
@@ -340,6 +352,7 @@ function _renderNotifRow(n) {
       <div class="notif-body">${_esc(n.body)}</div>
       <div class="notif-meta">
         <span class="notif-type-chip" style="color:${colorVar};">${meta.label}</span>
+        ${stateChip}
         <span class="notif-ago">${ago}</span>
         ${n.room_id ? `<span class="notif-room">${_esc(n.room_id)}</span>` : ''}
       </div>
@@ -363,6 +376,8 @@ async function handleNotifClick(id, url, el) {
     method: 'POST',
     body: new URLSearchParams({ notification_id: id }),
   });
+  // Refresh the bell/sidebar counts now instead of on the next 10 s poll.
+  if (typeof pollBadges === 'function' && document.getElementById('sidebar')) pollBadges();
   // Navigate if url provided
   if (url && url !== '#') {
     setTimeout(() => { window.location.href = url; }, 120);
@@ -384,5 +399,9 @@ async function markAllNotifsRead() {
     const d = document.getElementById(id);
     if (d) d.style.display = 'none';
   });
+  // The sidebar badge is owned by pollBadges(); refresh it now rather than
+  // leaving the old count up until the next 10 s poll.
+  _setBadge('sb-badge-notif', 0);
+  if (typeof pollBadges === 'function' && document.getElementById('sidebar')) pollBadges();
   showToast('success', 'All notifications marked as read.');
 }

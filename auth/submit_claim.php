@@ -110,8 +110,8 @@ try {
     $staffStmt->execute();
     $insert = $authPdo->prepare(
         "INSERT INTO notifications
-           (user_id, type, title, body, detection_id, room_id, is_read, created_at)
-         VALUES (?, 'new_claim', ?, ?, ?, ?, 0, NOW())"
+           (user_id, type, title, body, detection_id, room_id, claim_id, action_url, is_read, created_at)
+         VALUES (?, 'new_claim', ?, ?, ?, ?, ?, 'claiming-station.php', 0, NOW())"
     );
     $detId  = $item['detection_id'] ?? 0;
     $roomId = $item['room_id']      ?? '';
@@ -121,8 +121,9 @@ try {
             "New Claim Submitted — {$item['item_description']}",
             "{$claimant} (ID: {$univ_id}) submitted a claim for " .
             "'{$item['item_description']}' from {$roomId}. Please verify at the claiming station.",
-            $detId,
-            $roomId,
+            $detId ?: null,
+            $roomId ?: null,
+            $claim_id,          // was missing: the notification could not point at its claim
         ]);
     }
 } catch (Throwable $e) { /* non-critical */ }

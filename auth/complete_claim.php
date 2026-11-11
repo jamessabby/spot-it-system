@@ -104,6 +104,12 @@ try {
     ms_json(['success' => false, 'message' => 'Failed to complete claim in database.', 'detail' => $e->getMessage()], 500);
 }
 
+// ── Receipt number ────────────────────────────────────────────────────────────
+// Was computed after the notification that quotes it, so PHP printed an
+// "Undefined variable" warning ahead of the JSON and the claiming station could
+// not parse an otherwise successful hand-off.
+$receipt = 'CLM-' . strtoupper(substr(md5($claim_id . date('Y')), 0, 8));
+
 // ── Update detection status to 'recovered' (closed) ─────────────────────────
 $detectionId = $item['detection_id'];
 if ($detectionId) {
@@ -158,8 +164,6 @@ if ($claim['user_id']) {
     } catch (Throwable $e) { /* non-critical */ }
 }
 
-// ── Generate receipt number ───────────────────────────────────────────────────
-$receipt = 'CLM-' . strtoupper(substr(md5($claim_id . date('Y')), 0, 8));
 
 ms_json([
     'success'     => true,

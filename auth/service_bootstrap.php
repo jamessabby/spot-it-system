@@ -177,6 +177,35 @@ function ms_json(array $data, int $status = 200): void {
 // unit-tested and so it never labels a recovered/dismissed event or a timer
 // escalation as "Confirmed Missing".
 
+// ── Current state of the events notifications point at ────────────────────────
+// A notification is written once, at ingest ("New Deviation Detected"), and never
+// rewritten. Without this read the bell kept saying "new deviation" for events staff
+// had long since recovered or dismissed. Cross-service read (auth notifications ->
+// monitor detections), so it lives here per the microservice rule.
+// Returns [detection_id => ['status', 'status_label', 'closed', 'object_zone']].
+function ms_detection_status_map(PDO $monitorPdo, array $detectionIds): array
+{
+    $ids = array_values(array_unique(array_filter(array_map('intval', $detectionIds))));
+    if (!$ids) return [];
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $monitorPdo->prepare(
+        "SELECT detection_id, status, object_zone, verified_by
+           FROM detections WHERE detection_id IN ({$in})"
+    );
+    $stmt->execute($ids);
+    $out = [];
+    foreach ($stmt->fetchAll() as $r) {
+        $status = (string) $r['status'];
+        $out[(int) $r['detection_id']] = [
+            'status'       => $status,
+            'status_label' => ms_status_label($r),
+            'closed'       => in_array($status, ['recovered', 'dismissed'], true),
+            'object_zone'  => (string) $r['object_zone'],
+        ];
+    }
+    return $out;
+}
+
 // ── Shared notification helper (used across multiple handlers) ────────────────
 function ms_notify(
     PDO    $authPdo,

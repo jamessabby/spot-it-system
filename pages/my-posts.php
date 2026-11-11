@@ -63,6 +63,10 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
     </div>
 
     <div class="page-body">
+      <!-- WEB-08: this wrapper was missing, so the closing tag after the four cards
+           closed .page-body (the scroll container) early. Only the stats scrolled;
+           the posts list and sidebar sat outside it and could not be scrolled. -->
+      <div class="stat-grid">
         <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-pen-to-square"></i></div><div><div class="stat-num"><?= count($userPosts) ?></div><div class="stat-label">Total Posts</div></div></div>
         <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num"><?= $resolvedClaims ?></div><div class="stat-label">Claims Resolved</div></div></div>
         <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num"><?= $pendingClaimsCount ?></div><div class="stat-label">Pending</div></div></div>
@@ -253,7 +257,18 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
           <div class="card">
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Post History</div></div>
             <div style="padding:12px 14px;">
-              <?php $months=[['June 2026',3],['May 2026',0],['April 2026',1]]; foreach($months as $m): ?>
+              <?php
+              // Was a hardcoded list (June 2026: 3, May: 0, April: 1) shown to every
+              // user. Now counted from this user's own posts, newest month first.
+              $months = [];
+              foreach ($userPosts as $up) {
+                  $key = date('F Y', strtotime($up['created_at']));
+                  $months[$key] = ($months[$key] ?? 0) + 1;
+              }
+              $months = array_map(null, array_keys($months), array_values($months));
+              if (!$months): ?>
+              <div style="font-size:.78rem;color:var(--text-dim);padding:7px 0;">No posts yet.</div>
+              <?php endif; foreach($months as $m): ?>
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:.78rem;">
                 <span style="color:var(--text-muted);"><?= $m[0] ?></span>
                 <span style="font-family:var(--font-display);font-weight:700;color:var(--text-primary);"><?= $m[1] ?> posts</span>
@@ -263,6 +278,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
           </div>
         </div>
       </div>
+    </div><!-- /.page-body -->
     </div>
   </div>
 </div>

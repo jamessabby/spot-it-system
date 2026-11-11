@@ -829,13 +829,17 @@ if (savedView === 'table') {
   setView('table', document.getElementById('viewTable'));
 }
 
-// Handle #alerts hash on page load
-if (window.location.hash === '#alerts') {
-  const potentialPill = document.querySelector('.inv-pill[data-filter="potential"]');
-  if (potentialPill) {
-    setFilter('potential', potentialPill);
+// Handle #alerts hash on page load. Deferred: setFilter() assigns `currentFilter`,
+// a `let` declared further down this script, so calling it here threw a TDZ
+// ReferenceError and stopped the rest of the script.
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.location.hash === '#alerts') {
+    const potentialPill = document.querySelector('.inv-pill[data-filter="potential"]');
+    if (potentialPill) {
+      setFilter('potential', potentialPill);
+    }
   }
-}
+});
 
 /* ══════════════════════════════════════
    FILTER PILLS

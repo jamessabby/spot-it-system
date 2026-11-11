@@ -109,7 +109,7 @@ if (file_exists($mode_file_path)) {
     // baseline used to demonstrate why the MobileNetV2 gate is needed. It is
     // deliberately NOT exposed on room-monitor.php — production always runs the
     // gatekeeper (CLAUDE.md §3a, md_files/AB_ACCURACY_PROTOCOL.md).
-    $pipeline = ($mdata['pipeline'] ?? 'gatekeeper') === 'classical' ? 'classical' : 'gatekeeper';
+    $pipeline = in_array($mdata['pipeline'] ?? '', ['classical', 'yolo'], true) ? $mdata['pipeline'] : 'gatekeeper';
     if (($mdata['room_id'] ?? '') !== 'DESK') {
         $mdata['room_id'] = 'DESK';
         $mdata['reset_paused'] = true;
@@ -453,6 +453,13 @@ if (file_exists($mode_file_path)) {
                            background:<?= $pipeline === 'classical' ? 'var(--warn)' : 'transparent' ?>;
                            color:<?= $pipeline === 'classical' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
                     <i class="fa-solid fa-diagram-project"></i> Classical Only
+                  </button>
+                  <button id="btnPipeYolo"
+                    onclick="switchPipeline('yolo')"
+                    style="font-size:.7rem; padding:4px 12px; border-radius:6px; border:none; cursor:pointer;
+                           background:<?= $pipeline === 'yolo' ? 'var(--info)' : 'transparent' ?>;
+                           color:<?= $pipeline === 'yolo' ? '#ffffff' : 'var(--text-primary)' ?>; font-weight:700;">
+                    <i class="fa-solid fa-crosshairs"></i> YOLO (exp.)
                   </button>
                 </div>
                 <!-- Dismiss Recalibration Alert Button -->
@@ -933,11 +940,53 @@ function setCamState(state, reason) {
     badge.className = 'badge badge-alert';
     badge.innerHTML = `<span class="bdot" style="background:var(--alert);"></span> OFFLINE: ${reason || 'Disconnected'}`;
     if (hud) hud.style.display = 'none';
+  } else if (state === 'reconnecting') {
+    badge.className = 'badge badge-warn';
+    badge.innerHTML = '<span class="bdot" style="background:var(--warn);"></span> RECONNECTING';
+    if (hud) hud.style.display = 'none';
   } else {
     badge.className = 'badge badge-warn';
     badge.innerHTML = '<span class="bdot" style="background:var(--warn);"></span> CONNECTING';
     if (hud) hud.style.display = 'none';
   }
+}
+
+// ── WEB-07: never show a frozen frame as live ───────────────────────────────
+// The status used to be checked once, when the page opened; afterwards the
+// image kept polling live_DESK.jpg, which main.py rewrites with the last cached
+// frame after the camera stops. So a camera that froze later stayed "ONLINE".
+// Now the detector-reported state is re-checked every few seconds.
+function showDeskNotLive(data) {
+  if (livePollInterval) clearTimeout(livePollInterval);
+  const offline = document.getElementById('cam1Offline');
+  const loader = offline ? offline.querySelector('.hud-loader') : null;
+  const icon = document.getElementById('offlineIcon');
+  const msg = document.getElementById('cam1OfflineMsg');
+  const reconnecting = data && data.status === 'reconnecting';
+  setCamState(reconnecting ? 'reconnecting' : 'offline',
+              data ? (data.feed_state || data.reason) : 'Unreachable');
+  ['cam1Stream', 'cam2Stream'].forEach(id => {        // hide the frozen picture
+    const img = document.getElementById(id);
+    if (img) img.style.opacity = 0;
+  });
+  if (offline) offline.style.display = 'flex';
+  if (loader) loader.style.display = reconnecting ? 'block' : 'none';
+  if (icon) icon.style.display = reconnecting ? 'none' : 'block';
+  if (msg) msg.textContent = data ? data.reason : 'Camera offline.';
+}
+
+let deskFeedWatchTimer = null;
+function startDeskFeedWatch() {
+  if (deskFeedWatchTimer) return;
+  deskFeedWatchTimer = setInterval(async () => {
+    const data = await spotitFetch(`../auth/tapo_stream.php?action=status&room_id=${ROOM_ID}&cam=1`);
+    if (!data) return;                       // our own connection failed
+    if (data.status === 'online') {
+      if (camState[1] !== 'online') initCamera();   // came back: restart the feed
+    } else {
+      showDeskNotLive(data);
+    }
+  }, 4000);
 }
 
 function toggleQuality(val) {
@@ -1012,11 +1061,9 @@ async function initCamera() {
       }
       pollNext();
     } else {
-      setCamState('offline', data ? data.reason : 'Unreachable');
-      loader.style.display = 'none';
-      icon.style.display = 'block';
-      msg.textContent = data ? data.reason : 'Camera offline.';
+      showDeskNotLive(data);
     }
+    startDeskFeedWatch();
   } catch (e) {
     setCamState('offline', 'Connection error');
     loader.style.display = 'none';
@@ -1297,9 +1344,8 @@ async function switchPipeline(newPipeline) {
     });
 
     if (res && res.success) {
-      showToast('success', newPipeline === 'classical'
-        ? 'CLASSICAL ONLY (no ML) — detector switches within ~1s. Watch the badge on the feed.'
-        : 'MOBILENETV2 GATEKEEPER — detector switches within ~1s. Watch the badge on the feed.');
+      showToast('success', ({ classical: 'CLASSICAL ONLY (no ML)', yolo: 'YOLO (EXPERIMENTAL)' }[newPipeline] || 'MOBILENETV2 GATEKEEPER')
+        + ' — detector switches within ~1s. Watch the badge on the feed.');
       setTimeout(() => location.reload(), 800);
     } else {
       if (box) box.style.opacity = '1';

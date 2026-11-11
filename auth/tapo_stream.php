@@ -126,6 +126,27 @@ if ($action === 'status') {
     // written a frame in the last few seconds, the pipeline is genuinely
     // alive. If it hasn't, main.py has crashed, hung, or was never started —
     // report that plainly instead of pretending the feed is fine.
+    // WEB-07: the file's mtime is not evidence of a live camera — main.py
+    // rewrites it every loop, including with a frozen frame after the camera
+    // stops. Prefer the detector's own report (age of its last NEW frame).
+    $health = detector_health($roomId);
+    if ($health['last_seen'] !== null) {
+        $map = ['LIVE' => 'online', 'RECONNECTING' => 'reconnecting'];
+        echo json_encode([
+            'status'            => $map[$health['feed_state']] ?? 'offline',
+            'feed_state'        => $health['feed_state'],
+            'reason'            => $health['feed_message'],
+            'last_frame_time'   => $health['last_frame_time'],
+            'frame_age_seconds' => $health['frame_age_seconds'],
+            'room_id'           => $roomId,
+            'cam'               => $camNum,
+            'source'            => 'detector heartbeat',
+        ]);
+        exit();
+    }
+
+    // Fallback only for a detector that has never sent a heartbeat (e.g. an
+    // older main.py): judge by how recently the frame file was written.
     $liveFramePath = SNAPSHOT_PATH . "live_{$roomId}.jpg";
     if (file_exists($liveFramePath)) {
         $age = time() - filemtime($liveFramePath);

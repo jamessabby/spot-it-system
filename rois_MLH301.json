@@ -1,0 +1,34 @@
+[
+    {
+        "label": "powersupply_near",
+        "tier": "tier2",
+        "x": 315,
+        "y": 531,
+        "w": 103,
+        "h": 110
+    },
+    {
+        "label": "oscilloscope_mid",
+        "tier": "tier2",
+        "x": 537,
+        "y": 314,
+        "w": 98,
+        "h": 72
+    },
+    {
+        "label": "powersupply_mid",
+        "tier": "tier2",
+        "x": 658,
+        "y": 270,
+        "w": 75,
+        "h": 66
+    },
+    {
+        "label": "oscilloscope_far",
+        "tier": "tier2",
+        "x": 167,
+        "y": 149,
+        "w": 57,
+        "h": 44
+    }
+]

@@ -120,10 +120,41 @@ function initLiveFrameStream(containerId, roomId) {
       desc: 'The system was reset and has no baseline photo yet. Capture one to '
           + 'start monitoring this room again.',
       hint: 'Camera Setup  ->  Capture Baseline'
+    },
+    // WEB-07 — the detector is running but the picture is not live.
+    camera_offline: {
+      spin: false,
+      glyph: 'fa-video-slash',
+      title: 'Camera offline — not live',
+      desc: 'The detector is running, but the camera has stopped sending new frames. '
+          + 'Items are not being checked right now.',
+      hint: 'Check the camera power and network. The detector keeps retrying automatically.'
+    },
+    reconnecting: {
+      spin: true,
+      title: 'Reconnecting to camera',
+      desc: 'The camera stopped sending frames. The detector is reconnecting.',
+      hint: ''
+    },
+    no_camera: {
+      spin: false,
+      glyph: 'fa-video-slash',
+      title: 'No camera assigned',
+      desc: 'The detector is running, but no camera is assigned to this room.',
+      hint: 'Room Setup  ->  assign a camera to this room'
     }
   };
 
-  function showOverlay(stateName) {
+  // detector_heartbeat.php feed_state -> overlay. LIVE shows the picture.
+  const FEED_TO_OVERLAY = {
+    DETECTOR_OFFLINE: 'offline',
+    CAMERA_OFFLINE: 'camera_offline',
+    RECONNECTING: 'reconnecting',
+    NO_CAMERA: 'no_camera',
+  };
+  let feedState = 'LIVE';   // until the server says otherwise
+
+  function showOverlay(stateName, detail = '') {
     if (stateName === null) { offlineOverlay.style.display = 'none'; return; }
 
     const s = OVERLAY_STATES[stateName] || OVERLAY_STATES.connecting;
@@ -136,7 +167,7 @@ function initLiveFrameStream(containerId, roomId) {
     if (s.glyph) glyph.className = 'ov-glyph fa-solid ' + s.glyph;
 
     offlineOverlay.querySelector('.ov-title').textContent = s.title;
-    offlineOverlay.querySelector('.ov-desc').textContent  = s.desc;
+    offlineOverlay.querySelector('.ov-desc').textContent  = detail ? `${s.desc} ${detail}` : s.desc;
 
     if (s.hint) {
       hint.style.display = 'block';
@@ -164,7 +195,10 @@ function initLiveFrameStream(containerId, roomId) {
 
     targetImg.onload = () => {
       consecutiveErrors = 0;
-      showOverlay(null);
+      // A successful load only proves the FILE exists — main.py rewrites it with
+      // the last cached frame after the camera stops. Only clear the overlay
+      // while the detector reports the feed as LIVE (see checkFeedState).
+      if (feedState === 'LIVE') showOverlay(null);
 
       targetImg.style.zIndex = 2;
       targetImg.style.opacity = 1;
@@ -198,9 +232,32 @@ function initLiveFrameStream(containerId, roomId) {
     targetImg.src = liveSrc;
   }
 
+  // WEB-07 — ask the detector whether the picture is actually live. Polled
+  // separately from the image: a frozen frame loads exactly like a live one.
+  function checkFeedState() {
+    fetch(`../auth/detector_heartbeat.php?room_id=${encodeURIComponent(roomId)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        const h = (d && d.health) || {};
+        if (!h.feed_state) return;           // older server: keep previous behaviour
+        feedState = h.feed_state;
+        if (feedState === 'LIVE') {
+          if (consecutiveErrors === 0) showOverlay(null);
+          return;
+        }
+        const detail = h.last_frame_time
+          ? `Last frame: ${h.last_frame_time} (${h.frame_age_seconds}s ago).`
+          : '';
+        showOverlay(FEED_TO_OVERLAY[feedState] || 'offline', detail);
+      })
+      .catch(() => { /* our own connection failed; says nothing about the camera */ });
+  }
+
   // Start polling
   showOverlay('connecting');
   pollNext();
+  checkFeedState();
+  const feedTimer = setInterval(checkFeedState, 4000);
 
   // Presence: immediately, then every 10s while the tab is visible.
   pingPresence();
@@ -213,6 +270,7 @@ function initLiveFrameStream(containerId, roomId) {
   return {
     stop: () => {
       if (livePollInterval) clearTimeout(livePollInterval);
+      clearInterval(feedTimer);
       if (presenceTimer) clearInterval(presenceTimer);
     }
   };

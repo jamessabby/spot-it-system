@@ -237,14 +237,75 @@ function detector_health(string $roomId): array
     $s = detector_state_read($roomId);
     $last = (int) ($s['last_heartbeat'] ?? 0);
     $age = $last > 0 ? time() - $last : null;
+    $hb = $s['heartbeat'] ?? [];
+    $feed = detector_feed_state($last ?: null, $hb, time());
     return [
         'online'       => $age !== null && $age <= DETECTOR_OFFLINE_SEC,
         'last_seen'    => $last > 0 ? date('c', $last) : null,
         'seconds_ago'  => $age,
-        'fps'          => $s['heartbeat']['fps'] ?? null,
-        'camera'       => $s['heartbeat']['camera'] ?? null,
-        'deploy'       => $s['heartbeat']['deploy'] ?? null,
+        'fps'          => $hb['fps'] ?? null,
+        'camera'       => $hb['camera'] ?? null,
+        'deploy'       => $hb['deploy'] ?? null,
+        // WEB-07: what the viewer should actually say about the picture.
+        'feed_state'        => $feed['state'],
+        'feed_message'      => $feed['message'],
+        'last_frame_at'     => $feed['last_frame_at'] ? date('c', $feed['last_frame_at']) : null,
+        'last_frame_time'   => $feed['last_frame_at'] ? date('H:i:s', $feed['last_frame_at']) : null,
+        'frame_age_seconds' => $feed['frame_age'],
     ];
+}
+
+/**
+ * WEB-07 — decide what the live view may honestly claim. Pure (no I/O).
+ *
+ * The image file on disk is NOT evidence of a live camera: main.py rewrites it
+ * every loop, and when the camera stops it keeps rewriting the last cached
+ * frame, so a frozen picture always looks freshly saved. The detector therefore
+ * reports the age of its last genuinely NEW camera frame in each heartbeat; the
+ * server turns that into an absolute time on its own clock at receipt
+ * (`last_frame_at`), which also works when detector and server clocks differ.
+ *
+ * States, in priority order:
+ *   DETECTOR_OFFLINE  no heartbeat within DETECTOR_OFFLINE_SEC (main.py down/hung)
+ *   NO_CAMERA         detector running, but no camera assigned to this room
+ *   RECONNECTING      detector is re-opening the camera stream right now
+ *   CAMERA_OFFLINE    detector running, camera not delivering new frames
+ *   LIVE              new frames are arriving
+ *
+ * Heartbeats from an older main.py (camera = "online"/"offline", no frame age)
+ * map onto LIVE / CAMERA_OFFLINE so a mixed deployment keeps working.
+ *
+ * @return array{state:string, message:string, last_frame_at:?int, frame_age:?int}
+ */
+function detector_feed_state(?int $lastHeartbeat, array $hb, int $now): array
+{
+    $lastFrameAt = isset($hb['last_frame_at']) ? (int) $hb['last_frame_at'] : null;
+    $frameAge = $lastFrameAt ? max(0, $now - $lastFrameAt) : null;
+    $out = fn(string $state, string $msg) => [
+        'state' => $state, 'message' => $msg, 'last_frame_at' => $lastFrameAt, 'frame_age' => $frameAge,
+    ];
+    $since = $lastFrameAt ? ' Last frame received at ' . date('H:i:s', $lastFrameAt) . " ({$frameAge}s ago)." : '';
+
+    $offlineSec = defined('DETECTOR_OFFLINE_SEC') ? DETECTOR_OFFLINE_SEC : 30;
+    if (!$lastHeartbeat || $now - $lastHeartbeat > $offlineSec) {
+        return $out('DETECTOR_OFFLINE', $lastHeartbeat
+            ? 'The detector (main.py) stopped reporting at ' . date('H:i:s', $lastHeartbeat) . '. The picture shown is not live.' . $since
+            : 'The detector (main.py) has never reported for this room.');
+    }
+    $camera = (string) ($hb['camera'] ?? 'unknown');
+    if ($camera === 'no_camera') {
+        return $out('NO_CAMERA', 'The detector is running, but no camera is assigned to this room.');
+    }
+    if ($camera === 'reconnecting') {
+        return $out('RECONNECTING', 'The camera stopped sending frames; the detector is reconnecting.' . $since);
+    }
+    if ($camera === 'offline') {
+        return $out('CAMERA_OFFLINE', 'The detector is running, but the camera is not sending frames.' . $since);
+    }
+    if ($camera === 'live' || $camera === 'online') {
+        return $out('LIVE', 'Live.');
+    }
+    return $out('LIVE', 'Live (detector did not report camera state).');
 }
 
 // ── Shared API-key auth for detector endpoints ────────────────────────────────

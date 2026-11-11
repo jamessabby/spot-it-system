@@ -8,11 +8,12 @@ ms_require_role('admin', 'login.php');
 $active_page = 'dashboard';
 $user_role   = 'admin';
 
-// Live statistics calculations
-$statRooms = (int)$monitorPdo->query("SELECT COUNT(*) FROM rooms WHERE is_active = 1 AND is_enabled = 1")->fetchColumn();
-$statMissing = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE status IN ('pending', 'potential', 'confirmed_missing') AND is_removed = 0")->fetchColumn();
-$statPending = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE validation_status IN ('pending_review', 'needs_review') AND is_removed = 0")->fetchColumn();
-$statToday = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE DATE(detected_at) = CURDATE()")->fetchColumn();
+// Live statistics — scoped counts from services/monitoring/db.php (WEB-14).
+$kpi = ms_dashboard_kpis($monitorPdo);
+$statRooms   = $kpi['rooms'];
+$statMissing = $kpi['open'];
+$statPending = $kpi['review_open'];
+$statToday   = $kpi['today'];
 
 // Fetch live rooms status list
 $roomStatusStmt = $monitorPdo->prepare("
@@ -92,10 +93,11 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
     <div class="page-body">
       <!-- Stat cards -->
       <div class="stat-grid" id="tourStatGrid">
-        <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num" id="statRooms"><?= $statRooms ?></div><div class="stat-label">Rooms Monitoring</div><div class="stat-delta flat"><i class="fa-solid fa-minus"></i> Active</div></div></div>
-        <div class="stat-card"><div class="stat-icon alert"><i class="fa-solid fa-circle-minus"></i></div><div><div class="stat-num" id="statMissing"><?= $statMissing ?></div><div class="stat-label">Active Deviations</div><div class="stat-delta <?= $statMissing > 0 ? 'up' : 'flat' ?>"><i class="fa-solid <?= $statMissing > 0 ? 'fa-arrow-up' : 'fa-minus' ?>"></i> <?= $statMissing > 0 ? 'Action required' : 'No deviations' ?></div></div></div>
-        <div class="stat-card"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num" id="statPending"><?= $statPending ?></div><div class="stat-label">Pending Validation</div><div class="stat-delta flat"><i class="fa-solid fa-arrow-right"></i> Awaiting staff review</div></div></div>
-        <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-box-open"></i></div><div><div class="stat-num" id="statToday"><?= $statToday ?></div><div class="stat-label">Events Today</div><div class="stat-delta flat"><i class="fa-solid fa-calendar-day"></i> Logged today</div></div></div>
+        <?php // WEB-04: each card opens the records behind its number. ?>
+        <div class="stat-card" role="link" tabindex="0" style="cursor:pointer;" onclick="kpiGo('rooms')" onkeydown="if(event.key==='Enter')kpiGo('rooms')" title="Open the live room cameras"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num" id="statRooms"><?= $statRooms ?></div><div class="stat-label">Rooms Monitoring</div><div class="stat-delta flat"><i class="fa-solid fa-minus"></i> Enabled rooms</div></div></div>
+        <div class="stat-card" role="link" tabindex="0" style="cursor:pointer;" onclick="kpiGo('deviations')" onkeydown="if(event.key==='Enter')kpiGo('deviations')" title="Every unresolved event, any room, any age — open the triage list to resolve them"><div class="stat-icon alert"><i class="fa-solid fa-circle-minus"></i></div><div><div class="stat-num" id="statMissing"><?= $statMissing ?></div><div class="stat-label">Active Deviations</div><div class="stat-delta <?= $statMissing > 0 ? 'up' : 'flat' ?>"><i class="fa-solid <?= $statMissing > 0 ? 'fa-arrow-up' : 'fa-minus' ?>"></i> <?php if ($statMissing > 0): ?><?= $kpi['open_enabled'] ?> in enabled rooms<?= $kpi['open_stale'] ? ' · ' . $kpi['open_stale'] . ' older than 24 h' : '' ?><?php else: ?>No deviations<?php endif; ?></div></div></div>
+        <div class="stat-card" role="link" tabindex="0" style="cursor:pointer;" onclick="kpiGo('pending')" onkeydown="if(event.key==='Enter')kpiGo('pending')" title="Open events no staff member has validated yet<?= $kpi['review_closed'] ? ' (' . $kpi['review_closed'] . ' already-closed events were never validated; they are not counted here)' : '' ?>"><div class="stat-icon warn"><i class="fa-solid fa-clock"></i></div><div><div class="stat-num" id="statPending"><?= $statPending ?></div><div class="stat-label">Pending Validation</div><div class="stat-delta flat"><i class="fa-solid fa-arrow-right"></i> Open events awaiting review</div></div></div>
+        <div class="stat-card" role="link" tabindex="0" style="cursor:pointer;" onclick="kpiGo('today')" onkeydown="if(event.key==='Enter')kpiGo('today')" title="Open the detection event log"><div class="stat-icon info"><i class="fa-solid fa-box-open"></i></div><div><div class="stat-num" id="statToday"><?= $statToday ?></div><div class="stat-label">Events Today</div><div class="stat-delta flat"><i class="fa-solid fa-calendar-day"></i> Logged today</div></div></div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 360px;gap:18px;align-items:start;">
@@ -544,7 +546,7 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
       <span class="badge badge-alert" id="notifCount" style="margin-left:6px;font-size:.62rem;display:none;">0</span>
     </div>
     <div style="display:flex;gap:6px;">
-      <button class="btn btn-sm" onclick="markAllRead()" style="font-size:.68rem;">
+      <button class="btn btn-sm" onclick="markAllNotifsRead()" style="font-size:.68rem;">
         <i class="fa-solid fa-check-double"></i> Mark all read
       </button>
       <button class="tb-btn" onclick="toggleNotifPanel()" style="width:28px;height:28px;">
@@ -647,6 +649,28 @@ async function openEventModal(detId) {
   openModal('eventModal');
 }
 
+// Deep link from a notification: dashboard-admin.php?event=<detection_id> opens
+// that event. The parameter is dropped from the address bar right away so the
+// reload after a staff action does not reopen the pop-up.
+(function openLinkedEvent() {
+  const params = new URLSearchParams(location.search);
+  const id = parseInt(params.get('event'), 10);
+  if (!id) return;
+  params.delete('event');
+  history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash);
+  openEventModal(id);
+})();
+
+// WEB-04: KPI cards open the records behind their numbers.
+function kpiGo(which) {
+  if (which === 'rooms')      { location.href = 'room-monitor.php'; return; }
+  if (which === 'deviations') { location.href = 'alerts.php?scope=cctv'; return; }
+  const bucket = which === 'pending' ? 'pending' : 'all';
+  const tab = document.querySelector(`#eventLogTabs .filter-tab[data-bucket="${bucket}"]`);
+  if (tab) filterEventLog(tab);
+  document.getElementById('tourEventLog')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 /** Event log tabs: real counts are rendered server-side; this filters the rows. */
 function filterEventLog(tab) {
   const bucket = tab.dataset.bucket;
@@ -662,18 +686,37 @@ function filterEventLog(tab) {
 }
 
 async function submitValidation(validationStatus) {
-  // In production: POST to auth/validate_detection.php
+  // Previously showed a success toast without sending anything ("In production:
+  // POST to ..."), so a click looked saved and was not. Now it saves through the
+  // existing endpoint and only updates the pop-up if the server accepted it.
+  if (!currentEvent) {
+    showToast('error', 'No event is loaded. Close this window and open the event again.');
+    return;
+  }
+  let result = null;
+  try {
+    const res = await fetch('../auth/validate_detection.php', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ detection_id: currentEvent.detection_id, validation_status: validationStatus }),
+    });
+    result = await res.json().catch(() => null);
+  } catch (e) { /* network error: handled below */ }
+  if (!result || !result.success) {
+    showToast('error', (result && result.message) || 'The server did not accept this change. Nothing was updated.');
+    return;
+  }
   const labels = {
-    verified:     'Detection verified by staff. Validation status updated.',
-    rejected:     'Marked as false alarm. Confidence flagged for model review.',
-    needs_review: 'Flagged for mandatory review. Supervisor notified.',
+    verified:     'Detection verified by staff. Validation status saved.',
+    rejected:     'Marked as a false alarm (validation only — the event status is unchanged).',
+    needs_review: 'Flagged for review. Validation status saved.',
   };
   showToast(
     validationStatus === 'verified' ? 'success' :
     validationStatus === 'rejected' ? 'warn' : 'error',
     labels[validationStatus]
   );
-  // Update UI optimistically
+  currentEvent.validation_status = validationStatus;
   const validEl = document.getElementById('dValidationStatus');
   const icons   = { verified:'fa-circle-check', rejected:'fa-ban', needs_review:'fa-triangle-exclamation' };
   const colors  = { verified:'var(--ok)', rejected:'var(--text-dim)', needs_review:'var(--alert)' };
@@ -812,12 +855,18 @@ function toggleNotifPanel() {
   const panel    = document.getElementById('notifPanel');
   const backdrop = document.getElementById('notifBackdrop');
   window._notifPanelOpen = !window._notifPanelOpen;
+  // This page's panel is styled inline, not with the .notif-panel class, so the
+  // `.open` class alone never moved it on-screen — the bell did nothing. Set the
+  // position directly. #notifPanelTs does not exist on this page; writing to it
+  // threw on every click.
+  panel.style.right = window._notifPanelOpen ? '0' : '-380px';
+  backdrop.style.display = window._notifPanelOpen ? 'block' : 'none';
   panel.classList.toggle('open', window._notifPanelOpen);
   backdrop.classList.toggle('open', window._notifPanelOpen);
   if (window._notifPanelOpen) {
     loadNotifPanel();
-    document.getElementById('notifPanelTs').textContent =
-      'Updated ' + new Date().toLocaleTimeString('en-PH', {hour12:true});
+    const ts = document.getElementById('notifPanelTs');
+    if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString('en-PH', {hour12:true});
   }
 }
 

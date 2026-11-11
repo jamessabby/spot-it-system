@@ -7,11 +7,17 @@
  *   limit       int  (default 30, max 100)
  *   offset      int  (default 0, for pagination)
  *   unread      flag (if present, return unread_count only — for badge polling)
- *   type        str  (filter by notification type)
+ *   type        str  (filter by notification type; a comma list = any of them,
+ *                    which is what the notifications page's category pills send)
  *
  * Returns full notification objects + unread_count for the current user.
+ * Notifications about a detection also carry that event's CURRENT state
+ * (event_status, event_status_label, event_closed, event_missing) and a `link`
+ * that opens that specific event, because the stored title is written once at
+ * ingest and goes stale as soon as staff recover or dismiss the event.
  *
- * MICROSERVICES: Reads from spotit_auth_db.notifications only.
+ * MICROSERVICES: Reads spotit_auth_db.notifications; the detection state comes
+ * from the monitor DB through ms_detection_status_map() in service_bootstrap.php.
  */
 require_once __DIR__ . '/service_bootstrap.php';
 
@@ -21,6 +27,7 @@ header('Cache-Control: no-cache, must-revalidate');
 ms_require_auth('../pages/login.php');
 
 $userId      = (int)$_SESSION['user_id'];
+$userRole    = (string)($_SESSION['user_role'] ?? '');
 session_write_close();
 $limit       = min((int)($_GET['limit']  ?? 30), 100);
 $offset      = (int)($_GET['offset'] ?? 0);
@@ -43,8 +50,16 @@ $where  = ['user_id = ?'];
 $params = [$userId];
 
 if ($typeFilter) {
-    $where[]  = 'type = ?';
-    $params[] = $typeFilter;
+    // Was `type = ?` with the whole comma list as one value, so every category
+    // pill on the notifications page (Detection, Claims, ...) came back empty.
+    $types = array_values(array_unique(array_filter(
+        array_map('trim', explode(',', $typeFilter)),
+        fn($t) => preg_match('/^[a-z_]{1,40}$/', $t)
+    )));
+    if ($types) {
+        $where[] = 'type IN (' . implode(',', array_fill(0, count($types), '?')) . ')';
+        array_push($params, ...$types);
+    }
 }
 
 $whereSQL = implode(' AND ', $where);
@@ -56,13 +71,38 @@ try {
                 action_url, is_read, read_at, created_at
          FROM notifications
          WHERE {$whereSQL}
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, notification_id DESC
          LIMIT ? OFFSET ?"
     );
     $params[] = $limit;
     $params[] = $offset;
     $stmt->execute($params);
     $notifications = $stmt->fetchAll();
+
+    // Current state of the events these notifications point at.
+    $detIds  = array_filter(array_column($notifications, 'detection_id'));
+    $states  = null;
+    try {
+        $states = ms_detection_status_map($monitorPdo, $detIds);
+    } catch (Throwable $ignored) { /* monitor DB down: fall back to the stored text */ }
+    $isStaff = in_array($userRole, ['admin', 'staff'], true);
+    foreach ($notifications as &$n) {
+        $did = (int) ($n['detection_id'] ?? 0);
+        $n['link'] = $n['action_url'] ?: null;
+        if (!$did || $states === null) {
+            continue;
+        }
+        $st = $states[$did] ?? null;
+        $n['event_missing']      = $st === null;
+        $n['event_status']       = $st['status'] ?? null;
+        $n['event_status_label'] = $st['status_label'] ?? 'Event no longer on record';
+        $n['event_closed']       = (bool) ($st['closed'] ?? false);
+        // Staff land on the dashboard with that event's pop-up open.
+        if ($isStaff && $st !== null && !$n['link']) {
+            $n['link'] = 'dashboard-admin.php?event=' . $did;
+        }
+    }
+    unset($n);
 
     // Total count for pagination
     $totalStmt = $authPdo->prepare(

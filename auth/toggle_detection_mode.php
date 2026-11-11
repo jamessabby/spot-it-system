@@ -63,7 +63,7 @@ if ($timer_mode && in_array($timer_mode, ['testing_speed', 'production_speed'], 
 // 'classical' (pre-ML baseline, template match only). main.py picks this up on
 // its existing mtime poll — no restart. See CLAUDE.md §3a and
 // md_files/AB_ACCURACY_PROTOCOL.md for what the comparison is meant to show.
-if ($pipeline && in_array($pipeline, ['gatekeeper', 'classical'], true)) {
+if ($pipeline && in_array($pipeline, ['gatekeeper', 'classical', 'yolo'], true)) {
     $current['pipeline'] = $pipeline;
 }
 
