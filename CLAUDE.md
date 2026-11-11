@@ -642,6 +642,25 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-11 (Admin dashboard event pop-up made real; stage label fixed):**
+  - The Admin Dashboard event pop-up was entirely mock: rows passed a room code into a
+    hardcoded `modalData` object of three invented June events, and Recovered / Dismiss /
+    Confirm only showed a toast. It now loads the real event from `get_detections.php?id=`
+    (new, additive filter) and posts to `update_event_status.php` — the same authenticated
+    endpoint the Alerts page uses — after a confirmation whose wording comes from
+    `ms_action_prompt()` (equipment: "will NOT be added to Lost & Found"; unregistered:
+    "taken into custody… becomes claimable"). Closed events disable the buttons.
+  - Event-log tabs: counts were hardcoded ("All (11)…") and tabs did not filter. They now
+    count and filter the latest 20 real events (`ms_status_bucket()`).
+  - `get_detections.php` `stage` ignored the status, so 41 recovered events showed
+    "Confirmed Missing". `ms_detection_stage()` now takes the status (and whether staff set
+    it); timer escalations read "Escalated — awaiting staff check". `stage` keys unchanged.
+  - `ms_detection_stage()` now has ONE definition, in `auth/event_kinds.php`;
+    `services/monitoring/db.php` and `service_bootstrap.php` load it instead of each
+    keeping a copy (the two copies had already drifted).
+  - Still mock in the same pop-up: the validation buttons (`submitValidation`) and the
+    snapshot drawing.
+
 - **2026-11-11 (Registered equipment kept out of lost & found):** `update_event_status.php`
   used to create a student-claimable `recovered_items` row for ANY event staff marked
   *recovered* — including lab keyboards and oscilloscopes. Now (`auth/event_kinds.php`):

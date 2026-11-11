@@ -73,5 +73,38 @@ check('other labels unchanged: pending', ms_status_label(['status' => 'pending']
 check('other labels unchanged: recovered', ms_status_label(['status' => 'recovered']), 'Recovered');
 check('other labels unchanged: dismissed', ms_status_label(['status' => 'dismissed']), 'Dismissed');
 
+echo "== Stage never contradicts the stored status (get_detections.php 'stage')\n";
+$now = strtotime('2026-11-11 12:00:00');
+$old = '2026-11-03 14:00:00';           // days old: past every timer threshold
+$fresh = '2026-11-11 11:50:00';         // 10 minutes old
+$st = fn($at, $status, $staff = null) => ms_detection_stage($at, $status, $staff, $now);
+check('old RECOVERED event: stage recovered (was "Confirmed Missing")', $st($old, 'recovered')['stage'], 'recovered');
+check('old RECOVERED event: label', $st($old, 'recovered')['label'], 'Recovered');
+check('old DISMISSED event: stage dismissed', $st($old, 'dismissed')['stage'], 'dismissed');
+check('timer-escalated confirmed_missing: label', $st($old, 'confirmed_missing', false)['label'], 'Escalated — awaiting staff check');
+check('timer-escalated confirmed_missing: stage key unchanged', $st($old, 'confirmed_missing', false)['stage'], 'confirmed');
+check('staff-confirmed confirmed_missing: label', $st($old, 'confirmed_missing', true)['label'], 'Confirmed Missing');
+check('caller without staff info keeps old label', $st($old, 'confirmed_missing')['label'], 'Confirmed Missing');
+check('old PENDING (escalation job not run): escalation, not confirmation', $st($old, 'pending')['label'], 'Escalated — awaiting staff check');
+check('fresh PENDING: detected', $st($fresh, 'pending')['stage'], 'detected');
+check('minutes computed', $st($fresh, 'pending')['mins'], 10);
+
+echo "== Event-log tab buckets\n";
+check('pending -> pending', ms_status_bucket('pending'), 'pending');
+check('potential -> pending', ms_status_bucket('potential'), 'pending');
+check('confirmed_missing -> confirmed', ms_status_bucket('confirmed_missing'), 'confirmed');
+check('dismissed -> dismissed', ms_status_bucket('dismissed'), 'dismissed');
+check('recovered -> recovered', ms_status_bucket('recovered'), 'recovered');
+
+echo "== Confirmation prompts say what will happen\n";
+$pr = ms_action_prompt(EVENT_KIND_REGISTERED, 'recovered', 'keyboard2');
+check('equipment recovery: says NOT added to Lost & Found', str_contains($pr, 'NOT be added to Lost & Found'), true);
+$pu = ms_action_prompt(EVENT_KIND_UNREGISTERED, 'recovered', 'object1');
+check('unregistered recovery: asks about physical custody', str_contains($pu, 'into custody'), true);
+check('unregistered recovery: says it becomes claimable', str_contains($pu, 'claimable'), true);
+check('confirm missing: says it records the staff member',
+      str_contains((string) ms_action_prompt(EVENT_KIND_REGISTERED, 'confirmed_missing', 'mouse1'), 'confirmed it'), true);
+check('unsupported action: no prompt', ms_action_prompt(EVENT_KIND_REGISTERED, 'pending', 'x'), null);
+
 echo "\n{$pass} passed, {$fail} failed\n";
 exit($fail ? 1 : 0);

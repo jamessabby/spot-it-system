@@ -16,10 +16,10 @@ $statToday = (int)$monitorPdo->query("SELECT COUNT(*) FROM detections WHERE DATE
 
 // Fetch live rooms status list
 $roomStatusStmt = $monitorPdo->prepare("
-    SELECT r.room_id, r.room_name, r.floor, r.room_type, r.baseline_count, r.monitoring_status, d.live_count, d.deviation, d.det_status, d.detected_at
+    SELECT r.room_id, r.room_name, r.floor, r.room_type, r.baseline_count, r.monitoring_status, d.det_id, d.live_count, d.deviation, d.det_status, d.detected_at
     FROM rooms r
     LEFT JOIN (
-        SELECT d2.room_id, d2.live_count, d2.deviation, d2.status AS det_status, d2.detected_at
+        SELECT d2.detection_id AS det_id, d2.room_id, d2.live_count, d2.deviation, d2.status AS det_status, d2.detected_at
         FROM detections d2
         INNER JOIN (
             SELECT room_id, MAX(detection_id) AS max_id
@@ -35,11 +35,12 @@ $roomStatusStmt = $monitorPdo->prepare("
 $roomStatusStmt->execute();
 $liveRooms = $roomStatusStmt->fetchAll();
 
-// Fetch recent event logs (last 5 detections)
+// Fetch recent event logs (latest 20; the tabs below count and filter these)
 $recentEventsStmt = $monitorPdo->query("
     SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status, d.verified_by
     FROM detections d
-    ORDER BY d.detected_at DESC LIMIT 5
+    WHERE d.is_removed = 0
+    ORDER BY d.detected_at DESC LIMIT 20
 ");
 $recentEvents = $recentEventsStmt->fetchAll();
 
@@ -163,8 +164,8 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                     </td>
                     <td><span class="col-mono"><?= $r['detected_at'] ? date('H:i:s', strtotime($r['detected_at'])) : '—' ?></span></td>
                     <td>
-                      <?php if ($status === 'confirmed_missing' || $status === 'potential'): ?>
-                        <button class="btn btn-primary btn-sm" onclick="openEventModal('<?= strtolower($rid) ?>')">Review</button>
+                      <?php if (($status === 'confirmed_missing' || $status === 'potential') && !empty($r['det_id'])): ?>
+                        <button class="btn btn-primary btn-sm" onclick="openEventModal(<?= (int) $r['det_id'] ?>)">Review</button>
                       <?php else: ?>
                         <button class="btn btn-sm" onclick="location.href='room-monitor.php?room=<?= urlencode($rid) ?>'">View</button>
                       <?php endif; ?>
@@ -183,15 +184,10 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
               <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Detection Event Log</div>
               <a href="#" class="card-action">Export <i class="fa-solid fa-download"></i></a>
             </div>
-            <div class="filter-tabs">
-              <div class="filter-tab active" onclick="setFilterTab(this)">All (11)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Pending (2)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Confirmed (3)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Dismissed (4)</div>
-              <div class="filter-tab" onclick="setFilterTab(this)">Recovered (2)</div>
-            </div>
             <?php
             $events = [];
+            $tabCounts = ['all' => 0, 'pending' => 0, 'confirmed' => 0, 'dismissed' => 0, 'recovered' => 0];
+            $labelsByRoom = [];
             foreach ($recentEvents as $e) {
                 // A timer escalation is not a human confirmation — see auth/event_kinds.php.
                 $statusLabel = ms_status_label($e);
@@ -206,12 +202,21 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                 $devSign = $dev < 0 ? '−' . abs($dev) : ($dev > 0 ? '+' . $dev : '0');
                 $devCls = $dev < 0 ? 'neg' : ($dev > 0 ? 'pos' : 'zero');
                 $cls = ($e['status'] === 'pending' || $e['status'] === 'potential') ? 'warn-event unread' : '';
-                
+                $bucket = ms_status_bucket($e['status']);
+                $tabCounts['all']++;
+                $tabCounts[$bucket]++;
+                $rid = (string) $e['room_id'];
+                $labelsByRoom[$rid] ??= ms_registered_labels($monitorPdo, $rid);
+                $isEquipment = ms_event_kind($e, $labelsByRoom[$rid]) === EVENT_KIND_REGISTERED;
+
                 $events[] = [
-                    'id'      => strtolower($e['room_id']),
+                    'id'      => (int) $e['detection_id'],
+                    'bucket'  => $bucket,
                     'room'    => $e['room_id'],
                     'zone'    => $e['object_zone'],
-                    'title'   => "{$e['object_type']} deviation in registered ROI zone",
+                    'title'   => $isEquipment
+                        ? "Registered equipment change: {$e['object_type']}"
+                        : "Unregistered item detected: {$e['object_type']}",
                     'time'    => date('Y-m-d · H:i:s', strtotime($e['detected_at'])),
                     'dev'     => "{$devSign} item" . (abs($dev) > 1 ? 's' : ''),
                     'devCls'  => $devCls,
@@ -220,12 +225,20 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                     'cls'     => $cls
                 ];
             }
+            $tabNames = ['all' => 'All', 'pending' => 'Pending', 'confirmed' => 'Confirmed', 'dismissed' => 'Dismissed', 'recovered' => 'Recovered'];
             ?>
+            <!-- Counts and filtering cover the latest <?= count($events) ?> events listed below. -->
+            <div class="filter-tabs" id="eventLogTabs">
+              <?php foreach ($tabNames as $key => $name): ?>
+              <div class="filter-tab<?= $key === 'all' ? ' active' : '' ?>" data-bucket="<?= $key ?>" onclick="filterEventLog(this)"><?= $name ?> (<?= $tabCounts[$key] ?>)</div>
+              <?php endforeach; ?>
+            </div>
             <?php if (empty($events)): ?>
             <div class="p-3 text-center" style="color:var(--text-dim);font-size:.82rem;">No recent detection events logged.</div>
             <?php else: ?>
+            <div class="p-3 text-center" id="eventLogEmpty" style="display:none;color:var(--text-dim);font-size:.82rem;">No events in this category.</div>
             <?php foreach ($events as $ev): ?>
-            <div class="event-row <?= $ev['cls'] ?>" <?= $ev['id'] ? "onclick=\"openEventModal('{$ev['id']}')\"" : '' ?> style="<?= !$ev['id'] ? 'opacity:.65;cursor:default;' : '' ?>">
+            <div class="event-row <?= $ev['cls'] ?>" data-bucket="<?= $ev['bucket'] ?>" onclick="openEventModal(<?= $ev['id'] ?>)">
               <div class="event-thumb">
                 <svg width="52" height="40" style="position:absolute;inset:0;opacity:.7">
                   <rect x="4" y="6" width="44" height="8" rx="1" fill="rgba(255,255,255,.06)"/>
@@ -505,12 +518,12 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
       <textarea class="form-control" style="margin-top:14px;" rows="2" placeholder="Add staff notes or remarks about this event…"></textarea>
       <div class="modal-actions">
         <button class="modal-btn dismiss" onclick="closeModal('eventModal')"><i class="fa-solid fa-xmark"></i> Close</button>
-        <button class="modal-btn dismiss" onclick="markEvent('dismissed')"><i class="fa-solid fa-ban"></i> Dismiss</button>
+        <button class="modal-btn dismiss" id="btnEvDismiss" onclick="markEvent('dismissed')"><i class="fa-solid fa-ban"></i> Dismiss</button>
         <button class="modal-btn" style="background:var(--info-bg);color:var(--info);border-color:rgba(26,106,181,.25);flex:1.2;" onclick="createCommunityPost()">
           <i class="fa-brands fa-reddit"></i> Create Community Post
         </button>
-        <button class="modal-btn recover" onclick="markEvent('recovered')"><i class="fa-solid fa-circle-check"></i> Mark Recovered</button>
-        <button class="modal-btn confirm" onclick="markEvent('confirm')"><i class="fa-solid fa-triangle-exclamation"></i> Confirm Missing</button>
+        <button class="modal-btn recover" id="btnEvRecover" onclick="markEvent('recovered')"><i class="fa-solid fa-circle-check"></i> Mark Recovered</button>
+        <button class="modal-btn confirm" id="btnEvConfirm" onclick="markEvent('confirm')"><i class="fa-solid fa-triangle-exclamation"></i> Confirm Missing</button>
       </div>
     </div>
   </div>
@@ -559,99 +572,93 @@ startCountup('t-mlh306', '2026-06-15 14:03:44');
 startCountup('t-mlh305', '2026-06-15 14:30:12');
 startCountup('t-mlh303', '2026-06-15 14:53:05');
 
-const modalData = {
-  mlh306: {
-    title:'Detection Event — MLH 306', room:'MLH 306 — Systems & App Dev', time:'2026-06-15 14:03:44',
-    baseline:'30 items', live:'29 items (−1)', liveClass:'alert',
-    zone:'Workstation 7 — Monitor Zone', duration:'1 hr 02 min — Escalated',
-    status:'Confirmed Missing', statusClass:'alert',
-    snapRoom:'CAM-01 · MLH 306', alertColor:'#ff4d4d', alertLabel:'WS-07 Monitor ✗ MISSING',
-    confidence: { score:87, grade:'HIGH', gradeColor:'var(--ok)',
-      validation:'Auto-Accepted', validColor:'var(--ok)', validIcon:'fa-circle-check',
-      match:42.5, roi:24.5, dev:20,
-      matchRaw:'0.15', roiRaw:'81.6%', devRaw:'−1' },
-  },
-  mlh305: {
-    title:'Detection Event — MLH 305', room:'MLH 305 — Logic & Algorithms', time:'2026-06-15 14:30:12',
-    baseline:'30 items', live:'28 items (−2)', liveClass:'alert',
-    zone:'WS-03 & WS-04 — Keyboard Zones', duration:'34 min — Potentially Lost',
-    status:'Potentially Lost', statusClass:'warn',
-    snapRoom:'CAM-01 · MLH 305', alertColor:'#e67e00', alertLabel:'WS-03/WS-04 Keyboard ✗',
-    confidence: { score:71, grade:'MEDIUM', gradeColor:'var(--warn)',
-      validation:'Pending Verification', validColor:'var(--warn)', validIcon:'fa-clock',
-      match:31.0, roi:20.0, dev:20,
-      matchRaw:'0.38', roiRaw:'66.7%', devRaw:'−2' },
-  },
-  mlh303: {
-    title:'Detection Event — MLH 303', room:'MLH 303 — Advanced Programming', time:'2026-06-15 14:53:05',
-    baseline:'30 items', live:'31 items (+1)', liveClass:'warn',
-    zone:'Unregistered — South Corner', duration:'12 min',
-    status:'Pending — Unregistered Item', statusClass:'warn',
-    snapRoom:'CAM-01 · MLH 303', alertColor:'#e67e00', alertLabel:'UNREGISTERED ITEM +1',
-    confidence: { score:44, grade:'LOW', gradeColor:'var(--alert)',
-      validation:'Needs Review', validColor:'var(--alert)', validIcon:'fa-triangle-exclamation',
-      match:18.0, roi:16.0, dev:10,
-      matchRaw:'0.64', roiRaw:'53.3%', devRaw:'+1' },
-  },
-};
+// ── Event pop-up: real data from the authenticated detections API ───────────
+// Previously this read a hardcoded `modalData` object of three invented events,
+// keyed by room code, so the pop-up could never show or act on a real event.
+let currentEvent = null;
 
-let currentDetectionId = null;
+function _setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
 
-function openEventModal(id) {
-  const d = modalData[id]; if (!d) return;
-  currentDetectionId = id;
-  document.getElementById('modalTitle').textContent = d.title;
-  document.getElementById('snapRoom').textContent   = d.snapRoom;
-  document.getElementById('snapTs').textContent     = d.time;
-  document.getElementById('snapAlert').style.color  = d.alertColor;
-  document.getElementById('alertROI').setAttribute('stroke', d.alertColor);
-  document.getElementById('alertROI').setAttribute('fill', d.alertColor === '#ff4d4d' ? 'rgba(255,77,77,.1)' : 'rgba(230,126,0,.1)');
-  document.getElementById('alertLabel').textContent  = d.alertLabel;
-  document.getElementById('alertLabel').setAttribute('fill', d.alertColor);
-  document.getElementById('dRoom').textContent      = d.room;
-  document.getElementById('dTime').textContent      = d.time;
-  document.getElementById('dBaseline').textContent  = d.baseline;
-  document.getElementById('dLive').textContent      = d.live;
-  document.getElementById('dLive').className        = 'detail-val ' + d.liveClass;
-  document.getElementById('dZone').textContent      = d.zone;
-  document.getElementById('dDuration').textContent  = d.duration;
-  document.getElementById('dDuration').className    = 'detail-val ' + d.statusClass;
-  document.getElementById('dStatus').textContent    = d.status;
-  document.getElementById('dStatus').className      = 'detail-val ' + d.statusClass;
+async function openEventModal(detId) {
+  currentEvent = null;
+  let data = null;
+  try {
+    const res = await fetch(`../auth/get_detections.php?id=${encodeURIComponent(detId)}`,
+                            { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+    data = await res.json();
+  } catch (e) { /* handled below */ }
+  const d = data && data.detections && data.detections[0];
+  if (!d) {
+    showToast('error', 'Could not load this event from the server.');
+    return;
+  }
+  currentEvent = d;
 
-  // ── Populate confidence panel ──
-  const c = d.confidence;
-  const scoreEl   = document.getElementById('dConfidenceScore');
-  const barEl     = document.getElementById('dConfidenceBar');
-  const gradeEl   = document.getElementById('dConfidenceGrade');
-  const validEl   = document.getElementById('dValidationStatus');
+  const isEquip = d.event_kind === 'registered_equipment';
+  const stage   = d.stage || {};
+  const sev     = d.status === 'confirmed_missing' ? 'alert'
+                : d.status === 'recovered' ? 'ok'
+                : d.status === 'dismissed' ? '' : 'warn';
+  const color   = sev === 'alert' ? '#ff4d4d' : sev === 'ok' ? '#5cffac' : '#e67e00';
+  const dev     = Number(d.deviation || 0);
 
-  scoreEl.textContent = c.score + '%';
-  scoreEl.style.color = c.gradeColor;
-  barEl.style.width   = c.score + '%';
-  barEl.style.background = c.gradeColor;
+  _setText('modalTitle', `Detection Event #${d.detection_id} — ${d.room_id}`);
+  _setText('snapRoom', `CAM · ${d.room_id}`);
+  _setText('snapTs', d.detected_at);
+  document.getElementById('snapAlert').style.color = color;
+  document.getElementById('alertROI').setAttribute('stroke', color);
+  document.getElementById('alertLabel').textContent = `${d.object_zone} — ${d.status_label}`;
+  document.getElementById('alertLabel').setAttribute('fill', color);
+  _setText('dRoom', d.room_name ? `${d.room_id} — ${d.room_name}` : d.room_id);
+  _setText('dTime', d.detected_at);
+  _setText('dBaseline', `${d.baseline_count} items`);
+  _setText('dLive', `${d.live_count} items (${dev > 0 ? '+' : ''}${dev})`);
+  document.getElementById('dLive').className = 'detail-val ' + (dev < 0 ? 'alert' : dev > 0 ? 'warn' : '');
+  _setText('dZone', `${d.object_zone} (${isEquip ? 'registered lab equipment' : 'unregistered item'})`);
+  _setText('dDuration', `${stage.mins ?? d.elapsed_minutes} min — ${stage.label || ''}`);
+  document.getElementById('dDuration').className = 'detail-val ' + sev;
+  _setText('dStatus', d.status_label + (d.staff_confirmed && d.verified_by_name ? ` (by ${d.verified_by_name})` : ''));
+  document.getElementById('dStatus').className = 'detail-val ' + sev;
 
-  gradeEl.textContent = c.grade;
-  gradeEl.style.cssText = `font-family:var(--font-display);font-size:.64rem;font-weight:800;
-    letter-spacing:.08em;padding:3px 10px;border-radius:100px;color:${c.gradeColor};
-    background:${c.gradeColor.replace(')', '-bg)').replace('var(--','var(--')};
-    border:1px solid currentColor;opacity:.9;`;
+  // Confidence panel: real stored values, or a plain dash when not recorded.
+  const score = d.confidence_score;
+  _setText('dConfidenceScore', score != null ? `${score}%` : '—');
+  document.getElementById('dConfidenceBar').style.width = (score != null ? score : 0) + '%';
+  _setText('dConfidenceGrade', d.confidence_grade || 'N/A');
+  const validLabels = { auto_accepted: 'Auto-Accepted', verified: 'Verified by Staff', rejected: 'Rejected (False Alarm)',
+                        needs_review: 'Needs Review', pending_review: 'Pending Verification' };
+  _setText('dValidationStatus', validLabels[d.validation_status] || d.validation_status || '—');
+  let contrib = {};
+  try { contrib = (JSON.parse(d.confidence_factors || '{}').contributions) || {}; } catch (e) {}
+  _setText('dSigMatch', contrib.match_contrib ?? '—');
+  _setText('dSigROI', contrib.change_contrib ?? '—');
+  _setText('dSigDev', contrib.dev_contrib ?? '—');
 
-  validEl.innerHTML = `<i class="fa-solid ${c.validIcon}"></i> ${c.validation}`;
-  validEl.style.color = c.validColor;
-
-  document.getElementById('dSigMatch').textContent = c.match;
-  document.getElementById('dSigROI').textContent   = c.roi;
-  document.getElementById('dSigDev').textContent   = c.dev;
-
-  // Annotate signal labels with raw values
-  const breakdown = document.getElementById('dSignalBreakdown');
-  const cells = breakdown.querySelectorAll('div[style]');
-  if (cells[0]) cells[0].querySelector('div:first-child').title = 'match_score: ' + c.matchRaw;
-  if (cells[1]) cells[1].querySelector('div:first-child').title = 'roi_change_pct: ' + c.roiRaw;
-  if (cells[2]) cells[2].querySelector('div:first-child').title = 'deviation: ' + c.devRaw;
+  // A closed event cannot be acted on again from here.
+  const closed = d.status === 'recovered' || d.status === 'dismissed';
+  ['btnEvRecover', 'btnEvDismiss', 'btnEvConfirm'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) { b.disabled = closed; b.title = closed ? `This event is already ${d.status}.` : ''; }
+  });
 
   openModal('eventModal');
+}
+
+/** Event log tabs: real counts are rendered server-side; this filters the rows. */
+function filterEventLog(tab) {
+  const bucket = tab.dataset.bucket;
+  document.querySelectorAll('#eventLogTabs .filter-tab').forEach(t => t.classList.toggle('active', t === tab));
+  let shown = 0;
+  document.querySelectorAll('.event-row[data-bucket]').forEach(row => {
+    const visible = bucket === 'all' || row.dataset.bucket === bucket;
+    row.style.display = visible ? '' : 'none';
+    if (visible) shown++;
+  });
+  const empty = document.getElementById('eventLogEmpty');
+  if (empty) empty.style.display = shown ? 'none' : '';
 }
 
 async function submitValidation(validationStatus) {
@@ -675,10 +682,46 @@ async function submitValidation(validationStatus) {
   validEl.style.color = colors[validationStatus];
 }
 
-function markEvent(action) {
-  const msgs = { dismissed:'Event dismissed as false alert.', recovered:'Item marked as recovered. Record updated.', confirm:'Event confirmed as missing. Staff notified.' };
-  showToast(action === 'recovered' ? 'success' : action === 'dismissed' ? 'warn' : 'error', msgs[action]);
-  closeModal('eventModal');
+// Staff action from the pop-up. Uses the same authenticated endpoint as the
+// Alerts page, so role checks and the registered/unregistered recovery rules
+// (auth/event_kinds.php) apply unchanged. The confirmation text comes from the
+// server and says what will happen to THIS kind of event.
+async function markEvent(action) {
+  if (!currentEvent) {
+    showToast('error', 'No event is loaded. Close this window and open the event again.');
+    return;
+  }
+  const status = action === 'confirm' ? 'confirmed_missing' : action;
+  const prompt = (currentEvent.action_prompts || {})[status];
+  if (!prompt) {
+    showToast('error', 'This action is not available for this event.');
+    return;
+  }
+  if (!window.confirm(prompt)) return;
+
+  const buttons = ['btnEvRecover', 'btnEvDismiss', 'btnEvConfirm'].map(id => document.getElementById(id)).filter(Boolean);
+  buttons.forEach(b => { b.disabled = true; });
+  let result = null;
+  try {
+    const res = await fetch('../auth/update_event_status.php', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams({ detection_id: currentEvent.detection_id, status }),
+    });
+    result = await res.json().catch(() => null);   // error responses carry a JSON message too
+  } catch (e) { /* network error: handled below */ }
+
+  if (result && result.success) {
+    const fallback = { recovered: 'Event marked recovered.', dismissed: 'Alert dismissed as a false alarm.',
+                       confirmed_missing: 'Confirmed missing — recorded as checked by you.' };
+    showToast(status === 'recovered' ? 'success' : status === 'dismissed' ? 'warn' : 'error',
+              result.message || fallback[status]);
+    closeModal('eventModal');
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    buttons.forEach(b => { b.disabled = false; });
+    showToast('error', (result && result.message) || 'The server did not accept this change. Nothing was updated.');
+  }
 }
 
 function createCommunityPost() {

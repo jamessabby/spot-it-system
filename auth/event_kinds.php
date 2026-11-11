@@ -99,6 +99,75 @@ function ms_staff_confirmed(array $det): bool
     return !empty($det['verified_by']);
 }
 
+/**
+ * Stage metadata for an event: ['stage' => key, 'label' => text, 'mins' => int].
+ *
+ * The persisted status always wins over elapsed time, so a recovered or
+ * dismissed event can never be shown as "Confirmed Missing" just because it is
+ * old. The elapsed-time fallback (status still 'pending' because the
+ * escalation job has not run) and a confirmed_missing that no staff member set
+ * are both labelled as an escalation, not a confirmation.
+ *
+ * `stage` keys are unchanged from the original helper (detected / potential /
+ * confirmed / dismissed / recovered) so existing callers and CSS keep working.
+ *
+ * @param bool|null $staffConfirmed  true/false when the caller knows whether a
+ *        person set the status (verified_by); null keeps the old label.
+ */
+function ms_detection_stage(string $detectedAt, ?string $dbStatus = null, ?bool $staffConfirmed = null, ?int $now = null): array
+{
+    $mins = (int) ((($now ?? time()) - strtotime($detectedAt)) / 60);
+    $escalated = 'Escalated — awaiting staff check';
+    switch ($dbStatus) {
+        case 'recovered':
+            return ['stage' => 'recovered', 'label' => 'Recovered', 'mins' => $mins];
+        case 'dismissed':
+            return ['stage' => 'dismissed', 'label' => 'Dismissed', 'mins' => $mins];
+        case 'confirmed_missing':
+            return ['stage' => 'confirmed', 'label' => $staffConfirmed === false ? $escalated : 'Confirmed Missing', 'mins' => $mins];
+        case 'potential':
+            return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => $mins];
+    }
+    $confirmedMin = defined('TIMER_CONFIRMED_MIN') ? TIMER_CONFIRMED_MIN : 60;
+    $potentialMin = defined('TIMER_POTENTIAL_MIN') ? TIMER_POTENTIAL_MIN : 30;
+    if ($mins >= $confirmedMin) {
+        return ['stage' => 'confirmed', 'label' => $escalated, 'mins' => $mins];
+    }
+    if ($mins >= $potentialMin) {
+        return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => $mins];
+    }
+    return ['stage' => 'detected', 'label' => 'Detected', 'mins' => $mins];
+}
+
+/** Pure: which event-log tab an event belongs to. */
+function ms_status_bucket(?string $status): string
+{
+    return match ($status) {
+        'confirmed_missing' => 'confirmed',
+        'dismissed'         => 'dismissed',
+        'recovered'         => 'recovered',
+        default             => 'pending',   // pending + potential: still awaiting action
+    };
+}
+
+/**
+ * Pure: the confirmation question shown before a staff action, worded so the
+ * person clicking knows exactly what will happen to this kind of event.
+ * Returns null for an action that is not allowed from the dashboard.
+ */
+function ms_action_prompt(string $kind, string $status, string $zone): ?string
+{
+    $zone = $zone !== '' ? $zone : 'this item';
+    return match ($status) {
+        'recovered' => $kind === EVENT_KIND_REGISTERED
+            ? "Mark '{$zone}' as found and returned to the lab?\n\nThis is registered lab equipment: it will NOT be added to Lost & Found and cannot be claimed by students."
+            : "Confirm that staff have physically taken '{$zone}' into custody?\n\nIt will be added to Lost & Found and become claimable by its owner.",
+        'dismissed' => "Dismiss the alert for '{$zone}' as a false alarm?",
+        'confirmed_missing' => "Confirm that '{$zone}' has been checked in person and is missing?\n\nThis records you as the staff member who confirmed it.",
+        default => null,
+    };
+}
+
 /** Pure: status label that never presents a timer escalation as a confirmation. */
 function ms_status_label(array $det): string
 {

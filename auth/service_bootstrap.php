@@ -172,44 +172,10 @@ function ms_json(array $data, int $status = 200): void {
     exit();
 }
 
-// ── Detection stage helper  [UPDATED — uses persisted DB status when available] ──
-/**
- * Returns stage metadata for a detection event.
- *
- * @param string      $detectedAt   Datetime string when the detection was first recorded.
- * @param string|null $dbStatus     The persisted status from the DB (set by escalate_detections.php).
- *                                  When provided, we trust the DB over recalculating from elapsed time.
- *                                  This fixes the inconsistency where the dashboard showed a different
- *                                  stage than what was actually stored in the database.
- */
-if (!function_exists('ms_detection_stage')) {
-    function ms_detection_stage(string $detectedAt, ?string $dbStatus = null): array {
-        $mins = (time() - strtotime($detectedAt)) / 60;
-
-        // If escalate_detections.php has already written the status, trust it
-        if ($dbStatus === 'confirmed_missing') {
-            return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
-        }
-        if ($dbStatus === 'potential') {
-            return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => (int)$mins];
-        }
-        if ($dbStatus === 'dismissed') {
-            return ['stage' => 'dismissed', 'label' => 'Dismissed', 'mins' => (int)$mins];
-        }
-        if ($dbStatus === 'recovered') {
-            return ['stage' => 'recovered', 'label' => 'Recovered', 'mins' => (int)$mins];
-        }
-
-        // Fallback: calculate from elapsed time (for 'pending' or when cron hasn't run yet)
-        if ($mins >= TIMER_CONFIRMED_MIN) {
-            return ['stage' => 'confirmed', 'label' => 'Confirmed Missing', 'mins' => (int)$mins];
-        }
-        if ($mins >= TIMER_POTENTIAL_MIN) {
-            return ['stage' => 'potential', 'label' => 'Potentially Lost', 'mins' => (int)$mins];
-        }
-        return ['stage' => 'detected', 'label' => 'Detected', 'mins' => (int)$mins];
-    }
-}
+// ── Detection stage helper ──────────────────────────────────────────────────────
+// ms_detection_stage() now lives in auth/event_kinds.php (loaded above) so it can be
+// unit-tested and so it never labels a recovered/dismissed event or a timer
+// escalation as "Confirmed Missing".
 
 // ── Shared notification helper (used across multiple handlers) ────────────────
 function ms_notify(

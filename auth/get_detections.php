@@ -91,13 +91,17 @@ if ($summary) {
 // ── Full detection list ───────────────────────────────────────────────────────
 $room_id = $_GET['room']   ?? null;
 $status  = $_GET['status'] ?? null;
+$det_id  = (int) ($_GET['id'] ?? 0);   // single event (used by the dashboard pop-up)
 $limit   = min((int)($_GET['limit']  ?? 50), 200);
 $offset  = (int)($_GET['offset'] ?? 0);
 
 $where  = ['d.is_removed = 0'];
 $params = [];
 
-if ($room_id) {
+if ($det_id > 0) {
+    $where[] = 'd.detection_id = ?';
+    $params[] = $det_id;
+} elseif ($room_id) {
     $where[] = 'd.room_id = ?';
     $params[] = $room_id;
 } else {
@@ -147,7 +151,6 @@ try {
     // Enrich — add stage label + snapshot URL
     $labelsByRoom = [];
     foreach ($detections as &$det) {
-        $det['stage']        = ms_detection_stage($det['detected_at']);
         // Registered equipment vs. unregistered item, and whether a person (not
         // the 30/60-minute timer) set the current status. See auth/event_kinds.php.
         $rid = (string) $det['room_id'];
@@ -155,6 +158,15 @@ try {
         $det['event_kind']      = ms_event_kind($det, $labelsByRoom[$rid]);
         $det['staff_confirmed'] = ms_staff_confirmed($det);
         $det['status_label']    = ms_status_label($det);
+        // Stage now respects the persisted status (a recovered event is never
+        // "Confirmed Missing") and labels timer escalations as escalations.
+        $det['stage']           = ms_detection_stage($det['detected_at'], $det['status'], $det['staff_confirmed']);
+        $zone = ms_event_zone($det);
+        $det['action_prompts']  = [
+            'recovered'         => ms_action_prompt($det['event_kind'], 'recovered', $zone),
+            'dismissed'         => ms_action_prompt($det['event_kind'], 'dismissed', $zone),
+            'confirmed_missing' => ms_action_prompt($det['event_kind'], 'confirmed_missing', $zone),
+        ];
         $det['snapshot_url'] = $det['snapshot_path']
             ? SNAPSHOT_URL . basename($det['snapshot_path'])
             : null;
