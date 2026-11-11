@@ -45,7 +45,7 @@ lighting. One event per clip, ~30 s each, starting with ~5 s of undisturbed scen
 
 ```powershell
 mkdir photos\ab_clips -Force
-ffmpeg -rtsp_transport tcp -i "rtsp://SpotItCamera:spotitcamera232@192.168.18.14:554/stream1" -t 30 -c copy "photos/ab_clips/s01_mouse_removed.mp4"
+ffmpeg -rtsp_transport tcp -i "rtsp://SpotItCamera:<camera-password>@192.168.18.14:554/stream1" -t 30 -c copy "photos/ab_clips/s01_mouse_removed.mp4"
 ```
 
 Write down what really happened in each clip as you record it — that's your ground truth.
@@ -138,7 +138,7 @@ it in the console, and it would wreck the result.
 
 ```powershell
 # From c:\xampp\htdocs\spotit — one clip per scenario, camera and lighting untouched between takes
-ffmpeg -rtsp_transport tcp -i "rtsp://SpotItCamera:spotitcamera232@192.168.18.14:554/stream1" `
+ffmpeg -rtsp_transport tcp -i "rtsp://SpotItCamera:<camera-password>@192.168.18.14:554/stream1" `
        -t 30 -c copy "photos/ab_clips/s01_mouse_removed.mp4"
 ```
 

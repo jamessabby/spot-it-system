@@ -43,6 +43,7 @@ import os
 import sys
 import time
 import json
+import re
 import atexit
 from datetime import datetime
 
@@ -103,9 +104,36 @@ RECOVER_CONFIRM_SEC = 0.5  #                                 — aligned to main
 
 # Same env vars as main.py, so the A/B arms can never end up pointed at
 # different cameras (or at the same camera through different credentials).
-CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "10.62.74.79")
-CAMERA_USER = os.environ.get("SPOTIT_CAMERA_USER", "SpotItCamera")
-CAMERA_PASS = os.environ.get("SPOTIT_CAMERA_PASS", "spotitcamera232")
+def _local_setting(key):
+    """Read one 'KEY' => 'value' entry from config/env.local.php (gitignored).
+
+    Lets the camera password live in the same private file the PHP side reads
+    (config/env.php -> spotit_env) instead of as a default in this tracked
+    script. Only plain single-quoted literals are understood, which is all that
+    file contains.
+    """
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "config", "env.local.php"
+    )
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(
+                r"'%s'\s*=>\s*'((?:[^'\\]|\\.)*)'" % re.escape(key), f.read()
+            )
+    except OSError:
+        return None
+    return re.sub(r"\\(.)", r"\1", m.group(1)) if m else None
+
+
+def _camera_setting(local_key, env_key, default):
+    # Same resolution order as config/env.php: env.local.php -> env var -> default.
+    val = _local_setting(local_key)
+    return val if val else (os.environ.get(env_key) or default)
+
+
+CAMERA_IP = _camera_setting("DESK_CAMERA_IP", "SPOTIT_CAMERA_IP", "10.62.74.79")
+CAMERA_USER = _camera_setting("DESK_CAMERA_USER", "SPOTIT_CAMERA_USER", "SpotItCamera")
+CAMERA_PASS = _camera_setting("DESK_CAMERA_PASS", "SPOTIT_CAMERA_PASS", "")
 RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/stream1"
 ROTATE_CAMERA = False  # True for portrait iPhone, False for Tapo CCTV
 
