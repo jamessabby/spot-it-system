@@ -78,6 +78,10 @@ while True:
     key = cv2.waitKey(1) & 0xFF
 
     if key == ord('s'):
+        # Record the image size the boxes were drawn on; main.py refuses to
+        # judge a live frame of any other size (see check_calibration).
+        for r in roi_list:
+            r['frame_w'], r['frame_h'] = int(ref.shape[1]), int(ref.shape[0])
         with open(ROI_FILE, 'w') as f:
             json.dump(roi_list, f, indent=2)
         print(f"\nSaved {len(roi_list)} ROIs to {ROI_FILE}")

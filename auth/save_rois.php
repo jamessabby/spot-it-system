@@ -26,10 +26,23 @@ if (!is_array($rois)) {
     ms_json(['success' => false, 'message' => 'Invalid ROI payload structure.']);
 }
 
+// The ROI editors draw on {ROOM}_baseline.jpg at its native size, so that image's
+// dimensions ARE the coordinate space of these boxes. Stamping them onto every
+// ROI lets main.py refuse to judge a live frame of a different size (a camera
+// resolution change or a silent stream2 fallback) instead of silently comparing
+// the wrong pixels. If the baseline is missing, the stamp is omitted and main.py
+// treats the file as legacy — it never guesses a size.
+require_once __DIR__ . '/detector_state.php';
+$frameW = $frameH = null;
+$baselineFile = detector_baseline_copy_file($roomId);
+if (is_file($baselineFile) && ($dims = @getimagesize($baselineFile))) {
+    [$frameW, $frameH] = [(int)$dims[0], (int)$dims[1]];
+}
+
 // Format Python ROI payload
 $pyRois = [];
 foreach ($rois as $r) {
-    $pyRois[] = [
+    $entry = [
         'label' => trim($r['label'] ?? 'object'),
         'tier'  => trim($r['tier'] ?? 'tier1'),
         'x'     => (int)($r['x'] ?? 0),
@@ -37,6 +50,11 @@ foreach ($rois as $r) {
         'w'     => (int)($r['w'] ?? 50),
         'h'     => (int)($r['h'] ?? 50)
     ];
+    if ($frameW && $frameH) {
+        $entry['frame_w'] = $frameW;
+        $entry['frame_h'] = $frameH;
+    }
+    $pyRois[] = $entry;
 }
 
 // 1. Write to per-room JSON file for Python main.py detector

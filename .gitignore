@@ -15,6 +15,7 @@ logs/
 uploads/snapshots/
 photos/*.jpg
 photos/detection_metrics.csv
+photos/detection_metrics_v2.csv
 photos/live_roi_state.json
 
 # ── Python ────────────────────────────────────────────────────────────────────

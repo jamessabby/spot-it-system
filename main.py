@@ -19,6 +19,7 @@ except Exception:
 import atexit
 import cv2
 import json
+import re
 import numpy as np
 import requests
 from datetime import datetime
@@ -100,14 +101,42 @@ CONSISTENCY_FRAMES = 25  # 25 consecutive frames (~0.8s @ 30 FPS) for balanced s
 # Single source of truth for the sandbox camera. It used to be pasted into
 # three places in this file plus four PHP files, so a DHCP lease change or a
 # factory reset broke the system in several places at once, each failing with a
-# different symptom. Mirrors config/env.php's DESK_CAMERA_* constants — keep the
-# two in step, or set the env vars and neither needs editing.
+# different symptom. Reads the same DESK_CAMERA_* keys as config/env.php, from the
+# same gitignored config/env.local.php, so the two sides cannot drift and no
+# credential lives in this tracked file.
 #
 # Production rooms ignore this entirely: they read camera_ip/user/pass from
 # spotit_monitor_db.rooms via auth/get_room_camera.php.
-CAMERA_IP = os.environ.get("SPOTIT_CAMERA_IP", "10.62.74.79")
-CAMERA_USER = os.environ.get("SPOTIT_CAMERA_USER", "SpotItCamera")
-CAMERA_PASS = os.environ.get("SPOTIT_CAMERA_PASS", "spotitcamera232")
+def _local_setting(key):
+    """Read one 'KEY' => 'value' entry from config/env.local.php (gitignored).
+
+    Lets the camera password live in the same private file the PHP side reads
+    (config/env.php -> spotit_env) instead of as a default in this tracked
+    script. Only plain single-quoted literals are understood, which is all that
+    file contains.
+    """
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "config", "env.local.php"
+    )
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(
+                r"'%s'\s*=>\s*'((?:[^'\\]|\\.)*)'" % re.escape(key), f.read()
+            )
+    except OSError:
+        return None
+    return re.sub(r"\\(.)", r"\1", m.group(1)) if m else None
+
+
+def _camera_setting(local_key, env_key, default):
+    # Same resolution order as config/env.php: env.local.php -> env var -> default.
+    val = _local_setting(local_key)
+    return val if val else (os.environ.get(env_key) or default)
+
+
+CAMERA_IP = _camera_setting("DESK_CAMERA_IP", "SPOTIT_CAMERA_IP", "10.62.74.79")
+CAMERA_USER = _camera_setting("DESK_CAMERA_USER", "SPOTIT_CAMERA_USER", "SpotItCamera")
+CAMERA_PASS = _camera_setting("DESK_CAMERA_PASS", "SPOTIT_CAMERA_PASS", "")
 RTSP_URL = f"rtsp://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:554/stream1"
 ROTATE_CAMERA = False  # Set to True for portrait iPhone, False for Tapo CCTV
 
@@ -220,7 +249,48 @@ RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before a RED alert auto-re
 # which is the exact false positive BUGS.md §3.3 exists to avoid.
 OCCLUDED_MAX_SEC = 5.0        # continuous still-occlusion before it counts as absence
 OCCLUDED_STILL_MOTION = 0.02  # ROI frame-to-frame motion below which it is "not moving"
-METRICS_CSV = "photos/detection_metrics.csv"
+
+# ── SURROUNDING-AREA (RING) OBSTRUCTION GUARD — Fix 2, controlled experiment ──
+# Lab evidence (MLH305 Test 5, 2026-11-03 14:06:29): a person standing over
+# keyboard1 produced 7 s of CONTINUOUS ABSENT (gone 0.73 > here 0.59) — the body
+# matched the "item gone" template. No timer setting separates that from a real
+# removal; what does is WHERE the scene changed. A person reaching in or standing
+# there changes the area AROUND the box. A removed item changes only what is
+# inside it. So an ABSENT verdict is only accepted while a ring around the ROI is
+# clear of foreground; otherwise it is held as OCCLUDED ("view not clear").
+#
+# Foreground is measured against a slowly adapting background (running average,
+# ~RING_BG_SEC memory) rather than the fixed baseline, so a chair moved for good
+# stops counting as an obstruction after about that long. Classical background
+# subtraction only — no extra ML.
+#
+# Known trade-offs: a removal is confirmed only once the person has stepped
+# clear; and someone standing perfectly still for longer than RING_BG_SEC is
+# absorbed into the background, after which the guard no longer sees them.
+#
+# OFF BY DEFAULT (2026-11-11). Offline evaluation on the Nov 3 lab recordings
+# (8 labelled removals, 2 obstructions): with the guard at 0.10 only 3/8 genuine
+# removals were still flagged, vs 7/8 with the unbroken-streak rule alone. In the
+# lab protocol the tester stays at the desk, so the ring stays busy for the whole
+# removal; leftover ring changes (cables, mousepad) also hold it for 10-30 s.
+# ring_fg is still computed and logged so live lab data can settle the tuning.
+# SPOTIT_RING_GUARD=1 enables it for experiments.
+RING_GUARD_ENABLED = os.environ.get("SPOTIT_RING_GUARD", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+RING_BG_SEC = 30.0        # background memory: how long until a static change is absorbed
+RING_MARGIN_FRAC = 0.5    # ring width as a fraction of the ROI's shorter side...
+RING_MIN_PX = 12          # ...but never thinner than this (small mouse ROIs)
+RING_BUSY_FRAC = 0.10     # ring foreground fraction above which the view is "not clear"
+# v2 adds frame_w / frame_h / stream / roi_res, so every row proves what
+# resolution and RTSP profile it was measured on. A new file rather than extra
+# columns on the old one: photos/detection_metrics.csv holds the Nov 2026 lab
+# evidence in the 11-column format and must stay readable as-is.
+METRICS_CSV = "photos/detection_metrics_v2.csv"
+# Per-frame acquisition facts for the metrics rows, refreshed every loop.
+_frame_meta = {"w": 0, "h": 0, "stream": "unknown", "roi_res": "unknown"}
+# Latest ring-foreground measurement per ROI label (see RING_GUARD_ENABLED).
+_ring_fg = {}
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── MOBILENETV2 DNN GATEKEEPER CONFIG (Phase 2, Step 2.1) ──────────────────
@@ -636,6 +706,18 @@ class VideoStream:
         self.last_good_frame_at = time.time()
         self.stopped = False
         self.lock = threading.Lock()
+        # Which RTSP profile actually opened. The fallback below is silent by
+        # design, so without this a test could run on the 640x360 sub-stream
+        # and nothing in the evidence would say so.
+        self.stream_name = None
+
+    @staticmethod
+    def _profile(url):
+        if "/stream2" in url:
+            return "stream2"
+        if "/stream1" in url:
+            return "stream1"
+        return "other"
 
     def start(self):
         threading.Thread(target=self.update, args=(), daemon=True).start()
@@ -657,11 +739,13 @@ class VideoStream:
 
     def update(self):
         # Try main stream1 first; fallback to stream2 if stream1 is locked
+        used = self.src
         cap_obj, r, f = self._try_open(self.src)
         if cap_obj is None and self.fallback_src != self.src:
             print(
-                f"[SPOT-IT][VideoStream] Main stream locked — attempting fallback to {self.fallback_src}..."
+                "[SPOT-IT][VideoStream] Main stream locked — attempting fallback to the sub-stream (stream2)..."
             )
+            used = self.fallback_src
             cap_obj, r, f = self._try_open(self.fallback_src)
 
         with self.lock:
@@ -671,6 +755,12 @@ class VideoStream:
                 self.frame = f
                 self.seq += 1
                 self.last_good_frame_at = time.time()
+                self.stream_name = self._profile(used)
+        if cap_obj is not None and self.stream_name == "stream2":
+            print(
+                "[SPOT-IT][VideoStream][WARN] Running on stream2 (sub-stream, lower "
+                "resolution). Detection will hold until the baseline matches."
+            )
 
         while not self.stopped:
             with self.lock:
@@ -707,8 +797,10 @@ class VideoStream:
             except Exception:
                 pass
 
+        used = self.src
         cap_obj, r, f = self._try_open(self.src)
         if cap_obj is None and self.fallback_src != self.src:
+            used = self.fallback_src
             cap_obj, r, f = self._try_open(self.fallback_src)
 
         with self.lock:
@@ -718,7 +810,8 @@ class VideoStream:
                 self.frame = f
                 self.seq += 1
                 self.last_good_frame_at = time.time()
-                print("[SPOT-IT][WATCHDOG] Reconnected successfully.")
+                self.stream_name = self._profile(used)
+                print(f"[SPOT-IT][WATCHDOG] Reconnected successfully ({self.stream_name}).")
             else:
                 print("[SPOT-IT][WATCHDOG] Reconnect attempt failed.")
 
@@ -775,6 +868,7 @@ class FileStream:
         self.cap = cv2.VideoCapture(path)
         self.ret, self.frame = (False, None)
         self.seq = 0
+        self.stream_name = "replay"
         self.finished = False
         fps = self.cap.get(cv2.CAP_PROP_FPS) if self.cap.isOpened() else 0
         # A clip with broken FPS metadata would otherwise divide by zero below.
@@ -1224,6 +1318,105 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     return state, sim_p, sim_e, used_dnn
 
 
+# ── CALIBRATION RESOLUTION GUARD ─────────────────────────────────────────
+# ROI boxes are raw pixel coordinates on the baseline image they were drawn
+# over. They only mean anything on a live frame of that exact size. The old
+# behaviour on a mismatch was to stretch the baseline photo to the live size and
+# carry on: the boxes were never moved and the presence templates were never
+# rebuilt, so every ROI silently compared the wrong patch of desk. Measured
+# case: the Tapo delivering 1920x1080 against 2304x1296 baselines shifts a box
+# at x=700 by ~117 px — a different object.
+#
+# Stretching is not attempted here, on purpose: a different resolution can also
+# mean a different crop or field of view (sub-stream, camera re-mounted), and
+# nothing on this side can prove the scene still lines up. The detector instead
+# holds — no PRESENT/MISSING verdicts, no timers advancing — until someone
+# recaptures the baseline and redraws the boxes, which re-establishes alignment
+# by construction.
+#
+# save_rois.php / register_roi.py stamp every ROI with frame_w/frame_h (the size
+# of the image the boxes were drawn on). Files from before that stamp are
+# "legacy": accepted only when the baseline matches the live frame AND every box
+# fits inside it, and reported as legacy in the metrics so it is never mistaken
+# for a verified calibration.
+
+
+def roi_recorded_size(rois):
+    """Size the ROI boxes were drawn at: (w, h), "legacy" if no ROI records it,
+    or None when the file is inconsistent (partly stamped, or mixed sizes)."""
+    if not rois:
+        return "legacy"
+    sizes = {(r.get("frame_w"), r.get("frame_h")) for r in rois}
+    if sizes == {(None, None)}:
+        return "legacy"
+    if len(sizes) != 1:
+        return None
+    w, h = next(iter(sizes))
+    try:
+        return (int(w), int(h))
+    except (TypeError, ValueError):
+        return None
+
+
+def roi_in_frame(roi, frame_w, frame_h):
+    """True only if the whole box lies inside the frame. A partly-outside box
+    yields a truncated crop (and numpy wraps negative indices to the far edge),
+    so any measurement taken from it would be meaningless."""
+    try:
+        x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= frame_w and y + h <= frame_h
+
+
+def check_calibration(live_w, live_h):
+    """Can this frame be judged against the loaded baseline and ROIs?
+
+    Returns (trusted, reason, roi_res, bad_labels). bad_labels are ROIs to skip
+    individually when the rest of the calibration is trustworthy.
+    """
+    ref_h, ref_w = ref_bgr.shape[:2]
+    rec = roi_recorded_size(roi_list)
+    roi_res = (
+        "legacy" if rec == "legacy"
+        else "inconsistent" if rec is None
+        else f"{rec[0]}x{rec[1]}"
+    )
+    if (live_w, live_h) != (ref_w, ref_h):
+        return (False, f"Live frame {live_w}x{live_h} does not match baseline {ref_w}x{ref_h}",
+                roi_res, set())
+    if rec is None:
+        return False, "ROI file has inconsistent resolution records", roi_res, set()
+    if rec != "legacy" and rec != (ref_w, ref_h):
+        return (False, f"ROIs were drawn on a {rec[0]}x{rec[1]} image, baseline is {ref_w}x{ref_h}",
+                roi_res, set())
+    bad = {r["label"] for r in roi_list if not roi_in_frame(r, ref_w, ref_h)}
+    if bad and rec == "legacy":
+        # An unstamped file with boxes past the edge is direct evidence it was
+        # drawn at another resolution, so none of its boxes can be trusted.
+        return (False, f"{len(bad)} ROI(s) fall outside the {ref_w}x{ref_h} frame - "
+                f"ROI file was probably drawn at another resolution", roi_res, bad)
+    return True, "", roi_res, bad
+
+
+def ring_foreground(fg_mask, roi):
+    """Fraction of the ring around an ROI that differs from the slow background.
+
+    The ring is the ROI box expanded by max(RING_MIN_PX, RING_MARGIN_FRAC x its
+    shorter side), clipped to the frame, minus the box itself. Computed from two
+    rectangle counts, so it costs nothing measurable per frame.
+    """
+    H, W = fg_mask.shape[:2]
+    x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+    m = max(RING_MIN_PX, int(RING_MARGIN_FRAC * min(w, h)))
+    ox0, oy0 = max(0, x - m), max(0, y - m)
+    ox1, oy1 = min(W, x + w + m), min(H, y + h + m)
+    outer = cv2.countNonZero(fg_mask[oy0:oy1, ox0:ox1])
+    inner = cv2.countNonZero(fg_mask[y:y + h, x:x + w])
+    ring_area = (ox1 - ox0) * (oy1 - oy0) - w * h
+    return (outer - inner) / ring_area if ring_area > 0 else 0.0
+
+
 def calibrate_roi_baselines(ref_image_bgr, rois):
     """Build both templates for every ROI. Runs at startup and on every reload.
 
@@ -1234,8 +1427,15 @@ def calibrate_roi_baselines(ref_image_bgr, rois):
     if ref_image_bgr is None or not rois:
         return
 
+    ref_h, ref_w = ref_image_bgr.shape[:2]
     for r in rois:
         label = r["label"]
+        if not roi_in_frame(r, ref_w, ref_h):
+            print(
+                f"[SPOT-IT][CALIB][WARN] '{label}' lies outside the {ref_w}x{ref_h} "
+                f"baseline — not calibrated. Redraw this ROI."
+            )
+            continue
         x, y, w, h = r["x"], r["y"], r["w"], r["h"]
         ref_crop = ref_image_bgr[y : y + h, x : x + w]
         if ref_crop.size == 0 or w < 10 or h < 10:
@@ -1390,13 +1590,17 @@ def log_roi_metrics(
                 with open(METRICS_CSV, "w", encoding="utf-8") as mf:
                     mf.write(
                         "ts,room,label,change_pct,sim_present,sim_empty,used_dnn,"
-                        "state,absent_time,present_time,scene_motion\n"
+                        "state,absent_time,present_time,scene_motion,"
+                        "frame_w,frame_h,stream,roi_res,ring_fg,ring_guard\n"
                     )
         with open(METRICS_CSV, "a", encoding="utf-8") as mf:
             mf.write(
                 f"{datetime.now().isoformat(timespec='milliseconds')},{ROOM_ID},{label},"
                 f"{change_pct:.4f},{sim_present:.4f},{sim_empty:.4f},{int(used_dnn)},"
-                f"{state},{t_absent:.2f},{t_present:.2f},{scene_motion:.4f}\n"
+                f"{state},{t_absent:.2f},{t_present:.2f},{scene_motion:.4f},"
+                f"{_frame_meta['w']},{_frame_meta['h']},{_frame_meta['stream']},"
+                f"{_frame_meta['roi_res']},{_ring_fg.get(label, -1.0):.4f},"
+                f"{int(RING_GUARD_ENABLED)}\n"
             )
     except Exception:
         pass  # instrumentation must never break detection
@@ -2177,6 +2381,15 @@ AB_STATS.update(
     {"roi_frames": 0, "dnn_eligible": 0, "dnn_calls": 0, "dnn_seconds": 0.0}
 )
 
+# Calibration-guard state (see check_calibration). bad_rois is read by the ROI
+# loop and the dashboard state writer, so it must exist before the first frame.
+bad_rois = set()
+ring_bg = None  # slow background for the ring guard; reseeded on reload / hold
+_ring_hold_announced = {}
+_last_cal_reason = None
+_legacy_warned = False
+_bad_roi_warned = set()
+
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────
 _loop_start_time = time.time()
 while True:
@@ -2424,6 +2637,11 @@ while True:
 
             # Recompute per-ROI occupancy baselines against the new reference
             calibrate_roi_baselines(ref_bgr, roi_list)
+            # New ROIs/baseline: re-evaluate the calibration guard from scratch.
+            _last_cal_reason = None
+            ring_bg = None
+            _legacy_warned = False
+            _bad_roi_warned.clear()
 
             BASELINE_COUNT = len(roi_list)
             last_rois_mtime = current_rois_mtime
@@ -2520,16 +2738,67 @@ while True:
             time.sleep(0.05)
         continue
 
-    # ── RESIZE REFERENCE FRAME IF SIZES MISMATCH ──────────────────────────
-    if frame.shape[:2] != ref_bgr.shape[:2]:
+    # ── CALIBRATION GUARD (see check_calibration) ─────────────────────────
+    # Replaces the old "resize the reference to fit" step, which stretched the
+    # baseline photo but left the ROI boxes and presence templates at the old
+    # resolution — every verdict after that compared the wrong pixels.
+    _live_h, _live_w = frame.shape[:2]
+    cal_ok, cal_reason, _roi_res, bad_rois = check_calibration(_live_w, _live_h)
+    _frame_meta.update(
+        w=_live_w,
+        h=_live_h,
+        stream=getattr(cap, "stream_name", None) or "unknown",
+        roi_res=_roi_res,
+    )
+    if cal_reason != _last_cal_reason:
+        _last_cal_reason = cal_reason
+        if cal_ok:
+            print("[SPOT-IT][CALIB] Calibration matches the live frame — monitoring resumed.")
+        else:
+            print(f"[SPOT-IT][CALIB][HOLD] RECALIBRATION REQUIRED: {cal_reason}")
+    if cal_ok and _roi_res == "legacy" and roi_list and not _legacy_warned:
+        _legacy_warned = True
         print(
-            f"[SPOT-IT][WARN] Resolution mismatch! Live frame is {frame.shape[1]}x{frame.shape[0]}, "
-            f"but reference frame is {ref_bgr.shape[1]}x{ref_bgr.shape[0]}. Resizing reference baseline to fit..."
+            "[SPOT-IT][CALIB][WARN] This ROI file does not record the resolution it was "
+            "drawn at. Accepted because the baseline matches the live frame and every box "
+            "fits; re-save the ROIs in the editor to stamp it."
         )
-        ref_bgr = cv2.resize(ref_bgr, (frame.shape[1], frame.shape[0]))
-        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-        ref_blur = cv2.GaussianBlur(ref_gray, (21, 21), 0)
-        TARGET_SIZE = (ref_bgr.shape[1], ref_bgr.shape[0])
+    for _lbl in bad_rois if cal_ok else ():
+        if _lbl not in _bad_roi_warned:
+            _bad_roi_warned.add(_lbl)
+            print(f"[SPOT-IT][CALIB][WARN] '{_lbl}' lies outside the frame — skipped. Redraw it.")
+
+    if not cal_ok:
+        # HOLD, exactly like an unstable scene: no verdicts, no timers advance,
+        # and live_roi_state.json is NOT rewritten — the status endpoints treat
+        # is_missing=false as "physically present" and would auto-resolve real
+        # alerts. The clean frame IS still saved, so "Capture Baseline" in the
+        # dashboard captures this resolution and clears the hold.
+        last_tick_time = time.time()
+        prev_frame_blur = None
+        ring_bg = None
+        for roi in roi_list:
+            log_roi_metrics(
+                roi["label"], 0.0, 0.0, 0.0, False, "RECALIBRATE",
+                absent_time.get(roi["label"], 0.0), present_time.get(roi["label"], 0.0), 0.0,
+            )
+        output = frame.copy()
+        cv2.rectangle(output, (0, 0), (_live_w, 64), (0, 0, 0), -1)
+        cv2.putText(output, "RECALIBRATION REQUIRED - detection on hold", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
+        cv2.putText(output, cal_reason[:110], (10, 52),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        for roi in roi_list:
+            x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+            cv2.rectangle(output, (x, y), (x + w, y + h), (255, 0, 255), 1)
+        save_frames_atomic(output, frame)
+        if SHOW_GUI:
+            cv2.imshow("S.P.O.T.-IT Live Detection", output)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            time.sleep(0.05)
+        continue
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -2870,9 +3139,35 @@ while True:
         tick_dt = min(0.5, max(0.0, _now - last_tick_time))  # clamp to survive stalls
     last_tick_time = _now
 
+    # ── SLOW BACKGROUND FOR THE RING GUARD (see RING_GUARD_ENABLED) ───────
+    # Seeded from the baseline, then a time-based running average, so "foreground"
+    # means "different from the last ~RING_BG_SEC of this scene". Measured before
+    # this frame is blended in. Computed even with the guard off, so ring_fg is
+    # logged in both arms of an A/B comparison.
+    if ring_bg is None:
+        ring_bg = ref_blur.astype(np.float32)
+    ring_fg_mask = cv2.threshold(
+        cv2.absdiff(blur, cv2.convertScaleAbs(ring_bg)), THRESHOLD, 255, cv2.THRESH_BINARY
+    )[1]
+    if frame_is_new and tick_dt > 0:
+        cv2.accumulateWeighted(blur, ring_bg, min(1.0, tick_dt / RING_BG_SEC))
+
     for roi in roi_list:
         x, y, w, h = roi["x"], roi["y"], roi["w"], roi["h"]
         label = roi["label"]
+
+        # A box that does not fit inside the frame cannot be measured: skip it
+        # entirely rather than judge a truncated or wrapped crop.
+        if label in bad_rois:
+            log_roi_metrics(
+                label, 0.0, 0.0, 0.0, False, "OUT_OF_FRAME",
+                absent_time.get(label, 0.0), present_time.get(label, 0.0), motion_pct,
+            )
+            cv2.putText(output, f"OUT OF FRAME: {label}",
+                        (max(0, min(int(x), _live_w - 160)), max(15, min(int(y), _live_h - 5))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
+            continue
+
         base_tier = get_roi_tier(roi)
 
         # Safety guard: Ensure all state dictionaries contain 'label'
@@ -2962,15 +3257,38 @@ while True:
                 frame, roi, prev_state=roi_state.get(label)
             )
 
+        # ── RING GUARD: absence only counts while the view is clear ──────
+        # Gatekeeper pipeline only — the classical arm stays the untouched A/B
+        # baseline. See RING_GUARD_ENABLED for the evidence and trade-offs.
+        ring_fg = ring_foreground(ring_fg_mask, roi)
+        _ring_fg[label] = ring_fg
+        ring_busy = ring_fg > RING_BUSY_FRAC
+        ring_guard_active = RING_GUARD_ENABLED and PIPELINE_MODE != "classical"
+        if ring_guard_active and state == "ABSENT" and ring_busy:
+            state = "OCCLUDED"
+            if not _ring_hold_announced.get(label):
+                _ring_hold_announced[label] = True
+                print(
+                    f"[SPOT-IT][RING] '{label}' looks absent but its surroundings are "
+                    f"busy (ring_fg={ring_fg:.2f}) — holding as OCCLUDED until the view clears."
+                )
+        elif not ring_busy:
+            _ring_hold_announced[label] = False
+
         # ── WALL-CLOCK CONFIRMATION ──────────────────────────────────────
         # Only advance timers on genuinely new camera frames; re-reads of the
         # cached frame carry no new evidence.
         if frame_is_new:
             if state == "OCCLUDED":
-                # Still-occlusion escape (see OCCLUDED_MAX_SEC). Any motion inside
-                # the box means something is genuinely in the way, so the clock
-                # restarts; only a motionless, unexplained void accumulates.
-                if local_motion <= OCCLUDED_STILL_MOTION:
+                # Stuck-occlusion escape (see OCCLUDED_MAX_SEC). With the ring
+                # guard on, the clock runs only while the surroundings are clear —
+                # an unexplained void with nobody near it. With it off, the
+                # original rule: any motion inside the box restarts the clock.
+                view_clear = (
+                    not ring_busy if ring_guard_active
+                    else local_motion <= OCCLUDED_STILL_MOTION
+                )
+                if view_clear:
                     occluded_time[label] = occluded_time.get(label, 0.0) + tick_dt
                 else:
                     occluded_time[label] = 0.0
@@ -2993,7 +3311,13 @@ while True:
                 present_time[label] = present_time.get(label, 0.0) + tick_dt
                 absent_time[label] = 0.0
                 absence_announced[label] = False  # re-arm for the next absence
-            # OCCLUDED still holds both accumulators exactly where they are
+            else:
+                # OCCLUDED: MISSING needs an UNBROKEN absent streak. Holding the
+                # timer here let brief ABSENT slices during an obstruction add up
+                # (MLH305 keyboard2, 14:06:25: 0.13+0.15+... = 1.02 s -> false
+                # MISSING). The present timer still holds, so a hand hovering
+                # over an empty spot cannot clear a live alert.
+                absent_time[label] = 0.0
 
         roi_state[label] = state
         is_actually_missing = absent_time.get(label, 0.0) >= MISSING_CONFIRM_SEC
@@ -3343,6 +3667,8 @@ while True:
         live_state_map = dict(production_left_state)
         for r in roi_list:
             lbl = r["label"]
+            if lbl in bad_rois:
+                continue  # unmeasured — must not tell the dashboard "present"
             live_state_map[lbl] = {
                 "is_missing": active_events.get(lbl, False)
                 or absent_time.get(lbl, 0.0) >= MISSING_CONFIRM_SEC,

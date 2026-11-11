@@ -65,7 +65,8 @@ spotit/                        ← XAMPP htdocs root: C:\xampp\htdocs\spotit\
 │                                tracking_mode, timer_mode, pipeline, reset flags
 ├── photos/
 │   ├── ref_image.jpg          ← baseline reference frame (ref_image_<ROOM>.jpg per room)
-│   ├── detection_metrics.csv  ← per-decision instrumentation (Chapter 4 raw material)
+│   ├── detection_metrics.csv  ← per-decision instrumentation, Nov 2026 lab evidence (frozen, 11 cols)
+│   ├── detection_metrics_v2.csv ← current instrumentation; adds frame_w/frame_h/stream/roi_res
 │   ├── ab_events_*.csv        ← A/B harness event logs, one per arm
 │   └── snapshots/
 ├── config/
@@ -640,6 +641,47 @@ Run these after any change, in this order, before considering a fix done:
 
 
 ## 9. Change Log & Project History
+
+- **2026-11-11 (Fix 2 — obstruction handling, controlled experiment):** Two changes in `main.py`:
+  - **2a, on:** OCCLUDED now *resets* the absence timer, so MISSING needs an unbroken
+    ABSENT streak of `MISSING_CONFIRM_SEC` (still 1.0 s). Previously OCCLUDED only paused it,
+    so flicker during an obstruction added up (MLH305 keyboard2 14:06:25 → false MISSING).
+  - **2b, ring guard, OFF by default** (`SPOTIT_RING_GUARD=1` enables): an ABSENT verdict is
+    held as OCCLUDED while a ring around the ROI differs from a slow (~30 s) running-average
+    background; with it on, the stuck-occlusion escape also requires a clear ring instead of
+    in-box stillness. `ring_fg` and `ring_guard` are logged in `detection_metrics_v2.csv`
+    either way.
+  - **Why off:** offline evaluation on the Nov 3 recordings (8 analyst-labelled removals,
+    2 obstructions): old rule 8/8 removals, 2/2 obstruction false alarms; 2a alone 7/8, 1/2;
+    2a + guard at 0.10 only 3/8 removals — in the lab protocol the tester stays at the desk,
+    so the ring stays busy for the whole removal. Synthetic replay confirms the guard's
+    mechanism (static occluder never → MISSING; clean removal still → MISSING) but that is
+    not lab evidence. The remaining obstruction false alarm (keyboard1 14:06:29) is 7 s of
+    *direct* ABSENT — a presence-model problem no timer fixes.
+  - Evaluation scripts were run from a scratchpad, not committed; the method (clock
+    alignment, ORB registration of screen recordings, overlay masking) is in memory notes.
+
+- **2026-11-11 (Calibration resolution guard — Fix 1 of the RD investigation):** `main.py`
+  used to "fix" a live/baseline size mismatch by stretching the baseline photo, while the
+  ROI boxes and presence templates stayed at the old resolution — every verdict afterwards
+  compared the wrong pixels, silently. Triggered by the Tapo delivering 1920×1080 at home
+  against 2304×1296 baselines (halved: 960×540 vs 1152×648); also reachable through the
+  silent `/stream2` fallback. Now:
+  - `check_calibration()` holds detection (no verdicts, timers frozen, `live_roi_state.json`
+    not rewritten) and shows **RECALIBRATION REQUIRED** whenever the live frame, baseline
+    and ROI coordinate space disagree. **No automatic ROI scaling, by design** — a different
+    resolution can also be a different crop, and nothing here can prove alignment.
+    Recapturing the baseline and redrawing ROIs clears it.
+  - `save_rois.php` / `register_roi.py` stamp each ROI with `frame_w`/`frame_h` (the size
+    of the baseline image the editor drew on). Unstamped files are **legacy**: accepted only
+    if baseline == live and every box fits, and logged as `roi_res=legacy`.
+  - ROIs outside the frame are skipped individually (never judged on a truncated or
+    wrapped crop); in a legacy file they invalidate the whole file.
+  - `VideoStream.stream_name` records stream1/stream2; metrics moved to
+    `photos/detection_metrics_v2.csv` with `frame_w,frame_h,stream,roi_res` columns. The old
+    CSV is untouched as the Nov 2026 evidence.
+  - `main_classical_only.py` was **not** changed (frozen A/B baseline) and still has the old
+    stretch-on-mismatch behaviour — replay it only on clips that match its baseline.
 
 - **2026-08-21 (Room enable/disable + one-camera-one-room; claims archived not deleted;
   escalation actually scheduled):** Four structural changes worth knowing before touching
