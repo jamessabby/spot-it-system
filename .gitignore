@@ -4,6 +4,8 @@
 # in env.local.php, which never leaves the machine it was written on.
 config/env.local.php
 .env
+# Internal issue register — marked "keep private" (lab observations, incidents).
+md_files/MASTER_ISSUES.md
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 # Detector control-plane scratch (command queue, heartbeats, viewer presence).

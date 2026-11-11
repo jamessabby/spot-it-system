@@ -642,6 +642,23 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-11 (Fix 3 — texture check + LOW VISIBILITY, experimental):** In `main.py`.
+  - **3A texture check (`SPOTIT_TEXTURE_GATE`, on):** PRESENT now also needs the item's
+    Canny edge density to be ≥ 0.75 of its baseline value. Reason: MobileNetV2 scored bare
+    desk 0.79–0.88 against keyboard2's template (RD-01 flicker). Safeguard: the
+    stuck-occlusion escape only fires once texture is < 0.50 of baseline, so a resting hand
+    cannot time out into MISSING.
+  - **3B LOW VISIBILITY (`SPOTIT_LOW_VIS`, on):** ROIs whose here/gone templates are ≥ 0.75
+    similar at calibration (on the lab data: only mouse1, 0.79–0.89) are shown grey, never
+    alert, and are left out of `live_roi_state.json`.
+  - **Offline evaluation** (main.py's own code on the Nov 3 screen recordings — not raw
+    footage): genuine removals caught 8/9 (was 9/9 — mouse2 at 14:39:27 lost; it was
+    borderline in both versions), obstruction false alarms 1/2 (was 2/2 — oscilloscope_mid
+    fixed, keyboard1 14:06:30 remains), no alert raised that the old code did not.
+  - **Not done:** 3C (longer confirmation) — on the lab protocol, real removals produced
+    unbroken ABSENT runs of 1.1–3.9 s vs 4.6 s for the obstruction, so a longer threshold
+    would lose removals. `MISSING_CONFIRM_SEC` stays 1.0.
+
 - **2026-11-11 (Fix 2 — obstruction handling, controlled experiment):** Two changes in `main.py`:
   - **2a, on:** OCCLUDED now *resets* the absence timer, so MISSING needs an unbroken
     ABSENT streak of `MISSING_CONFIRM_SEC` (still 1.0 s). Previously OCCLUDED only paused it,

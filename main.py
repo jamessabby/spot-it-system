@@ -282,6 +282,38 @@ RING_BG_SEC = 30.0        # background memory: how long until a static change is
 RING_MARGIN_FRAC = 0.5    # ring width as a fraction of the ROI's shorter side...
 RING_MIN_PX = 12          # ...but never thinner than this (small mouse ROIs)
 RING_BUSY_FRAC = 0.10     # ring foreground fraction above which the view is "not clear"
+
+# ── TEXTURE CHECK — Fix 3A, experimental (SPOTIT_TEXTURE_GATE=0 disables) ──────
+# Lab evidence (Nov 3 recordings, box interiors): MobileNetV2 scored BARE DESK at
+# 0.79-0.88 against keyboard2's "item here" template — on the SIM_PRESENT line —
+# so a removed keyboard kept flickering back to PRESENT and the ROI never resolved
+# (RD-01). Texture separates the cases the embedding cannot: a keyboard has keys,
+# bare desk and clothing do not. Edge density inside the box, relative to the
+# baseline:  present 0.96-1.05 | removed 0.26-0.44 | person covering 0.39-0.68.
+#   * PRESENT now also needs edge ratio >= TEXTURE_PRESENT_MIN.
+#   * The stuck-occlusion escape (OCCLUDED -> ABSENT) also needs the texture to be
+#     mostly gone (< TEXTURE_GONE_MAX). Without this, every PRESENT verdict the
+#     texture check removes would become extra exposure to that escape — a hand
+#     resting on a keyboard could time out into a false MISSING.
+# Classical (Canny) only; MobileNetV2 stays a secondary signal. Applied only to
+# ROIs whose baseline has some texture at all.
+TEXTURE_GATE_ENABLED = os.environ.get("SPOTIT_TEXTURE_GATE", "1").strip().lower() not in (
+    "0", "false", "no", "off"
+)
+TEXTURE_MIN_EDGE = 0.08      # baseline edge density below which the check is skipped
+TEXTURE_PRESENT_MIN = 0.75   # live/baseline edge ratio needed to call it PRESENT
+TEXTURE_GONE_MAX = 0.50      # ratio below which the texture counts as "mostly gone"
+
+# ── LOW VISIBILITY — Fix 3B, experimental (SPOTIT_LOW_VIS=0 disables) ──────────
+# If, at calibration, the "item here" and "item gone" templates already look
+# alike, the system cannot tell present from removed for that ROI — any verdict
+# would be noise. Measured cos(here, gone): mouse1 0.79-0.82, every other lab ROI
+# 0.52-0.65. Such ROIs show grey LOW VISIBILITY, never alert, and are left out of
+# the dashboard state (so they can neither raise nor auto-resolve an alert).
+LOW_VIS_ENABLED = os.environ.get("SPOTIT_LOW_VIS", "1").strip().lower() not in (
+    "0", "false", "no", "off"
+)
+LOW_VIS_SEPARABILITY = 0.75  # cos(here, gone) at or above this -> LOW VISIBILITY
 # v2 adds frame_w / frame_h / stream / roi_res, so every row proves what
 # resolution and RTSP profile it was measured on. A new file rather than extra
 # columns on the old one: photos/detection_metrics.csv holds the Nov 2026 lab
@@ -291,6 +323,8 @@ METRICS_CSV = "photos/detection_metrics_v2.csv"
 _frame_meta = {"w": 0, "h": 0, "stream": "unknown", "roi_res": "unknown"}
 # Latest ring-foreground measurement per ROI label (see RING_GUARD_ENABLED).
 _ring_fg = {}
+# Latest live/baseline texture ratio per ROI label (Fix 3A); None = not measured.
+_edge_ratio = {}
 # ─────────────────────────────────────────────────────────────────────────
 
 # ── MOBILENETV2 DNN GATEKEEPER CONFIG (Phase 2, Step 2.1) ──────────────────
@@ -1297,6 +1331,16 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     # when the item is repositioned while still blocking frame-to-frame jitter at 0.75-0.80.
     present_threshold = 0.82 if prev_state == "ABSENT" else SIM_PRESENT
 
+    # Fix 3A: "looks like the item" is not enough on its own — the item's texture
+    # must also still be there. Measured on the whole box (inset), the same region
+    # the baseline texture was measured on.
+    edge_ratio = None
+    if TEXTURE_GATE_ENABLED and tpl.get("edge_ref", 0.0) >= TEXTURE_MIN_EDGE:
+        box = frame_bgr[y:y + h, x:x + w]
+        edge_ratio = _edge_density(_inset(box)) / tpl["edge_ref"]
+    _edge_ratio[label] = edge_ratio
+    texture_ok = edge_ratio is None or edge_ratio >= TEXTURE_PRESENT_MIN
+
     # This is a two-hypothesis test, so absence must be *won*, not merely reached.
     # Requiring sim_empty > sim_present is what separates "the surface is showing"
     # from "something I cannot identify is in the way":
@@ -1309,7 +1353,7 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     # gone cleared an absolute floor, and a hand resting on the mouse raised an
     # alarm — the exact failure BUGS.md §3.3 exists to prevent.
     # SIM_EMPTY now acts only as a floor beneath that comparison.
-    if sim_p >= present_threshold:
+    if sim_p >= present_threshold and texture_ok:
         state = "PRESENT"
     elif sim_e >= SIM_EMPTY and sim_e > sim_p:
         state = "ABSENT"
@@ -1417,6 +1461,22 @@ def ring_foreground(fg_mask, roi):
     return (outer - inner) / ring_area if ring_area > 0 else 0.0
 
 
+def _inset(crop, px=2):
+    """Trim a thin border so edges of the box itself never count as texture."""
+    h, w = crop.shape[:2]
+    return crop[px:h - px, px:w - px] if h > 2 * px + 4 and w > 2 * px + 4 else crop
+
+
+def _edge_density(bgr_crop):
+    """Fraction of pixels on a Canny edge — a plain measure of visible texture
+    (keys on a keyboard, terminals on a power supply). Bare desk and clothing
+    score low. Fix 3A."""
+    if bgr_crop is None or bgr_crop.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2GRAY)
+    return float((cv2.Canny(gray, 40, 120) > 0).mean())
+
+
 def calibrate_roi_baselines(ref_image_bgr, rois):
     """Build both templates for every ROI. Runs at startup and on every reload.
 
@@ -1468,20 +1528,36 @@ def calibrate_roi_baselines(ref_image_bgr, rois):
         sub_ref = ref_crop[fy : fy + fh, fx : fx + fw]
         sub_empty = empty_crop[fy : fy + fh, fx : fx + fw]
 
-        roi_templates[label] = {
+        tpl = roi_templates[label] = {
             "footprint": footprint,
             "frac": frac,
             "embed_present": dnn_embed(sub_ref),
             "embed_empty": dnn_embed(sub_empty),
             "hist_present": _chroma_hist(sub_ref),
             "hist_empty": _chroma_hist(sub_empty),
+            # Fix 3A: how textured the item looks in the baseline.
+            "edge_ref": _edge_density(_inset(ref_crop)),
+            # Fix 3B: how alike "item here" and "item gone" already are.
+            "separability": None,
+            "low_vis": False,
         }
+        if tpl["embed_present"] is not None and tpl["embed_empty"] is not None:
+            tpl["separability"] = float(np.dot(tpl["embed_present"], tpl["embed_empty"]))
+            tpl["low_vis"] = LOW_VIS_ENABLED and tpl["separability"] >= LOW_VIS_SEPARABILITY
 
-        mode = "DNN" if roi_templates[label]["embed_present"] is not None else "classical"
+        mode = "DNN" if tpl["embed_present"] is not None else "classical"
+        sep = "n/a" if tpl["separability"] is None else f"{tpl['separability']:.2f}"
         print(
             f"[SPOT-IT][CALIB] '{label}': item footprint {fw}x{fh}px "
-            f"({frac:.0%} of box) | {mode} templates ready"
+            f"({frac:.0%} of box) | {mode} templates ready | here/gone similarity {sep} "
+            f"| texture {tpl['edge_ref']:.2f}"
         )
+        if tpl["low_vis"]:
+            print(
+                f"[SPOT-IT][CALIB][WARN] '{label}' is LOW VISIBILITY: 'item here' and 'item gone' "
+                f"look alike at this size/distance ({sep}). It will be shown grey and will "
+                f"never raise an alert. A closer or better-angled view is the real fix."
+            )
 
 
 _metrics_header_written = False
@@ -1591,7 +1667,8 @@ def log_roi_metrics(
                     mf.write(
                         "ts,room,label,change_pct,sim_present,sim_empty,used_dnn,"
                         "state,absent_time,present_time,scene_motion,"
-                        "frame_w,frame_h,stream,roi_res,ring_fg,ring_guard\n"
+                        "frame_w,frame_h,stream,roi_res,ring_fg,ring_guard,"
+                        "edge_ratio,texture_gate,separability\n"
                     )
         with open(METRICS_CSV, "a", encoding="utf-8") as mf:
             mf.write(
@@ -1600,7 +1677,10 @@ def log_roi_metrics(
                 f"{state},{t_absent:.2f},{t_present:.2f},{scene_motion:.4f},"
                 f"{_frame_meta['w']},{_frame_meta['h']},{_frame_meta['stream']},"
                 f"{_frame_meta['roi_res']},{_ring_fg.get(label, -1.0):.4f},"
-                f"{int(RING_GUARD_ENABLED)}\n"
+                f"{int(RING_GUARD_ENABLED)},"
+                f"{-1.0 if _edge_ratio.get(label) is None else _edge_ratio[label]:.4f},"
+                f"{int(TEXTURE_GATE_ENABLED)},"
+                f"{-1.0 if (roi_templates.get(label) or {}).get('separability') is None else roi_templates[label]['separability']:.4f}\n"
             )
     except Exception:
         pass  # instrumentation must never break detection
@@ -3168,6 +3248,19 @@ while True:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
             continue
 
+        # Fix 3B: an ROI whose "here" and "gone" templates already look alike is
+        # never judged — it is reported as LOW VISIBILITY instead of a guess.
+        _edge_ratio[label] = None
+        if PIPELINE_MODE != "classical" and (roi_templates.get(label) or {}).get("low_vis"):
+            log_roi_metrics(
+                label, 0.0, 0.0, 0.0, False, "LOW_VISIBILITY",
+                absent_time.get(label, 0.0), present_time.get(label, 0.0), motion_pct,
+            )
+            cv2.rectangle(output, (x, y), (x + w, y + h), (160, 160, 160), 1)
+            cv2.putText(output, f"LOW VISIBILITY: {label}", (x, max(12, y - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 160, 160), 1)
+            continue
+
         base_tier = get_roi_tier(roi)
 
         # Safety guard: Ensure all state dictionaries contain 'label'
@@ -3288,6 +3381,12 @@ while True:
                     not ring_busy if ring_guard_active
                     else local_motion <= OCCLUDED_STILL_MOTION
                 )
+                # Fix 3A safeguard: only time out into ABSENT once the item's
+                # texture is mostly gone. A resting hand or a partly covered
+                # keyboard keeps much of its texture and is left OCCLUDED.
+                _er = _edge_ratio.get(label)
+                if _er is not None and _er >= TEXTURE_GONE_MAX:
+                    view_clear = False
                 if view_clear:
                     occluded_time[label] = occluded_time.get(label, 0.0) + tick_dt
                 else:
@@ -3669,6 +3768,8 @@ while True:
             lbl = r["label"]
             if lbl in bad_rois:
                 continue  # unmeasured — must not tell the dashboard "present"
+            if PIPELINE_MODE != "classical" and (roi_templates.get(lbl) or {}).get("low_vis"):
+                continue  # LOW VISIBILITY — likewise never "present" or "missing"
             live_state_map[lbl] = {
                 "is_missing": active_events.get(lbl, False)
                 or absent_time.get(lbl, 0.0) >= MISSING_CONFIRM_SEC,
