@@ -737,7 +737,11 @@ function createCommunityPost() {
 }
 
 /* ── Notification panel ── */
-
+</script>
+<!-- The closing tag above was missing (since at least commit 2ab5707): the browser
+     parsed the onboarding comment below as JavaScript, threw a SyntaxError and
+     discarded this whole block, so none of the dashboard's inline functions
+     (event log tabs, event pop-up, staff actions) ever existed. -->
 
 <!-- ══════════════════════════════════════
      First-Time Onboarding Tour — Admin Dashboard

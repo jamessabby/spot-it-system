@@ -660,6 +660,13 @@ Run these after any change, in this order, before considering a fix done:
     keeping a copy (the two copies had already drifted).
   - Still mock in the same pop-up: the validation buttons (`submitValidation`) and the
     snapshot drawing.
+  - **Follow-up fix (browser test failed):** the dashboard's main inline `<script>` had no
+    closing tag (since at least commit 2ab5707), so the browser parsed the next HTML comment
+    as JavaScript, threw a SyntaxError and discarded the entire block — no inline dashboard
+    function ever existed. Added the missing `</script>`. Side effect: the onboarding tour
+    config in that region now loads too, so the first-time tour may appear once.
+    `tests/check_inline_scripts.php` now fails any page with an unclosed/nested `<script>`.
+    PHP lint cannot catch this class of bug — verify page JS in a browser.
 
 - **2026-11-11 (Registered equipment kept out of lost & found):** `update_event_status.php`
   used to create a student-claimable `recovered_items` row for ANY event staff marked
