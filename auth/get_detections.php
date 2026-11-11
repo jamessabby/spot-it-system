@@ -145,8 +145,16 @@ try {
     $detections = $stmt->fetchAll();
 
     // Enrich — add stage label + snapshot URL
+    $labelsByRoom = [];
     foreach ($detections as &$det) {
         $det['stage']        = ms_detection_stage($det['detected_at']);
+        // Registered equipment vs. unregistered item, and whether a person (not
+        // the 30/60-minute timer) set the current status. See auth/event_kinds.php.
+        $rid = (string) $det['room_id'];
+        $labelsByRoom[$rid] ??= ms_registered_labels($monitorPdo, $rid);
+        $det['event_kind']      = ms_event_kind($det, $labelsByRoom[$rid]);
+        $det['staff_confirmed'] = ms_staff_confirmed($det);
+        $det['status_label']    = ms_status_label($det);
         $det['snapshot_url'] = $det['snapshot_path']
             ? SNAPSHOT_URL . basename($det['snapshot_path'])
             : null;

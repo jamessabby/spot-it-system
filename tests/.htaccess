@@ -1,0 +1,2 @@
+# Test scripts are run from the command line only (php tests/<file>.php).
+Require all denied

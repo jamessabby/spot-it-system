@@ -111,8 +111,30 @@ try {
     ]);
 } catch (Throwable $e) { /* non-critical — continue */ }
 
+// ── Registered equipment vs. unregistered item (see auth/event_kinds.php) ─────
+// Only a staff "recovered" on an UNREGISTERED item creates a claimable
+// lost-and-found record. Found lab equipment goes back to the lab instead.
+$eventKind = ms_event_kind($det, ms_registered_labels($monitorPdo, (string) $det['room_id']));
+$alreadyInLostFound = false;
+if ($new_status === 'recovered' && $eventKind === EVENT_KIND_UNREGISTERED) {
+    try {
+        $chk = $lfPdo->prepare('SELECT 1 FROM recovered_items WHERE detection_id = ? LIMIT 1');
+        $chk->execute([$detection_id]);
+        $alreadyInLostFound = (bool) $chk->fetchColumn();
+    } catch (Throwable $e) { /* treat as not present; insert below is still guarded */ }
+}
+$recoveryPlan = ms_recovery_plan($eventKind, $new_status, $alreadyInLostFound);
+if ($recoveryPlan['log']) {
+    try {
+        $monitorPdo->prepare(
+            "INSERT INTO monitoring_logs (room_id, event_type, event_message, triggered_by, logged_at)
+             VALUES (?, 'status_update', ?, ?, NOW())"
+        )->execute([$det['room_id'], "Detection #{$detection_id}: {$recoveryPlan['log']}", $actorId]);
+    } catch (Throwable $e) { /* non-critical */ }
+}
+
 // ── [G7 FIXED] If recovered: create recovered_items with all required fields ──
-if ($new_status === 'recovered') {
+if ($recoveryPlan['create_claimable']) {
     try {
         // Determine item_tier from object_type (defaulting Tier 1 for electronics)
         $tier_map = [
@@ -145,9 +167,11 @@ if ($new_status === 'recovered') {
         ]);
 
         // Notify students that an item was recovered (they can now claim it)
-        try {
-            _notifyRecovery($authPdo, $detection_id, $det['room_id'], $item_type, $actorId);
-        } catch (Throwable $e) { /* non-critical */ }
+        if ($recoveryPlan['notify_students']) {
+            try {
+                _notifyRecovery($authPdo, $detection_id, $det['room_id'], $item_type, $actorId);
+            } catch (Throwable $e) { /* non-critical */ }
+        }
 
     } catch (Throwable $e) {
         // Log but don't fail the status update
@@ -232,6 +256,10 @@ ms_json([
     'new_status'   => $new_status,
     'verified_by'  => $actorId,
     'updated_at'   => date('Y-m-d H:i:s'),
+    // Additive fields — existing callers ignore them.
+    'event_kind'   => $eventKind,
+    'claimable'    => $recoveryPlan['create_claimable'],
+    'message'      => $recoveryPlan['log'] ?? null,
 ]);
 
 // ── Recovery notification helper ─────────────────────────────────────────────

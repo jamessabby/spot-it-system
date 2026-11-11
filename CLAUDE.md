@@ -642,6 +642,24 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-11 (Registered equipment kept out of lost & found):** `update_event_status.php`
+  used to create a student-claimable `recovered_items` row for ANY event staff marked
+  *recovered* — including lab keyboards and oscilloscopes. Now (`auth/event_kinds.php`):
+  - An event is **registered equipment** when its room has a `registered_lab_items` row with
+    `roi_label` = the event's zone — any tier (MLH301's equipment is tier2). Otherwise it is an
+    **unregistered item** (`objectN` or a relabelled left item).
+  - Staff "recovered" on equipment: status still `recovered` (API unchanged), but no
+    lost-and-found row, no student notification; logged as returned to the lab.
+  - Staff "recovered" on an unregistered item = custody confirmation → claimable (once only).
+  - A `confirmed_missing` with no `verified_by` was set by the 30/60-min timer, not a person:
+    the admin event log and `get_detections.php` (`staff_confirmed`, `status_label`) show it
+    as "Escalated — awaiting staff check". Other pages still say "Confirmed Missing".
+  - **No migration.** Known gap: kind is derived from the *current* ROI list, so an event for
+    an ROI later deleted would read as unregistered. Storing the kind at ingest needs a column.
+  - **Demo note:** DESK's registered phone/laptop/tumbler are now equipment too — demo the
+    claiming flow with an unregistered left item (`objectN`) or a manual surrender.
+  - Tests: `C:\xampp\php\php.exe tests/test_event_kinds.php` (31 pure-function checks).
+
 - **2026-11-11 (Fix 3 — texture check + LOW VISIBILITY, experimental):** In `main.py`.
   - **3A texture check (`SPOTIT_TEXTURE_GATE`, on):** PRESENT now also needs the item's
     Canny edge density to be ≥ 0.75 of its baseline value. Reason: MobileNetV2 scored bare

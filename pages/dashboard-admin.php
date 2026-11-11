@@ -37,7 +37,7 @@ $liveRooms = $roomStatusStmt->fetchAll();
 
 // Fetch recent event logs (last 5 detections)
 $recentEventsStmt = $monitorPdo->query("
-    SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status
+    SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status, d.verified_by
     FROM detections d
     ORDER BY d.detected_at DESC LIMIT 5
 ");
@@ -193,13 +193,8 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
             <?php
             $events = [];
             foreach ($recentEvents as $e) {
-                $statusLabel = match($e['status']) {
-                    'confirmed_missing' => 'Confirmed Missing',
-                    'potential'         => 'Potential',
-                    'dismissed'         => 'Dismissed',
-                    'recovered'         => 'Recovered',
-                    default             => 'Pending',
-                };
+                // A timer escalation is not a human confirmation — see auth/event_kinds.php.
+                $statusLabel = ms_status_label($e);
                 $stCls = match($e['status']) {
                     'confirmed_missing' => 'est-confirmed',
                     'potential'         => 'est-pending',
