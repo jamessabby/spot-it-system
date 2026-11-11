@@ -67,9 +67,7 @@ try {
 
     // Attach snapshot URL
     foreach ($items as &$it) {
-        $it['snapshot_url'] = $it['snapshot_path']
-            ? SNAPSHOT_URL . basename($it['snapshot_path'])
-            : null;
+        $it['snapshot_url'] = ms_snapshot_url($it['snapshot_path']);
     }
 
     ms_json([

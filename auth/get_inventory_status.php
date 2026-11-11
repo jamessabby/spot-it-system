@@ -224,7 +224,7 @@ try {
                 'detected_at'  => $det['detected_at'],
                 'elapsed_mins' => (int)$det['elapsed_minutes'],
                 'snapshot_url' => $det['snapshot_path']
-                    ? SNAPSHOT_URL . basename($det['snapshot_path']) : null,
+                    ? ms_snapshot_url($det['snapshot_path']) : null,
             ] : null,
             'zones'      => $zoneBreakdown,
             'recent_log' => $logs,
@@ -258,10 +258,5 @@ function _emptySummary(): array {
 }
 
 function _logEventColor(string $type): string {
-    return match($type) {
-        'detection', 'auto_escalation', 'confirmed_missing' => 'alert',
-        'status_update', 'claim_submitted'                  => 'warn',
-        'claim_completed', 'recalibration'                  => 'ok',
-        default                                             => 'info',
-    };
+    return ms_log_event_color($type);   // single definition in auth/event_kinds.php
 }

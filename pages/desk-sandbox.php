@@ -660,8 +660,8 @@ if (file_exists($mode_file_path)) {
                 <td style="padding:10px; font-family:var(--font-mono);"><?= $duration ?></td>
                 <td style="padding:10px; text-align:center;">
                   <?php if (!empty($log['snapshot_path'])): ?>
-                    <a href="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path']) ?>" target="_blank">
-                      <img src="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path']) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
+                    <a href="../auth/snapshot.php?f=<?= rawurlencode(basename($log['snapshot_path'])) ?>" target="_blank">
+                      <img src="../auth/snapshot.php?f=<?= rawurlencode(basename($log['snapshot_path'])) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
                     </a>
                   <?php else: ?>
                     <span style="color:var(--text-dim);">—</span>
@@ -669,8 +669,8 @@ if (file_exists($mode_file_path)) {
                 </td>
                 <td style="padding:10px; text-align:center;">
                   <?php if (!empty($log['snapshot_path_b'])): ?>
-                    <a href="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path_b']) ?>" target="_blank">
-                      <img src="../uploads/snapshots/<?= htmlspecialchars($log['snapshot_path_b']) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
+                    <a href="../auth/snapshot.php?f=<?= rawurlencode(basename($log['snapshot_path_b'])) ?>" target="_blank">
+                      <img src="../auth/snapshot.php?f=<?= rawurlencode(basename($log['snapshot_path_b'])) ?>" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/>
                     </a>
                   <?php else: ?>
                     <span style="color:var(--text-dim);">—</span>
@@ -1547,8 +1547,8 @@ async function pollDeskLiveStatus() {
             }
           }
 
-          const imgA = log.snapshot_path ? `<a href="../uploads/snapshots/${log.snapshot_path}" target="_blank"><img src="../uploads/snapshots/${log.snapshot_path}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
-          const imgB = log.snapshot_path_b ? `<a href="../uploads/snapshots/${log.snapshot_path_b}" target="_blank"><img src="../uploads/snapshots/${log.snapshot_path_b}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
+          const imgA = log.snapshot_path ? `<a href="../auth/snapshot.php?f=${encodeURIComponent(log.snapshot_path)}" target="_blank"><img src="../auth/snapshot.php?f=${encodeURIComponent(log.snapshot_path)}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
+          const imgB = log.snapshot_path_b ? `<a href="../auth/snapshot.php?f=${encodeURIComponent(log.snapshot_path_b)}" target="_blank"><img src="../auth/snapshot.php?f=${encodeURIComponent(log.snapshot_path_b)}" style="height:36px; border-radius:4px; border:1px solid var(--border); transition: transform 0.15s; cursor:pointer;" onmouseover="this.style.transform='scale(2.5)'; this.style.zIndex='999';" onmouseout="this.style.transform='scale(1)'"/></a>` : '—';
 
           const isRec = log.status === 'recovered';
           const isDis = log.status === 'dismissed';

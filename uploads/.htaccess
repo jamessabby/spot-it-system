@@ -57,6 +57,23 @@ SetHandler none
   </IfModule>
 </FilesMatch>
 
+# ── Evidence is not public ───────────────────────────────────────────────────
+# Detection snapshots ({label}_registered_N.jpg, Snapshot B *_<id>_b_*.jpg) and
+# claim selfies (claim_*.jpg) are served only through auth/snapshot.php, which
+# checks the session. Live frames, clean frames and *_baseline.jpg stay public:
+# the live viewer and the ROI editor load them directly and they hold no evidence.
+# MUST come after the media allowlist above: Apache applies the LAST matching
+# <FilesMatch>, so placed earlier this block would be overridden by it.
+<FilesMatch "(_registered_|_[0-9]+_b_[a-z0-9]+\.|^claim_)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order Allow,Deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
 # Never let a browser second-guess the type of a file from this directory —
 # sniffing is how an "image" gets treated as script.
 <IfModule mod_headers.c>

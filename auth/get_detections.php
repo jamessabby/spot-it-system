@@ -167,12 +167,14 @@ try {
             'dismissed'         => ms_action_prompt($det['event_kind'], 'dismissed', $zone),
             'confirmed_missing' => ms_action_prompt($det['event_kind'], 'confirmed_missing', $zone),
         ];
-        $det['snapshot_url'] = $det['snapshot_path']
-            ? SNAPSHOT_URL . basename($det['snapshot_path'])
-            : null;
-        $det['snapshot_url_b'] = $det['snapshot_path_b']
-            ? SNAPSHOT_URL . basename($det['snapshot_path_b'])
-            : null;
+        // Evidence through the protected endpoint, plus file facts for the viewer
+        // (the detector reuses file names, so a file may post-date its event).
+        $snapA = ms_snapshot_info($det['snapshot_path'], $det['detected_at']);
+        $snapB = ms_snapshot_info($det['snapshot_path_b'], $det['updated_at'] ?? $det['detected_at']);
+        $det['snapshot_url']   = $snapA['url'];
+        $det['snapshot_url_b'] = $snapB['url'];
+        $det['snapshot_a']     = $snapA;
+        $det['snapshot_b']     = $snapB;
 
         // Lookup verified_by name if set
         if ($det['verified_by']) {

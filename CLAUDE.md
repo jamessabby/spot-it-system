@@ -642,6 +642,33 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-12 (CCTV snapshot evidence viewer; evidence files no longer public):**
+  - `auth/snapshot.php?f=<file>` is the only way to fetch detection snapshots and claim
+    selfies: session required; admin/staff any file; students only the snapshot of an item
+    currently claimable; bare file names only, realpath confined to `uploads/snapshots/`.
+    `uploads/.htaccess` denies direct requests for `*_registered_*`, Snapshot B `*_<id>_b_*`
+    and `claim_*` (placed AFTER the media allowlist — Apache applies the last matching
+    `<FilesMatch>`, which is why a first attempt placed earlier had no effect). Live, clean
+    and `*_baseline.jpg` frames stay public (live viewer / ROI editor).
+    `ms_snapshot_url()` / `ms_snapshot_info()` in `service_bootstrap.php`; every page and
+    endpoint that showed a snapshot now goes through them (dashboard, Alerts, Inventory,
+    Lost & Found items, Desk Sandbox, donation).
+  - Admin dashboard pop-up: the decorative SVG "camera view" is replaced by the real
+    Snapshot A / B with room, label, status and timestamps; thumbnails open a shared
+    full-resolution lightbox (`spotitOpenImage()` in `spotit.js`); a missing B reads
+    "No follow-up snapshot available". Event-log rows show a real Snapshot A thumbnail.
+    Alerts' snapshot modal reuses the lightbox and wording.
+  - **Evidence caveat, surfaced in the UI:** the detector names files
+    `{label}_registered_{n}.jpg` and reuses the name, so only 6 of the 47 Nov 3 rows still
+    point at their own event's pixels; 41 point at a file rewritten by a later event (last
+    writes 14:47 MLH305, 15:35 MLH301). The viewer shows the file's write time and a note
+    when it post-dates the event. Capture naming was NOT changed (frozen for the lab test);
+    unique per-event names are the follow-up.
+  - Found while testing: `inventory-monitor.php` called `_logEventColor()`, a private helper
+    of `get_inventory_status.php` it never loads, so its whole data load threw and the page
+    showed "No detection log records found" (the catch was silent; it now logs). Single
+    definition `ms_log_event_color()` in `auth/event_kinds.php`.
+
 - **2026-11-11 (Final demo stabilisation — end-to-end acceptance on an isolated environment):**
   Verified the complete workflow with REAL writes on `spotit_test_*` databases (structure
   cloned from the live DBs, seeded with the two rooms + a `ZZT1` test room), served by a

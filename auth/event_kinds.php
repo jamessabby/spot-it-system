@@ -168,6 +168,22 @@ function ms_action_prompt(string $kind, string $status, string $zone): ?string
     };
 }
 
+/**
+ * Pure: colour class for a monitoring_logs.event_type. Shared by
+ * get_inventory_status.php and inventory-monitor.php — the page used to call
+ * the endpoint's private copy, which it never loads, so its whole data load
+ * threw and the page showed "No detection log records found".
+ */
+function ms_log_event_color(string $type): string
+{
+    return match ($type) {
+        'detection', 'auto_escalation', 'confirmed_missing' => 'alert',
+        'status_update', 'claim_submitted'                  => 'warn',
+        'claim_completed', 'recalibration'                  => 'ok',
+        default                                             => 'info',
+    };
+}
+
 /** Pure: status label that never presents a timer escalation as a confirmation. */
 function ms_status_label(array $det): string
 {

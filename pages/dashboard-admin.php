@@ -38,7 +38,8 @@ $liveRooms = $roomStatusStmt->fetchAll();
 
 // Fetch recent event logs (latest 20; the tabs below count and filter these)
 $recentEventsStmt = $monitorPdo->query("
-    SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status, d.verified_by
+    SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status, d.verified_by,
+           d.snapshot_path, d.snapshot_path_b
     FROM detections d
     WHERE d.is_removed = 0
     ORDER BY d.detected_at DESC LIMIT 20
@@ -224,7 +225,8 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                     'devCls'  => $devCls,
                     'status'  => $statusLabel,
                     'stCls'   => $stCls,
-                    'cls'     => $cls
+                    'cls'     => $cls,
+                    'thumb'   => ms_snapshot_info($e['snapshot_path'])['exists'] ? ms_snapshot_url($e['snapshot_path']) : null,
                 ];
             }
             $tabNames = ['all' => 'All', 'pending' => 'Pending', 'confirmed' => 'Confirmed', 'dismissed' => 'Dismissed', 'recovered' => 'Recovered'];
@@ -241,7 +243,10 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
             <div class="p-3 text-center" id="eventLogEmpty" style="display:none;color:var(--text-dim);font-size:.82rem;">No events in this category.</div>
             <?php foreach ($events as $ev): ?>
             <div class="event-row <?= $ev['cls'] ?>" data-bucket="<?= $ev['bucket'] ?>" onclick="openEventModal(<?= $ev['id'] ?>)">
-              <div class="event-thumb">
+              <div class="event-thumb" title="<?= $ev['thumb'] ? 'Snapshot A — click to open the event' : 'No snapshot stored for this event' ?>">
+                <?php if ($ev['thumb']): ?>
+                <img class="ev-thumb" src="<?= htmlspecialchars($ev['thumb']) ?>" alt="Snapshot A — <?= htmlspecialchars($ev['zone']) ?>" loading="lazy" onerror="this.remove()"/>
+                <?php endif; ?>
                 <svg width="52" height="40" style="position:absolute;inset:0;opacity:.7">
                   <rect x="4" y="6" width="44" height="8" rx="1" fill="rgba(255,255,255,.06)"/>
                   <rect x="4" y="17" width="20" height="8" rx="1" fill="rgba(255,255,255,.06)"/>
@@ -410,18 +415,12 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
       <div class="modal-close" onclick="closeModal('eventModal')"><i class="fa-solid fa-xmark"></i></div>
     </div>
     <div class="modal-body">
-      <div class="snap-view">
-        <div class="snap-scanline"></div>
-        <div class="snap-hud"><span id="snapRoom">CAM-01 · MLH 306</span><span>MOTION: NONE</span><span id="snapAlert" style="color:#ff4d4d;">⚠ DEVIATION DETECTED</span></div>
-        <div class="snap-ts" id="snapTs">2026-06-15 14:03:44</div>
-        <svg width="100%" height="100%" style="position:absolute;inset:0;" viewBox="0 0 640 360" preserveAspectRatio="none" id="snapSVG">
-          <rect x="20" y="40" width="120" height="70" rx="3" fill="rgba(0,200,120,.07)" stroke="#5cffac" stroke-width="1.5"/><text x="24" y="36" font-family="monospace" font-size="9" fill="#5cffac">WS-01 ✓</text>
-          <rect x="160" y="40" width="120" height="70" rx="3" fill="rgba(0,200,120,.07)" stroke="#5cffac" stroke-width="1.5"/><text x="164" y="36" font-family="monospace" font-size="9" fill="#5cffac">WS-02 ✓</text>
-          <rect x="300" y="40" width="120" height="70" rx="3" fill="rgba(0,200,120,.07)" stroke="#5cffac" stroke-width="1.5"/><text x="304" y="36" font-family="monospace" font-size="9" fill="#5cffac">WS-03 ✓</text>
-          <rect x="440" y="40" width="120" height="70" rx="3" fill="rgba(255,77,77,.1)" stroke="#ff4d4d" stroke-width="2" stroke-dasharray="6,3" id="alertROI"/><text x="444" y="36" font-family="monospace" font-size="9" fill="#ff4d4d" id="alertLabel">WS-07 ✗ MISSING</text>
-          <rect x="420" y="25" width="160" height="100" rx="3" fill="none" stroke="#e6cc00" stroke-width="1" stroke-dasharray="3,3" opacity=".5"/>
-          <text x="444" y="142" font-family="monospace" font-size="8" fill="#e6cc00" opacity=".5">search zone</text>
-        </svg>
+      <!-- Evidence viewer: the real Snapshot A / B files for this event (was a
+           decorative SVG "camera view"). Images come from auth/snapshot.php. -->
+      <div class="ev-meta" id="evMeta"></div>
+      <div class="ev-grid" id="evGrid">
+        <div class="ev-box" id="evBoxA"></div>
+        <div class="ev-box" id="evBoxB"></div>
       </div>
       <div class="detail-grid">
         <div class="detail-cell"><div class="detail-key">Room</div><div class="detail-val" id="dRoom">MLH 306</div></div>
@@ -608,12 +607,7 @@ async function openEventModal(detId) {
   const dev     = Number(d.deviation || 0);
 
   _setText('modalTitle', `Detection Event #${d.detection_id} — ${d.room_id}`);
-  _setText('snapRoom', `CAM · ${d.room_id}`);
-  _setText('snapTs', d.detected_at);
-  document.getElementById('snapAlert').style.color = color;
-  document.getElementById('alertROI').setAttribute('stroke', color);
-  document.getElementById('alertLabel').textContent = `${d.object_zone} — ${d.status_label}`;
-  document.getElementById('alertLabel').setAttribute('fill', color);
+  renderEvidence(d, color);
   _setText('dRoom', d.room_name ? `${d.room_id} — ${d.room_name}` : d.room_id);
   _setText('dTime', d.detected_at);
   _setText('dBaseline', `${d.baseline_count} items`);
@@ -647,6 +641,40 @@ async function openEventModal(detId) {
   });
 
   openModal('eventModal');
+}
+
+// Evidence viewer inside the pop-up: real Snapshot A (ROI confirmed missing) and
+// Snapshot B (someone interacted with the flagged zone). A thumbnail opens the
+// full-resolution file in the shared lightbox; a missing B says so plainly.
+function _escHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function _evBox(boxId, info, label, caption, emptyText) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  if (!info || !info.url || info.exists === false) {
+    box.innerHTML = `<div class="ev-empty"><i class="fa-solid fa-image"></i>${_escHtml(info && info.url && info.exists === false ? 'Snapshot file is missing on the server' : emptyText)}</div>
+                     <div class="ev-label"><span>${_escHtml(label)}</span></div>`;
+    return;
+  }
+  box.innerHTML = `<img src="${_escHtml(info.url)}" alt="${_escHtml(label)}" loading="lazy" title="Open full size"
+                        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ev-empty',textContent:'The image could not be loaded.'}))">
+                   <div class="ev-label"><span>${_escHtml(label)}</span><span class="ev-time">${_escHtml(info.written_at || '')}</span></div>
+                   ${info.rewritten ? `<div class="ev-note"><i class="fa-solid fa-circle-info"></i> File was written at ${_escHtml(info.written_at)}, after this event — the detector reused the file name for a later event.</div>` : ''}`;
+  box.querySelector('img').addEventListener('click', () => spotitOpenImage(info.url, caption));
+}
+function renderEvidence(d, color) {
+  const meta = document.getElementById('evMeta');
+  if (meta) {
+    meta.innerHTML = `<span><b>${_escHtml(d.room_id)}</b>${d.room_name ? ' · ' + _escHtml(d.room_name) : ''}</span>
+                      <span>Equipment: <b>${_escHtml(d.object_zone)}</b></span>
+                      <span>Status: <b style="color:${color}">${_escHtml(d.status_label)}</b></span>
+                      <span>Detected: <b>${_escHtml(d.detected_at)}</b></span>
+                      ${d.updated_at && d.updated_at !== d.detected_at ? `<span>Updated: <b>${_escHtml(d.updated_at)}</b></span>` : ''}`;
+  }
+  const cap = `${d.object_zone} · ${d.room_id} · detected ${d.detected_at}`;
+  _evBox('evBoxA', d.snapshot_a || (d.snapshot_url ? { url: d.snapshot_url, exists: true } : null),
+         'Snapshot A — detection', 'Snapshot A — ' + cap, 'No detection snapshot stored');
+  _evBox('evBoxB', d.snapshot_b || (d.snapshot_url_b ? { url: d.snapshot_url_b, exists: true } : null),
+         'Snapshot B — follow-up', 'Snapshot B — ' + cap, 'No follow-up snapshot available');
 }
 
 // Deep link from a notification: dashboard-admin.php?event=<detection_id> opens

@@ -559,3 +559,28 @@ textarea.form-control { resize: vertical; min-height: 70px; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .detail-grid { grid-template-columns: 1fr; }
 }
+
+/* ══════════════════════════════════════════
+   EVIDENCE VIEWER (detection pop-up + lightbox)
+══════════════════════════════════════════ */
+.ev-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .72rem; color: var(--text-muted); margin-bottom: 10px; }
+.ev-meta b { color: var(--text-primary); font-weight: 600; }
+.ev-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.ev-box { position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-base); }
+.ev-box img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; cursor: zoom-in; transition: transform .2s; }
+.ev-box img:hover { transform: scale(1.02); }
+.ev-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; aspect-ratio: 16 / 9; color: var(--text-dim); font-size: .74rem; text-align: center; padding: 10px; }
+.ev-empty i { font-size: 1.3rem; opacity: .6; }
+.ev-label { display: flex; justify-content: space-between; gap: 8px; padding: 6px 9px; font-family: var(--font-display); font-size: .66rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); border-top: 1px solid var(--border); }
+.ev-label .ev-time { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; font-weight: 500; }
+.ev-note { font-size: .68rem; color: var(--warn); padding: 0 9px 7px; }
+@media (max-width: 640px) { .ev-grid { grid-template-columns: 1fr; } }
+.event-thumb img.ev-thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+#spotitLightbox { position: fixed; inset: 0; z-index: 9000; background: rgba(0,0,0,.86); display: none; align-items: center; justify-content: center; padding: 24px; }
+#spotitLightbox.open { display: flex; }
+#spotitLightbox figure { margin: 0; max-width: 96vw; max-height: 92vh; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#spotitLightbox img { max-width: 96vw; max-height: 84vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.6); background: #000; }
+#spotitLightbox figcaption { color: #fff; font-size: .78rem; font-family: var(--font-mono); text-align: center; }
+#spotitLightbox .lb-close { position: absolute; top: 16px; right: 18px; width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); background: rgba(0,0,0,.4); color: #fff; font-size: 1rem; cursor: pointer; }
+#spotitLightbox .lb-error { color: #ffb4b4; font-size: .85rem; padding: 30px; }

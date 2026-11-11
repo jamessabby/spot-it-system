@@ -225,7 +225,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
             $logsByRoom = [];
             foreach ($logStmt->fetchAll() as $l) {
                 if (count($logsByRoom[$l['room_id']] ?? []) < 5) {
-                    $logsByRoom[$l['room_id']][] = [_logEventColor($l['event_type']), date('H:i:s', strtotime($l['logged_at'])) . ' · ' . $l['event_message']];
+                    $logsByRoom[$l['room_id']][] = [ms_log_event_color($l['event_type']), date('H:i:s', strtotime($l['logged_at'])) . ' · ' . $l['event_message']];
                 }
             }
             
@@ -288,6 +288,9 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
             ");
             $allDetections = $allDetectionsStmt ? $allDetectionsStmt->fetchAll(PDO::FETCH_ASSOC) : [];
         } catch (Throwable $e) {
+            // Was silent: any failure above blanked the whole page ("No detection
+            // log records found") with nothing in the log to explain it.
+            error_log('[S.P.O.T.-IT] inventory-monitor.php data load failed: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
             $rooms = [];
             $allDetections = [];
         }
@@ -652,10 +655,10 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                 <td>
                   <div style="display:flex;gap:4px;">
                     <?php if ($d['snapshot_path']): ?>
-                    <button class="btn btn-sm" onclick="previewImage('../uploads/snapshots/<?= htmlspecialchars(basename($d['snapshot_path'])) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot A">Snap A</button>
+                    <button class="btn btn-sm" onclick="spotitOpenImage('../auth/snapshot.php?f=<?= rawurlencode(basename($d['snapshot_path'])) ?>', 'Snapshot A — <?= htmlspecialchars($d['object_zone']) ?> · <?= htmlspecialchars($d['room_id']) ?> · <?= htmlspecialchars($d['detected_at']) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot A">Snap A</button>
                     <?php endif; ?>
                     <?php if ($d['snapshot_path_b']): ?>
-                    <button class="btn btn-sm" onclick="previewImage('../uploads/snapshots/<?= htmlspecialchars(basename($d['snapshot_path_b'])) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot B">Snap B</button>
+                    <button class="btn btn-sm" onclick="spotitOpenImage('../auth/snapshot.php?f=<?= rawurlencode(basename($d['snapshot_path_b'])) ?>', 'Snapshot B — <?= htmlspecialchars($d['object_zone']) ?> · <?= htmlspecialchars($d['room_id']) ?>')" style="padding:2px 6px;font-size:.65rem;border:1px solid var(--border);" title="View Snapshot B">Snap B</button>
                     <?php endif; ?>
                     <?php if (!$d['snapshot_path'] && !$d['snapshot_path_b']): ?>
                     <span style="color:var(--text-dim);font-size:.7rem;">—</span>

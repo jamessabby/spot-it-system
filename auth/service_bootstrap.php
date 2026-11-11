@@ -177,6 +177,37 @@ function ms_json(array $data, int $status = 200): void {
 // unit-tested and so it never labels a recovered/dismissed event or a timer
 // escalation as "Confirmed Missing".
 
+// ── Snapshot evidence URLs ─────────────────────────────────────────────────────
+// Evidence files are no longer fetched straight from uploads/snapshots/ (denied
+// in uploads/.htaccess); every page gets its image through auth/snapshot.php.
+function ms_snapshot_url(?string $path): ?string
+{
+    $name = $path ? basename($path) : '';
+    return $name !== '' ? SITE_URL . '/auth/snapshot.php?f=' . rawurlencode($name) : null;
+}
+
+// File facts for the evidence viewer. The detector reuses the same file name
+// across events ({label}_registered_N.jpg), so a row's file can have been
+// rewritten by a later event; `written_at` lets the UI say so instead of
+// presenting a later frame as this event's evidence.
+function ms_snapshot_info(?string $path, ?string $eventTime = null): array
+{
+    $name = $path ? basename($path) : '';
+    if ($name === '') {
+        return ['url' => null, 'exists' => false, 'written_at' => null, 'rewritten' => false];
+    }
+    $file = SNAPSHOT_PATH . $name;
+    $exists = is_file($file);
+    $mtime = $exists ? filemtime($file) : null;
+    $rewritten = $exists && $eventTime && abs($mtime - strtotime($eventTime)) > 120;
+    return [
+        'url'        => ms_snapshot_url($name),
+        'exists'     => $exists,
+        'written_at' => $mtime ? date('Y-m-d H:i:s', $mtime) : null,
+        'rewritten'  => $rewritten,
+    ];
+}
+
 // ── Current state of the events notifications point at ────────────────────────
 // A notification is written once, at ingest ("New Deviation Detected"), and never
 // rewritten. Without this read the bell kept saying "new deviation" for events staff

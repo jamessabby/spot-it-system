@@ -104,8 +104,8 @@ foreach ($detections as $d) {
         'ts'        => $d['detected_at'],
         'elapsed'   => (int)$d['elapsed_minutes'],
         'severity'  => $d['status'] === 'confirmed_missing' ? 'alert' : ($d['status'] === 'potential' ? 'warn' : 'info'),
-        'snap_a'    => $d['snapshot_path'] ? SNAPSHOT_URL . basename($d['snapshot_path']) : null,
-        'snap_b'    => $d['snapshot_path_b'] ? SNAPSHOT_URL . basename($d['snapshot_path_b']) : null,
+        'snap_a'    => ms_snapshot_url($d['snapshot_path']),
+        'snap_b'    => ms_snapshot_url($d['snapshot_path_b']),
         'deviation' => (int)$d['deviation'],
         'notes'     => $d['notes'],
     ];
@@ -147,7 +147,7 @@ foreach ($claims as $c) {
         'ts'        => $c['submitted_at'],
         'elapsed'   => (int)$c['elapsed_minutes'],
         'severity'  => $c['status'] === 'verified' ? 'info' : 'warn',
-        'snap_a'    => $c['item_snapshot'] ? SNAPSHOT_URL . basename($c['item_snapshot']) : null,
+        'snap_a'    => ms_snapshot_url($c['item_snapshot']),
         'snap_b'    => null,
         'notes'     => $c['item_description'],
     ];
@@ -411,7 +411,7 @@ function al_js($value): string {
           <div class="al-snap-label">Snapshot A — Baseline / Detection</div>
         </div>
         <div class="al-snap-box" id="snapBoxB">
-          <div class="al-snap-empty"><i class="fa-solid fa-image"></i>No snapshot available</div>
+          <div class="al-snap-empty"><i class="fa-solid fa-image"></i>No follow-up snapshot available</div>
           <div class="al-snap-label">Snapshot B — Interaction / Removal</div>
         </div>
       </div>
@@ -569,9 +569,12 @@ function alOpenSnapshot(urlA, urlB, title) {
 }
 function _alFillSnapBox(boxId, url, label) {
   const box = document.getElementById(boxId);
+  const isB = boxId === 'snapBoxB';
   box.innerHTML = url
-    ? `<img src="${url}" alt="${label}" onerror="this.parentElement.innerHTML='<div class=al-snap-empty><i class=\\'fa-solid fa-triangle-exclamation\\'></i>Failed to load</div><div class=al-snap-label>${label}</div>'"/><div class="al-snap-label">${label}</div>`
-    : `<div class="al-snap-empty"><i class="fa-solid fa-image"></i>No snapshot available</div><div class="al-snap-label">${label}</div>`;
+    ? `<img src="${url}" alt="${label}" title="Open full size" style="cursor:zoom-in;" onerror="this.parentElement.innerHTML='<div class=al-snap-empty><i class=\\'fa-solid fa-triangle-exclamation\\'></i>Failed to load</div><div class=al-snap-label>${label}</div>'"/><div class="al-snap-label">${label}</div>`
+    : `<div class="al-snap-empty"><i class="fa-solid fa-image"></i>${isB ? 'No follow-up snapshot available' : 'No detection snapshot stored'}</div><div class="al-snap-label">${label}</div>`;
+  const img = box.querySelector('img');
+  if (img) img.addEventListener('click', () => spotitOpenImage(url, `${label} — ${document.getElementById('snapModalTitle').textContent.replace('CCTV Snapshot — ', '')}`));
 }
 </script>
 </body>

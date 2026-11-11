@@ -405,3 +405,38 @@ async function markAllNotifsRead() {
   if (typeof pollBadges === 'function' && document.getElementById('sidebar')) pollBadges();
   showToast('success', 'All notifications marked as read.');
 }
+
+
+/* ══════════════════════════════════════
+   EVIDENCE LIGHTBOX
+   Full-resolution viewer for CCTV snapshots. Shared by the admin dashboard,
+   Alerts and Inventory Monitor; images come from auth/snapshot.php.
+══════════════════════════════════════ */
+function spotitOpenImage(url, caption) {
+  let box = document.getElementById('spotitLightbox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'spotitLightbox';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Snapshot viewer');
+    box.innerHTML = `
+      <button type="button" class="lb-close" aria-label="Close" onclick="spotitCloseImage()"><i class="fa-solid fa-xmark"></i></button>
+      <figure>
+        <img alt="CCTV snapshot" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'lb-error',textContent:'The image could not be loaded.'}))">
+        <figcaption></figcaption>
+      </figure>`;
+    box.addEventListener('click', e => { if (e.target === box) spotitCloseImage(); });
+    document.body.appendChild(box);
+  }
+  const img = box.querySelector('img');
+  if (img) img.src = url;
+  box.querySelector('figcaption').textContent = caption || '';
+  box.classList.add('open');
+  document.addEventListener('keydown', _spotitLightboxKey);
+}
+function spotitCloseImage() {
+  const box = document.getElementById('spotitLightbox');
+  if (box) box.classList.remove('open');
+  document.removeEventListener('keydown', _spotitLightboxKey);
+}
+function _spotitLightboxKey(e) { if (e.key === 'Escape') spotitCloseImage(); }
