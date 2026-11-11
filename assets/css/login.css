@@ -288,6 +288,15 @@ body::before {
    checkbox with a counterfeit reCAPTCHA badge, driven by a setTimeout. This
    styles a real arithmetic challenge whose answer is verified server-side
    (config/security.php) — hence an actual input the user types into. */
+/* Cloudflare Turnstile */
+.cf-turnstile {
+  margin-top: 0.25rem;
+  margin-bottom: 1.15rem;
+  display: flex;
+  justify-content: center;
+  min-height: 65px;
+}
+
 .captcha-wrap {
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 12px 14px; display: flex; align-items: center; gap: 10px;

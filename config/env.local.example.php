@@ -57,10 +57,21 @@ return [
     'SPOTIT_DETECTION_KEY' => 'PUT_A_LONG_RANDOM_STRING_HERE',
     'SPOTIT_CRON_KEY'      => 'PUT_A_DIFFERENT_LONG_RANDOM_STRING_HERE',
 
+    // ── Cloudflare Turnstile ─────────────────────────────────────────────────
+    'CF_TURNSTILE_SITE_KEY'   => '',
+    'CF_TURNSTILE_SECRET_KEY' => '',
+
     // ── Microsoft OAuth (Azure AD) ───────────────────────────────────────────
     'MS_CLIENT_ID'     => '',
     'MS_CLIENT_SECRET' => '',
     'MS_TENANT_ID'     => '',
+
+    // ── Sandbox / DESK camera ────────────────────────────────────────────────
+    // Also read by main.py / main_classical_only.py, so the camera password
+    // lives in this one private file for both PHP and Python.
+    'DESK_CAMERA_IP'   => '192.168.x.x',
+    'DESK_CAMERA_USER' => '',
+    'DESK_CAMERA_PASS' => '',
 
     // ── Mail ─────────────────────────────────────────────────────────────────
     // Drives signup email confirmation and password reset. See config/mailer.php.

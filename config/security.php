@@ -147,3 +147,56 @@ if (!function_exists('spotit_captcha_new')) {
         return ['ok' => true, 'error' => ''];
     }
 }
+
+// ── Cloudflare Turnstile ──────────────────────────────────────────────────────
+
+if (!function_exists('spotit_turnstile_verify')) {
+    /**
+     * Verify a Cloudflare Turnstile response token.
+     *
+     * @param string|null $token The 'cf-turnstile-response' submitted by the client form.
+     * @param string|null $remoteIp The client's IP address.
+     * @return array{ok: bool, error: string}
+     */
+    function spotit_turnstile_verify(?string $token, ?string $remoteIp = null): array
+    {
+        $token = trim((string) $token);
+        if ($token === '') {
+            return ['ok' => false, 'error' => 'Please complete the Cloudflare security verification.'];
+        }
+
+        $secret = defined('CF_TURNSTILE_SECRET_KEY') ? CF_TURNSTILE_SECRET_KEY : '';
+        $postFields = [
+            'secret'   => $secret,
+            'response' => $token,
+        ];
+        if (!empty($remoteIp)) {
+            $postFields['remoteip'] = $remoteIp;
+        }
+
+        $ch = curl_init('https://challenges.cloudflare.com/turnstile/v0/siteverify');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+        $response = curl_exec($ch);
+        $curlErr  = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($response === false || $httpCode !== 200) {
+            error_log('[Cloudflare Turnstile] cURL error: ' . ($curlErr ?: "HTTP {$httpCode}"));
+            return ['ok' => false, 'error' => 'Security verification service unavailable. Please try again.'];
+        }
+
+        $result = json_decode($response, true);
+        if (!is_array($result) || empty($result['success'])) {
+            $errCodes = !empty($result['error-codes']) ? implode(', ', (array) $result['error-codes']) : 'unknown';
+            error_log('[Cloudflare Turnstile] Verification failed: ' . $errCodes);
+            return ['ok' => false, 'error' => 'Security check failed. Please verify again.'];
+        }
+
+        return ['ok' => true, 'error' => ''];
+    }
+}

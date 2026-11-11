@@ -93,12 +93,16 @@ if (session_status() === PHP_SESSION_NONE) {
 // without a second include; needs the session, hence after session_start().
 require_once __DIR__ . '/security.php';
 
+// ── Cloudflare Turnstile ──────────────────────────────────────────────────────
+define('CF_TURNSTILE_SITE_KEY',   spotit_env('CF_TURNSTILE_SITE_KEY',   ''));
+define('CF_TURNSTILE_SECRET_KEY', spotit_env('CF_TURNSTILE_SECRET_KEY', ''));
+
 // ── Microsoft OAuth (Azure AD) ────────────────────────────────────────────────
 // MS_REDIRECT_URI derives from SITE_URL, so changing SITE_URL is enough — but the
 // resulting production URI must also be registered in the Azure app registration.
-define('MS_CLIENT_ID',     spotit_env('MS_CLIENT_ID',     'YOUR_AZURE_CLIENT_ID'));
-define('MS_CLIENT_SECRET', spotit_env('MS_CLIENT_SECRET', 'YOUR_AZURE_CLIENT_SECRET'));
-define('MS_TENANT_ID',     spotit_env('MS_TENANT_ID',     'YOUR_AZURE_TENANT_ID'));  // or 'common'
+define('MS_CLIENT_ID',     spotit_env('MS_CLIENT_ID',     ''));
+define('MS_CLIENT_SECRET', spotit_env('MS_CLIENT_SECRET', ''));
+define('MS_TENANT_ID',     spotit_env('MS_TENANT_ID',     'common'));  
 define('MS_REDIRECT_URI',  SITE_URL . '/auth/microsoft_callback.php');
 define('MS_SCOPES',        'openid profile email User.Read');
 
@@ -125,7 +129,7 @@ define('TIMER_CONFIRMED_MIN',  60);  // minutes → "Confirmed Missing"
 // (or a static IP in the Tapo app) instead of chasing it here.
 define('DESK_CAMERA_IP',   spotit_env('DESK_CAMERA_IP',   '10.62.74.79'));
 define('DESK_CAMERA_USER', spotit_env('DESK_CAMERA_USER', 'SpotItCamera'));
-define('DESK_CAMERA_PASS', spotit_env('DESK_CAMERA_PASS', 'spotitcamera232'));
+define('DESK_CAMERA_PASS', spotit_env('DESK_CAMERA_PASS', ''));
 define('DESK_CAMERA_RTSP', 'rtsp://' . DESK_CAMERA_USER . ':' . DESK_CAMERA_PASS
                           . '@' . DESK_CAMERA_IP . ':554/stream1');
 
@@ -192,7 +196,7 @@ define('MAIL_API_KEY',  spotit_env('MAIL_API_KEY', 'CHANGE_ME_MAIL_API_KEY'));
 // which needs composer, which is not installed).
 define('MAIL_HOST',     spotit_env('MAIL_HOST', 'smtp.gmail.com'));
 define('MAIL_PORT',     (int) spotit_env('MAIL_PORT', 587));
-define('MAIL_USER',     spotit_env('MAIL_USER', 'noreply@dlsud.edu.ph'));
+define('MAIL_USER',     spotit_env('MAIL_USER', ''));
 define('MAIL_PASS',     spotit_env('MAIL_PASS', 'CHANGE_ME_MAIL'));
 
 require_once __DIR__ . '/mailer.php';

@@ -32,16 +32,39 @@ if (!spotit_csrf_verify($_POST['csrf_token'] ?? null)) {
                // which would log a rejected CSRF token as a server fault.
 }
 
-// ── 0b. CAPTCHA ──────────────────────────────────────────────────────────────
-// Server-side and single-use (config/security.php). The old widget was a
-// setTimeout that posted nothing, so anything calling this endpoint directly
-// bypassed it entirely.
-$captcha = spotit_captcha_verify($_POST['captcha_answer'] ?? null);
-if (!$captcha['ok']) {
+// ── 0b. Cloudflare Turnstile Verification ─────────────────────────────────────
+$turnstileResponse = $_POST['cf-turnstile-response'] ?? '';
+$clientIp          = $_SERVER['REMOTE_ADDR'] ?? '';
+
+if (empty($turnstileResponse)) {
     ms_json([
-        'success' => false,
+        'success'        => false,
         'captcha_failed' => true,
-        'message' => $captcha['error'],
+        'message'        => 'Please complete the Cloudflare security verification.',
+    ]);
+}
+
+$turnstileSecret = defined('CF_TURNSTILE_SECRET_KEY') ? CF_TURNSTILE_SECRET_KEY : '';
+
+$ch = curl_init('https://challenges.cloudflare.com/turnstile/v0/siteverify');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+    'secret'   => $turnstileSecret,
+    'response' => $turnstileResponse,
+    'remoteip' => $clientIp,
+]));
+curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+$cfRawResult = curl_exec($ch);
+$cfHttpCode  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+$cfResult = json_decode($cfRawResult, true);
+if ($cfRawResult === false || $cfHttpCode !== 200 || !is_array($cfResult) || empty($cfResult['success'])) {
+    ms_json([
+        'success'        => false,
+        'captcha_failed' => true,
+        'message'        => 'Security verification failed. Please try again.',
     ]);
 }
 

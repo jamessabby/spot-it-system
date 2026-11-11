@@ -22,6 +22,7 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
   <link rel="stylesheet" href="../assets/css/login.css"/>
   <link rel="stylesheet" href="../assets/css/signup.css"/>
   <link rel="stylesheet" href="../assets/css/skeleton.css"/>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script>(function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('spotit_theme')||'light')})();</script>
 </head>
 <body data-skeleton="form">
@@ -174,19 +175,8 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
             <div class="field-error" id="cpwError"><i class="fa-solid fa-circle-exclamation"></i><span>Passwords do not match.</span></div>
           </div>
 
-          <!-- CAPTCHA. Verified server-side, single-use. See config/security.php. -->
-          <div class="captcha-wrap" id="captchaWrap">
-            <i class="fa-solid fa-shield-halved captcha-icon"></i>
-            <label class="captcha-q" for="captchaAnswer">
-              Security check: what is <strong id="captchaQuestion"><?= htmlspecialchars(spotit_captcha_new(), ENT_QUOTES, 'UTF-8') ?></strong>?
-            </label>
-            <input type="number" class="captcha-input" id="captchaAnswer" name="captcha_answer"
-                   inputmode="numeric" autocomplete="off" required aria-label="Answer to the security check" />
-            <button type="button" class="captcha-refresh" id="captchaRefresh"
-                    onclick="refreshCaptcha()" title="Get a new question" aria-label="Get a new question">
-              <i class="fa-solid fa-rotate"></i>
-            </button>
-          </div>
+          <!-- Cloudflare Turnstile -->
+          <div class="cf-turnstile" data-sitekey="<?= htmlspecialchars(CF_TURNSTILE_SITE_KEY, ENT_QUOTES, 'UTF-8') ?>" data-theme="light"></div>
 
           <!-- Terms -->
           <label class="terms-label" id="termsLabel">
@@ -219,7 +209,6 @@ if (!empty($_SESSION['user_id'])) { header('Location: dashboard-admin.php'); exi
 <script src="../assets/js/spotit.js"></script>
 <script>
 const ALLOWED_DOMAIN = '@dlsud.edu.ph';
-let captchaDone = false;
 let pwOk = false, cpwOk = false, emailOk = false;
 
 function onEmailInput(input) {
@@ -291,33 +280,22 @@ function checkConfirm() {
   updateSubmit();
 }
 
-/* Each challenge is single-use server-side, so a spent one must be replaced
-   after any submit attempt. */
-async function refreshCaptcha() {
-  const btn = document.getElementById('captchaRefresh');
-  const q   = document.getElementById('captchaQuestion');
-  const ans = document.getElementById('captchaAnswer');
-  btn.classList.add('spinning');
-  try {
-    const res  = await fetch('../auth/captcha.php', { cache: 'no-store' });
-    const data = await res.json();
-    if (data && data.question) q.textContent = data.question;
-  } catch (e) { /* keep the current question rather than blanking it */ }
-  btn.classList.remove('spinning');
-  ans.value = '';
-  document.getElementById('captchaWrap').classList.remove('invalid');
-  updateSubmit();
+/* ── Cloudflare Turnstile ── */
+function refreshCaptcha() {
+  if (window.turnstile) {
+    try { turnstile.reset(); } catch (e) {}
+  }
+}
+function resetCaptcha() {
+  refreshCaptcha();
 }
 
 function updateSubmit() {
   const name  = document.getElementById('full_name').value.trim();
   const idNum = document.getElementById('id_number').value.trim();
   const terms = document.getElementById('acceptTerms').checked;
-  captchaDone = document.getElementById('captchaAnswer').value.trim() !== '';
-  document.getElementById('submitBtn').disabled = !(name && emailOk && idNum && pwOk && cpwOk && captchaDone && terms);
+  document.getElementById('submitBtn').disabled = !(name && emailOk && idNum && pwOk && cpwOk && terms);
 }
-
-document.getElementById('captchaAnswer').addEventListener('input', updateSubmit);
 
 function togglePw(inputId, iconId) {
   const inp = document.getElementById(inputId);
@@ -329,6 +307,13 @@ function togglePw(inputId, iconId) {
 document.getElementById('signupForm').addEventListener('submit', async function(e) {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
+
+  const turnstileResponse = document.querySelector('[name="cf-turnstile-response"]')?.value;
+  if (!turnstileResponse) {
+    showToast('error', 'Please complete the Cloudflare security verification.');
+    return;
+  }
+
   btn.classList.add('loading'); btn.disabled = true;
 
   const fd = new FormData(this);
@@ -340,17 +325,12 @@ document.getElementById('signupForm').addEventListener('submit', async function(
       showToast('success', 'Account created! Redirecting to login…');
       setTimeout(() => { window.location.href = 'login.php?registered=1'; }, 1200);
     } else {
-      /* The CAPTCHA is spent whether or not the rest of the form was valid, so
-         a new one is needed before the user can retry anything. */
       if (data.csrf_invalid) {
         showToast('error', data.message || 'Your session expired. Reloading…');
         setTimeout(() => window.location.reload(), 1600);
         return;
       }
-      await refreshCaptcha();
-      if (data.captcha_failed) {
-        document.getElementById('captchaWrap').classList.add('invalid');
-      }
+      refreshCaptcha();
       showToast('error', data.message || 'Registration failed. Please try again.');
       btn.disabled = false;
     }

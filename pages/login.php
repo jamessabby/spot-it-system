@@ -42,6 +42,7 @@ $flash_msg   = match($flash_error) {
   <link rel="stylesheet" href="../assets/css/login.css" />
   <link rel="stylesheet" href="../assets/css/skeleton.css" />
   <link rel="stylesheet" href="../assets/css/onboarding.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <script>
     // Apply saved theme before paint to prevent flash
     (function(){
@@ -250,21 +251,8 @@ $flash_msg   = match($flash_error) {
             </button>
           </div>
 
-          <!-- CAPTCHA. The first challenge is rendered server-side so a normal
-               visitor never waits on a round trip; auth/captcha.php supplies
-               replacements, which are needed because each one is single-use. -->
-          <div class="captcha-wrap" id="captchaWrap">
-            <i class="fa-solid fa-shield-halved captcha-icon"></i>
-            <label class="captcha-q" for="captchaAnswer">
-              Security check: what is <strong id="captchaQuestion"><?= htmlspecialchars(spotit_captcha_new(), ENT_QUOTES, 'UTF-8') ?></strong>?
-            </label>
-            <input type="number" class="captcha-input" id="captchaAnswer" name="captcha_answer"
-                   inputmode="numeric" autocomplete="off" required aria-label="Answer to the security check" />
-            <button type="button" class="captcha-refresh" id="captchaRefresh"
-                    onclick="refreshCaptcha()" title="Get a new question" aria-label="Get a new question">
-              <i class="fa-solid fa-rotate"></i>
-            </button>
-          </div>
+          <!-- Cloudflare Turnstile -->
+          <div class="cf-turnstile" data-sitekey="<?= htmlspecialchars(CF_TURNSTILE_SITE_KEY, ENT_QUOTES, 'UTF-8') ?>" data-theme="light"></div>
 
           <!-- Submit -->
           <button type="submit" class="btn-submit" id="submitBtn" disabled>
@@ -301,8 +289,6 @@ const MAX_ATTEMPTS   = 5;
 const WARN_AT        = 3;
 
 /* ── State ── */
-/* captchaDone is now derived from the input rather than set by a timer. */
-let captchaDone    = false;
 let failedAttempts = 0;
 let cooldownActive = false;
 let cooldownSecs   = 0;
@@ -389,32 +375,14 @@ async function resendVerification() {
   btn.textContent = 'Resend confirmation';
 }
 
-/* ── CAPTCHA ──
-   The answer is checked server-side and each challenge is single-use, so after
-   ANY submit — success or failure — the old question is already spent and the
-   page has to pull a new one. */
-async function refreshCaptcha() {
-  const btn = document.getElementById('captchaRefresh');
-  const q   = document.getElementById('captchaQuestion');
-  const ans = document.getElementById('captchaAnswer');
-  btn.classList.add('spinning');
-  try {
-    const res  = await fetch('../auth/captcha.php', { cache: 'no-store' });
-    const data = await res.json();
-    if (data && data.question) q.textContent = data.question;
-  } catch (e) {
-    /* Offline or the endpoint is unreachable. Leave the current question in
-       place rather than blanking it - a stale question the server may still
-       accept beats an empty box the user cannot answer at all. */
-  }
-  btn.classList.remove('spinning');
-  ans.value = '';
-  document.getElementById('captchaWrap').classList.remove('invalid');
-  updateSubmit();
-}
-
+/* ── Cloudflare Turnstile ── */
 function resetCaptcha() {
-  refreshCaptcha();
+  if (window.turnstile) {
+    try { turnstile.reset(); } catch (e) {}
+  }
+}
+function refreshCaptcha() {
+  resetCaptcha();
 }
 
 /* ── Submit button state ── */
@@ -422,13 +390,11 @@ function updateSubmit() {
   const email = document.getElementById('email').value.trim();
   const pw    = document.getElementById('password').value;
   const btn   = document.getElementById('submitBtn');
-  captchaDone = document.getElementById('captchaAnswer').value.trim() !== '';
-  btn.disabled = !(isValidEmail(email) && pw.length >= 1 && captchaDone && !cooldownActive);
+  btn.disabled = !(isValidEmail(email) && pw.length >= 1 && !cooldownActive);
 }
 
 document.getElementById('email').addEventListener('input', updateSubmit);
 document.getElementById('password').addEventListener('input', updateSubmit);
-document.getElementById('captchaAnswer').addEventListener('input', updateSubmit);
 
 /* ── Attempt dots ── */
 function updateDots() {
@@ -506,12 +472,13 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     document.getElementById('pwError').classList.add('show');
     valid = false;
   }
-  if (!captchaDone) {
-    document.getElementById('captchaWrap').classList.add('invalid');
-    showToast('error', 'Please answer the security check first.');
+  if (!valid) return;
+
+  const turnstileResponse = document.querySelector('[name="cf-turnstile-response"]')?.value;
+  if (!turnstileResponse) {
+    showToast('error', 'Please complete the Cloudflare security verification.');
     return;
   }
-  if (!valid) return;
 
   btn.classList.add('loading'); btn.disabled = true;
 
@@ -526,7 +493,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
       showToast('success', 'Signed in successfully. Redirecting…');
       setTimeout(() => { window.location.href = data.redirect || 'dashboard-admin.php'; }, 900);
     } else {
-      /* A rejected CSRF token or a wrong CAPTCHA answer is not a failed
+      /* A rejected CSRF token or a failed Turnstile check is not a failed
          CREDENTIAL attempt - counting it would burn the user's 5 tries and
          eventually lock an account whose password was never even submitted.
          The server rejects both before it looks at the password. */
@@ -537,9 +504,8 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
       }
       if (data.captcha_failed) {
         resetCaptcha();
-        document.getElementById('captchaWrap').classList.add('invalid');
-        btn.disabled = true;
-        showToast('error', data.message || 'Security check failed.');
+        btn.disabled = false;
+        showToast('error', data.message || 'Security check failed. Please verify again.');
         return;
       }
 
