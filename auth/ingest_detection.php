@@ -20,6 +20,7 @@
  */
 require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/../services/monitoring/db.php';
+require_once __DIR__ . '/snapshot_naming.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -298,17 +299,20 @@ try {
     exit();
 }
 
-// ── Save snapshot using standard naming convention ───────────────────────────
+// ── Save snapshot under a unique per-event name ───────────────────────────────
+// Used to "preserve" the name main.py sent ({label}_registered_N.jpg /
+// {label}_snapshot_A.jpg) verbatim. main.py reuses that same name for every
+// event on that ROI, so this was silently overwriting an earlier event's
+// evidence on disk the next time the same zone fired — the DB kept a detection
+// row pointing at a file that had since become a different event's pixels
+// (CLAUDE.md "Evidence caveat", 2026-11-12). Every upload now gets its own name;
+// the name main.py sent is discarded after extension validation. main.py's own
+// local filenames (used for its progression-sequence file reuse, see
+// save_snapshot() / registered_seq_count) are untouched — this only changes the
+// name the file is persisted under server-side.
 $snapshot_path = null;
 if (!empty($_FILES['snapshot']['tmp_name']) && is_uploaded_file($_FILES['snapshot']['tmp_name'])) {
-    $orig_name = basename($_FILES['snapshot']['name']);
-    // Preserve standard naming convention (e.g. mouse_registered_final.jpg)
-    if (preg_match('/^[a-zA-Z0-9_\-]+\.(jpg|jpeg|png)$/i', $orig_name)) {
-        $filename = $orig_name;
-    } else {
-        $ext      = pathinfo($_FILES['snapshot']['name'], PATHINFO_EXTENSION) ?: 'jpg';
-        $filename = date('Ymd_His') . '_' . $room_id . '_' . uniqid() . '.' . $ext;
-    }
+    $filename = spotit_unique_snapshot_filename($room_id, $object_zone, $_FILES['snapshot']['name']);
     $dest = SNAPSHOT_PATH . $filename;
     if (move_uploaded_file($_FILES['snapshot']['tmp_name'], $dest)) {
         $snapshot_path = $filename;

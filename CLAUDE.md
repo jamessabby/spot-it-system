@@ -642,6 +642,34 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-12 (Snapshot A filenames made unique per event — the "unique per-event
+  names" follow-up noted below):** `auth/ingest_detection.php` used to "preserve" the
+  filename main.py sent (`{label}_registered_N.jpg` / `{label}_snapshot_A.jpg`) verbatim
+  whenever it matched a safe-characters regex — which it always did, since main.py always
+  sends exactly that shape. Because main.py reuses the same name for every event on a given
+  ROI, a later event silently overwrote an earlier event's evidence file on disk while the
+  DB still pointed a detection row at it (this is the "Evidence caveat" below). Fixed in
+  `auth/snapshot_naming.php` (`spotit_unique_snapshot_filename()`): every upload now gets
+  `{date}_{room}_{zone}_a_<uniqid>.jpg`, the client-supplied name discarded except for its
+  extension. **main.py's own local capture naming is deliberately untouched** — it still
+  reuses the same local filename for its progression-sequence lookup
+  (`registered_seq_count`), and that is fine: this fix only changes what the file is
+  persisted under server-side, which is the copy that actually matters for the evidence
+  trail. `uploads/.htaccess`'s evidence-deny `<FilesMatch>` gained `_a_[a-f0-9]+\.` (the new
+  shape) and `_snapshot_[AB]\.` (a real gap found while fixing this: legacy tier-2/
+  unregistered-item Snapshot A/B files — `{label}_snapshot_A.jpg` — never matched the old
+  `_registered_`-only pattern and were served publicly). Snapshot B's own naming
+  (`{date}_{detection_id}_b_<uniqid>.jpg`, in `ingest_detection.php`'s `snapshot_b` action)
+  was already unique per event and is unchanged. Verified against `spotit_test_*` DBs (the
+  isolated e2e harness, `ZZT1` room): two detections for the same room+zone, with the first
+  resolved before the second fires, now produce two distinct files, and the first file's
+  original pixels are provably still intact (read back and diffed) after the second upload —
+  reproducing and then disproving the collision the old code had. 21/21 new checks in
+  `tests/test_snapshot_names.php`; existing `test_event_kinds.php` (51), `test_feed_state.php`
+  (13) and `check_inline_scripts.php` unaffected. Historical rows from before this fix still
+  collide on disk exactly as the Evidence caveat describes — this fix prevents new collisions,
+  it does not reconstruct lost history.
+
 - **2026-11-12 (CCTV snapshot evidence viewer; evidence files no longer public):**
   - `auth/snapshot.php?f=<file>` is the only way to fetch detection snapshots and claim
     selfies: session required; admin/staff any file; students only the snapshot of an item

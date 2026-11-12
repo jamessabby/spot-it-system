@@ -58,13 +58,16 @@ SetHandler none
 </FilesMatch>
 
 # ── Evidence is not public ───────────────────────────────────────────────────
-# Detection snapshots ({label}_registered_N.jpg, Snapshot B *_<id>_b_*.jpg) and
-# claim selfies (claim_*.jpg) are served only through auth/snapshot.php, which
-# checks the session. Live frames, clean frames and *_baseline.jpg stay public:
-# the live viewer and the ROI editor load them directly and they hold no evidence.
-# MUST come after the media allowlist above: Apache applies the LAST matching
-# <FilesMatch>, so placed earlier this block would be overridden by it.
-<FilesMatch "(_registered_|_[0-9]+_b_[a-z0-9]+\.|^claim_)">
+# Detection snapshots — Snapshot A *_a_<id>.jpg (current naming, unique per
+# event; see auth/snapshot_naming.php) and legacy {label}_registered_N.jpg /
+# {label}_snapshot_A.jpg rows from before that fix — Snapshot B *_<id>_b_*.jpg,
+# and claim selfies (claim_*.jpg) are served only through auth/snapshot.php,
+# which checks the session. Live frames, clean frames and *_baseline.jpg stay
+# public: the live viewer and the ROI editor load them directly and they hold
+# no evidence. MUST come after the media allowlist above: Apache applies the
+# LAST matching <FilesMatch>, so placed earlier this block would be overridden
+# by it.
+<FilesMatch "(_registered_|_snapshot_[AB]\.|_a_[a-f0-9]+\.|_[0-9]+_b_[a-z0-9]+\.|^claim_)">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
