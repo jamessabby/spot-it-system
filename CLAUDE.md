@@ -642,6 +642,53 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Auto-ROI made the primary Camera Setup workflow; commit 4665ba2):**
+  Camera Setup's suggestion panel offered the same 4 hardcoded checkboxes for every
+  room and was styled as a secondary "experimental" feature. It is now category-driven
+  (`loadSuggestClasses()` in `pages/camera-setup.php` reads the room's real
+  `auth/room_categories.php` categories and maps each to a COCO class client-side,
+  mirroring — and must be kept in sync with — `yolo_detector.LABEL_TO_CLASSES` and
+  `auth/suggest_rois.php`'s `SUGGEST_CLASSES` allowlist) and restyled as the first
+  thing an admin does, with manual drawing framed as "for whatever the scan misses."
+  A category with no COCO class (oscilloscope, power supply, PC unit, ...) now shows
+  "not auto-detectable — draw manually" instead of silently offering nothing. This
+  makes a brand-new room's setup work with zero code changes: verified by creating a
+  test room (ZZT3) against an isolated test DB, confirming it inherits sensible
+  defaults, running the real `suggest_rois()` pipeline on a real labeled frame,
+  accepting a subset, saving, reloading, and confirming MLH301/MLH305/ZZT1's
+  `registered_lab_items` rows, `rois_*.json` files and `room_categories.json` entries
+  were byte-identical before and after (full method in the session's own report, not
+  duplicated here).
+  - **`yolo_detector.suggest_rois()`:** added a 0.45 w/h aspect-ratio floor for
+    monitor/tv candidates. Measured on `photos/ref_image_ROOM_1.jpg`: the room's dark
+    doorway scored 0.77 as "tv" (w/h 0.27) while every real monitor on the same frame
+    measured w/h >= 0.60. Scoped to monitor candidates only (tv, or laptop standing in
+    for a monitor) — plain laptop detections are untouched, no evidence here says they
+    misbehave the same way.
+  - **`main.py`:** the suggestion result now names which RTSP profile (`stream1` vs
+    the 640x360 `stream2` fallback) actually supplied the frame, with a UI warning
+    when it's the sub-stream — `source_w`/`source_h` alone named the symptom, not the
+    cause. The suggestion step already used the raw full-resolution frame (captured
+    before `rescaleFrame`), never a browser preview or the monitoring frame; that part
+    needed no fix, only this visibility.
+  - **Evaluated and NOT shipped:** a finer (3,3) suggestion tiling grid (vs the
+    default (2,2)) — modestly improved 2 of 6 registered keyboards/mice on
+    `rois_MLH305.json` ground truth but cost ~2x YOLO latency and ~40% more proposals
+    to review, a net loss against reducing admin workload.
+  - **Known, unresolved limitation (native-resolution frames do not exist anywhere in
+    this repo or `C:\SPOTIT_Test_Backups\`):** every stored MLH301/MLH305/ROOM_1 image
+    — baselines, `ref_image_*`, the lab test backups — is already the halved 1152x648
+    detection-frame size, never the native 2304x1296 the camera actually delivers (see
+    `capture_ref.py`'s 50% rescale, §7). Both registered mice in `rois_MLH305.json`
+    (24x17px and 43x35px at this resolution) go undetected by YOLOX-S regardless of
+    tiling grid or confidence threshold — confirmed with 4x-upscaled crops at their
+    exact registered coordinates, no mouse-class detection at any score. This looks
+    like a genuine resolution floor, not a suggestion-logic bug, but is UNVERIFIED
+    against real native-resolution input — that test needs an actual camera capture,
+    which this session did not have access to (home DESK only — see
+    `testing-evidence-constraints` in the assistant's memory). Tumbler-over-keyboard
+    detection was explicitly left untouched, per direction, and is a separate item.
+
 - **2026-11-13 (Website backlog closeout — WEB-01–16, CSRF hardening; commits
   1c1be2b, 2de6499):** Closed the remaining open items in `md_files/MASTER_ISSUES.md`
   §3 and did the pre-hosting security pass §7a/§3 of this file ask for. No detector
