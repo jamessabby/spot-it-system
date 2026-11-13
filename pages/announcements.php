@@ -295,13 +295,13 @@ const annData = {
     title: 'S.P.O.T.-IT System Now Active in CEAT Building',
     category: 'system_update', catLabel: 'System Update', catClass: 'ann-cat-system_update',
     date: 'June 15, 2026', author: 'Posted by System Administrator',
-    content: 'The S.P.O.T.-IT IoT monitoring system is now fully operational inside selected laboratory rooms of the MLH Building. The system will automatically detect and flag missing laboratory equipment and unattended personal items.\n\nPlease ensure you retrieve your belongings before leaving any laboratory room. Detection events are automatically logged and staff are notified in real time via the monitoring dashboard.\n\nStaff have been briefed on the verification and claiming process. Students may submit claims through the S.P.O.T.-IT web portal or by visiting the CEAT dispensing window.',
+    content: 'The S.P.O.T.-IT IoT monitoring system is now fully operational inside selected laboratory rooms of the MLH Building. The system will automatically detect and flag missing laboratory equipment and unattended personal items.\n\nPlease ensure you retrieve your belongings before leaving any laboratory room. Detection events are automatically logged and staff are notified in real time via the monitoring dashboard.\n\nStaff have been briefed on the verification and claiming process. Students may submit claims through the S.P.O.T.-IT web portal or by visiting the Dispensing Room.',
   },
   2: {
-    title: 'Claiming Schedule: Dispensing Window Hours',
+    title: 'Claiming Schedule: Dispensing Room Hours',
     category: 'claiming_schedule', catLabel: 'Claiming Schedule', catClass: 'ann-cat-claiming_schedule',
     date: 'June 15, 2026', author: 'Posted by System Administrator',
-    content: 'The CEAT dispensing window for lost-and-found item claims is open Monday to Friday, 8:00 AM to 5:00 PM. Students must present their university ID and provide an accurate description of their item to complete a claim.\n\nSaturday claims require prior coordination with the laboratory staff on duty. Please submit your claim online first through the S.P.O.T.-IT portal before visiting the window to reduce wait times.',
+    content: 'The Dispensing Room for lost-and-found item claims is open Monday to Friday, 8:00 AM to 5:00 PM. Students must present their university ID and provide an accurate description of their item to complete a claim. All claimed items are collected here regardless of which room they were found in.\n\nSaturday claims require prior coordination with the laboratory staff on duty. Please submit your claim online first through the S.P.O.T.-IT portal before visiting to reduce wait times.',
   },
   3: {
     title: 'MLH 306 Laboratory Maintenance — June 20',

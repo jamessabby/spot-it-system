@@ -152,9 +152,10 @@ $cTotal     = $cAvailable + $cPending + $cClaimed;
                 <div>
                   <div class="tc-name"><?= htmlspecialchars($item['name']) ?></div>
                   <div class="tc-meta">
-                    <span><i class="fa-solid fa-door-open"></i> <?= $item['room'] ?></span>
+                    <span title="Room where this item was found"><i class="fa-solid fa-door-open"></i> Found in <?= $item['room'] ?></span>
                     <span><i class="fa-solid fa-vector-square"></i> <?= htmlspecialchars($item['zone']) ?></span>
                     <span><i class="fa-solid fa-clock"></i> <?= $item['found'] ?></span>
+                    <span title="All claimed items are collected here, regardless of where they were found"><i class="fa-solid fa-location-dot"></i> Pickup: Dispensing Room</span>
                   </div>
                 </div>
                 <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
@@ -224,7 +225,7 @@ $cTotal     = $cAvailable + $cPending + $cClaimed;
                 ['1','Find your item above and click "Claim This Item"'],
                 ['2','Fill in your university ID and describe the item'],
                 ['3','Staff verify your description matches the actual item'],
-                ['4','Visit the dispensing window at CEAT lobby with your ID'],
+                ['4','Visit the Dispensing Room with your ID'],
               ];
               foreach ($howto as [$n,$t]): ?>
               <div style="display:flex;gap:9px;align-items:flex-start;">
@@ -258,7 +259,11 @@ $cTotal     = $cAvailable + $cPending + $cClaimed;
     <div class="modal-body">
       <div class="selected-item-banner" id="claimBanner" style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:9px;background:var(--ok-bg);border:1px solid var(--ok-border);font-size:.82rem;color:var(--text-primary);margin-bottom:1rem;">
         <i class="fa-solid fa-circle-check" style="color:var(--ok);"></i>
-        <span>Claiming: <strong id="claimItemName">—</strong> from <strong id="claimItemRoom">—</strong></span>
+        <span>Claiming: <strong id="claimItemName">—</strong> &middot; found in <strong id="claimItemRoom">—</strong></span>
+      </div>
+      <div style="padding:9px 13px;background:var(--bg-base);border:1px solid var(--border);border-radius:9px;font-size:.76rem;color:var(--text-muted);margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+        <i class="fa-solid fa-location-dot" style="color:var(--green-main);"></i>
+        <span>Pickup location: <strong style="color:var(--text-primary);">Dispensing Room</strong> — same for every item, regardless of where it was found.</span>
       </div>
       <div class="form-group"><label class="form-label">Full Name *</label><input type="text" id="ci_name" class="form-control" placeholder="e.g. Maria Santos"/></div>
       <div class="form-group"><label class="form-label">University ID *</label><input type="text" id="ci_id" class="form-control" placeholder="e.g. 2021-00001"/></div>
@@ -266,7 +271,7 @@ $cTotal     = $cAvailable + $cPending + $cClaimed;
       <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" id="ci_contact" class="form-control" placeholder="09xx-xxx-xxxx"/></div>
       <div style="padding:11px 13px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:9px;font-size:.76rem;color:var(--text-primary);margin-bottom:14px;">
         <i class="fa-solid fa-triangle-exclamation" style="color:var(--warn);"></i>
-        Staff will verify your description against the actual item. Please visit the dispensing window with your university ID to complete the claim.
+        Staff will verify your description against the actual item. Please visit the Dispensing Room with your university ID to complete the claim.
       </div>
       <div class="modal-actions">
         <button class="modal-btn dismiss" onclick="closeModal('claimModal')">Cancel</button>
@@ -284,11 +289,12 @@ $cTotal     = $cAvailable + $cPending + $cClaimed;
       <div class="detail-grid">
         <div class="detail-cell"><div class="detail-key">Item</div><div class="detail-val" id="d_name">—</div></div>
         <div class="detail-cell"><div class="detail-key">Found In</div><div class="detail-val" id="d_room">—</div></div>
+        <div class="detail-cell"><div class="detail-key">Pickup Location</div><div class="detail-val" id="d_pickup">Dispensing Room</div></div>
         <div class="detail-cell"><div class="detail-key">Detection Method</div><div class="detail-val" id="d_method">CCTV Auto-Detection</div></div>
         <div class="detail-cell"><div class="detail-key">Status</div><div class="detail-val ok" id="d_status">Available</div></div>
         <div class="detail-cell" style="grid-column:1/-1;"><div class="detail-key">Description</div><div class="detail-val" id="d_desc" style="font-family:var(--font-body);font-size:.82rem;font-weight:400;line-height:1.5;">—</div></div>
       </div>
-      <div style="margin-top:14px;"><p style="font-size:.8rem;color:var(--text-muted);">To claim this item, please click "Claim This Item" below. Staff will verify your identity before releasing the item at the dispensing window.</p></div>
+      <div style="margin-top:14px;"><p style="font-size:.8rem;color:var(--text-muted);">To claim this item, please click "Claim This Item" below. Staff will verify your identity before releasing the item at the Dispensing Room.</p></div>
       <div class="modal-actions" style="margin-top:12px;">
         <button class="modal-btn dismiss" onclick="closeModal('detailModal')">Close</button>
         <button class="modal-btn recover" id="detailClaimBtn" onclick="closeModal('detailModal');openClaimModal(currentDetailId,currentDetailName,currentDetailRoom)">
@@ -360,7 +366,7 @@ async function submitClaim() {
       })
     });
     if (res && res.success) {
-      showToast('success', 'Claim submitted! Please proceed to the CEAT dispensing window with your university ID.');
+      showToast('success', 'Claim submitted! Please proceed to the Dispensing Room with your university ID.');
       closeModal('claimModal');
       setTimeout(() => location.reload(), 1000);
     } else {

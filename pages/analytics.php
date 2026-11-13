@@ -90,7 +90,7 @@ if ($totalDetections > 0) {
         <div class="stat-card"><div class="stat-icon alert"><i class="fa-solid fa-triangle-exclamation"></i></div><div><div class="stat-num"><?= $activeEventsCount ?></div><div class="stat-label">Active Events</div></div></div>
         <div class="stat-card"><div class="stat-icon ok"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-num"><?= $resolvedCount ?></div><div class="stat-label">Resolved This Month</div></div></div>
         <div class="stat-card"><div class="stat-icon info"><i class="fa-solid fa-hand-holding"></i></div><div><div class="stat-num"><?= $claimsCount ?></div><div class="stat-label">Claims This Month</div></div></div>
-        <div class="stat-card"><div class="stat-icon green"><i class="fa-solid fa-chart-line"></i></div><div><div class="stat-num"><?= $avgConfidence ?></div><div class="stat-label">Avg. Confidence Score</div></div></div>
+        <div class="stat-card" title="Heuristic 0-100 score per event: 50% from how different the ROI looks from its baseline template, 30% from the % of ROI pixels changed, 20% from the item-count deviation (capped at 2 items). Not a calibrated statistical probability or an accuracy metric &mdash; it ranks how strong the raw classical-CV + gatekeeper signals were on a single event."><div class="stat-icon green"><i class="fa-solid fa-chart-line"></i></div><div><div class="stat-num"><?= $avgConfidence ?></div><div class="stat-label">Avg. Confidence Score <i class="fa-solid fa-circle-info" style="font-size:.6rem;opacity:.6;"></i></div></div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
         <div class="card">

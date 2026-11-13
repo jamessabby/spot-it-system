@@ -160,7 +160,7 @@ try {
               <div style="flex:1;">
                 <div style="font-family:var(--font-display);font-size:.84rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($c['item_type'] ?? 'Unknown Item') ?></div>
                 <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">
-                  Recovered from <?= htmlspecialchars($c['room_id']) ?> · Description: <?= htmlspecialchars($c['recovered_desc'] ?? $c['claimant_desc']) ?>
+                  Found in <?= htmlspecialchars($c['room_id']) ?> · Pickup: Dispensing Room · Description: <?= htmlspecialchars($c['recovered_desc'] ?? $c['claimant_desc']) ?>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;margin-top:5px;">
                   <span class="col-mono" style="font-size:.64rem;"><?= date('F j, Y · H:i', strtotime($c['submitted_at'])) ?></span>
@@ -168,7 +168,7 @@ try {
                 </div>
               </div>
               <?php if ($c['status'] === 'verified'): ?>
-              <button class="btn btn-primary btn-sm" onclick="showToast('info','Please proceed to the dispensing window at the CEAT Building lobby.')">
+              <button class="btn btn-primary btn-sm" onclick="showToast('info','Please proceed to the Dispensing Room with your university ID.')">
                 <i class="fa-solid fa-location-dot"></i> How to Claim
               </button>
               <?php endif; ?>
@@ -190,7 +190,7 @@ try {
               $steps = [
                 ['1','fa-magnifying-glass','Browse the Thread','Go to the Lost &amp; Found thread and find your item in the recovered items list.'],
                 ['2','fa-hand-pointer','Submit a Claim','Click "Claim This Item" and fill in your university ID and item description for verification.'],
-                ['3','fa-hand-holding','Pick Up at Window','Visit the dispensing window at the CEAT building lobby with your ID to complete the handoff.'],
+                ['3','fa-hand-holding','Pick Up at Dispensing Room','Visit the Dispensing Room with your ID to complete the handoff — the pickup point is the same regardless of which room the item was found in.'],
               ];
               foreach ($steps as $s): ?>
               <div style="text-align:center;padding:14px;">
@@ -257,7 +257,7 @@ try {
                 <span style="font-family:var(--font-display);font-size:.8rem;font-weight:700;color:var(--text-primary);">Did you lose something?</span>
               </div>
               <p style="font-size:.78rem;color:var(--text-muted);line-height:1.6;margin-bottom:.9rem;">
-                If your item is missing, it may have been detected by the S.P.O.T.-IT cameras. Browse the recovered items thread or visit the CEAT dispensing window.
+                If your item is missing, it may have been detected by the S.P.O.T.-IT cameras. Browse the recovered items thread or visit the Dispensing Room.
               </p>
               <a href="lost-thread.php" class="btn btn-primary" style="width:100%;justify-content:center;">
                 <i class="fa-solid fa-magnifying-glass"></i> Search Recovered Items
@@ -277,7 +277,11 @@ try {
     <div class="modal-body">
       <div class="selected-item-banner" style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:9px;background:var(--ok-bg);border:1px solid var(--ok-border);font-size:.82rem;color:var(--text-primary);margin-bottom:1rem;">
         <i class="fa-solid fa-circle-check" style="color:var(--ok);"></i>
-        <span>Claiming: <strong id="claimItemName">—</strong> from <strong id="claimItemRoom">—</strong></span>
+        <span>Claiming: <strong id="claimItemName">—</strong> &middot; found in <strong id="claimItemRoom">—</strong></span>
+      </div>
+      <div style="padding:9px 13px;background:var(--bg-base);border:1px solid var(--border);border-radius:9px;font-size:.76rem;color:var(--text-muted);margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+        <i class="fa-solid fa-location-dot" style="color:var(--green-main);"></i>
+        <span>Pickup location: <strong style="color:var(--text-primary);">Dispensing Room</strong> — same for every item, regardless of where it was found.</span>
       </div>
       <div class="form-group"><label class="form-label">Full Name *</label><input type="text" id="ci_name" class="form-control" placeholder="e.g. Maria Santos"/></div>
       <div class="form-group"><label class="form-label">University ID *</label><input type="text" id="ci_id" class="form-control" placeholder="e.g. 2021-00001"/></div>
@@ -285,7 +289,7 @@ try {
       <div class="form-group"><label class="form-label">Contact Number</label><input type="tel" id="ci_contact" class="form-control" placeholder="e.g. 09xx-xxx-xxxx"/></div>
       <div style="padding:12px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:9px;font-size:.78rem;color:var(--text-primary);margin-bottom:1rem;">
         <i class="fa-solid fa-triangle-exclamation" style="color:var(--warn);"></i>
-        Staff will verify your description matches the recovered item before releasing it. Please proceed to the dispensing window with your university ID.
+        Staff will verify your description matches the recovered item before releasing it. Please proceed to the Dispensing Room with your university ID.
       </div>
       <div class="modal-actions">
         <button class="modal-btn dismiss" onclick="closeModal('claimModal')">Cancel</button>
@@ -390,7 +394,7 @@ async function submitClaim() {
       })
     });
     if (res && res.success) {
-      showToast('success', 'Claim submitted! Please proceed to the CEAT dispensing window with your university ID.');
+      showToast('success', 'Claim submitted! Please proceed to the Dispensing Room with your university ID.');
       closeModal('claimModal');
       setTimeout(() => location.reload(), 1000);
     } else {
@@ -430,7 +434,7 @@ window.SPOTIT_TOUR_STEPS = [
     target: '#tourClaimHistory',
     icon: 'fa-solid fa-clock-rotate-left',
     title: 'My Claim History',
-    desc: 'Every claim you\'ve submitted lives here, with its current status. "Pending Pickup" means it\'s ready — just bring your university ID to the dispensing window.',
+    desc: 'Every claim you\'ve submitted lives here, with its current status. "Pending Pickup" means it\'s ready — just bring your university ID to the Dispensing Room.',
     placement: 'top',
   },
   {

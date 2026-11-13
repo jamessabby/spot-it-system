@@ -120,7 +120,7 @@ require_once __DIR__ . '/../config/env.php';
         <li>Suspension of your S.P.O.T.-IT account</li>
         <li>Referral to the Student Welfare and Formation Office (S.W.A.F.O.) for disciplinary action</li>
       </ul>
-      <p>All physical item handoffs occur at the designated dispensing window and include a documentation photo for chain-of-custody purposes.</p>
+      <p>All physical item handoffs occur at the Dispensing Room and include a documentation photo for chain-of-custody purposes.</p>
     </section>
 
     <section id="conduct">

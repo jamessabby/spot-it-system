@@ -173,7 +173,7 @@ $cb = '?v=' . time();
         <h3 style="font-family:'Outfit',sans-serif;font-size:1.15rem;font-weight:800;color:#0b4e28;margin-bottom:.6rem">Computer Engineering Thesis</h3>
         <p style="font-size:.82rem;color:#4a6b54;line-height:1.65;font-weight:500;margin-bottom:1.2rem">Developed for De La Salle University – Dasmariñas. Combines classical image processing with MobileNetV2 AI for real-time laboratory room accountability.</p>
         
-        <div style="font-size:.62rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#64748b;margin-bottom:.5rem">Engineers</div>
+        <div style="font-size:.62rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:#64748b;margin-bottom:.5rem">Student Researchers</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1rem">
           <span class="lp-author">Ryan Robert C. Diosana</span>
           <span class="lp-author">Yiannis L. Pedrozo</span>
