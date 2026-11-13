@@ -271,6 +271,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                     'live'              => (int)$liveCount,
                     'deviation'         => $det ? (int)$det['deviation'] : 0,
                     'last_calibrated'   => $r['last_calibrated'] ? date('F j, Y', strtotime($r['last_calibrated'])) : 'Never',
+                    'detection_id'      => $det ? (int)$det['detection_id'] : null,
                     'detection_at'      => $det ? $det['detected_at'] : null,
                     'confidence_score'  => $det ? (int)$det['confidence_score'] : null,
                     'confidence_grade'  => $det ? $det['confidence_grade'] : null,
@@ -481,9 +482,9 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
             <a href="room-monitor.php?room=<?= $room['id'] ?>" class="inv-foot-btn">
               <i class="fa-solid fa-video"></i> CCTV
             </a>
-            <button class="inv-foot-btn" onclick="triggerRecalibrate('<?= $room['id'] ?>')">
+            <a href="camera-setup.php?room=<?= urlencode($room['id']) ?>" class="inv-foot-btn">
               <i class="fa-solid fa-rotate"></i> Recalibrate
-            </button>
+            </a>
             <?php endif; ?>
           </div>
         </div>
@@ -793,6 +794,7 @@ foreach ($rooms as $r) {
         'live'           => $r['live'],
         'deviation'      => $r['deviation'],
         'last_calibrated'=> $r['last_calibrated'],
+        'detection_id'   => $r['detection_id'] ?? null,
         'detection_at'   => $r['detection_at'],
         'confidence_score' => $r['confidence_score'] ?? null,
         'confidence_grade' => $r['confidence_grade'] ?? null,
@@ -1097,9 +1099,9 @@ function openDrawer(roomId) {
         <a href="room-monitor.php?room=${room.id}" class="inv-foot-btn">
           <i class="fa-solid fa-video"></i> CCTV Feed
         </a>
-        <button class="inv-foot-btn" onclick="triggerRecalibrate('${room.id}')">
+        <a href="camera-setup.php?room=${room.id}" class="inv-foot-btn">
           <i class="fa-solid fa-rotate"></i> Recalibrate
-        </button>` : ''}
+        </a>` : ''}
       <button class="inv-foot-btn" onclick="closeDrawer()">
         <i class="fa-solid fa-xmark"></i> Close
       </button>
@@ -1142,10 +1144,16 @@ function closeDrawer() {
    VERIFY EVENT MODAL
 ══════════════════════════════════════ */
 let verifyRoomId = null;
+let verifyDetectionId = null;
 
 function openVerifyEvent(roomId) {
   const room = ROOMS.find(r => r.id === roomId);
+  if (!room || !room.detection_id) {
+    showToast('error', 'No active detection event found for ' + roomId + '.');
+    return;
+  }
   verifyRoomId = roomId;
+  verifyDetectionId = room.detection_id;
   document.getElementById('verifyModalTitle').textContent =
     'Verify Detection Event — ' + roomId;
   document.getElementById('verifyNotes').value = '';
@@ -1155,41 +1163,35 @@ function openVerifyEvent(roomId) {
 }
 
 async function submitVerify(action) {
-  if (!verifyRoomId) return;
+  if (!verifyDetectionId) return;
   const notes = document.getElementById('verifyNotes').value.trim();
 
   const messages = {
-    dismissed:         'Event dismissed as false alert. Audit log updated.',
-    recovered:         'Item marked as recovered. Lost & Found record created.',
-    confirmed_missing: 'Event confirmed as missing. Admin notified. Escalated.',
+    dismissed:         ['warn',    'Event dismissed as false alert. Audit log updated.'],
+    recovered:         ['success', 'Item marked as recovered.'],
+    confirmed_missing: ['error',   'Event confirmed as missing. Admin notified. Escalated.'],
   };
-  const types = { dismissed:'warn', recovered:'success', confirmed_missing:'error' };
 
-  try {
-    // In production: POST to auth/update_event_status.php with detection_id + status + notes
-    // const fd = new FormData();
-    // fd.append('detection_id', currentDetectionId);
-    // fd.append('status', action);
-    // fd.append('notes', notes);
-    // await spotitFetch('../auth/update_event_status.php', { method:'POST', body: fd });
-    showToast(types[action], messages[action]);
+  const result = await spotitFetch('../auth/update_event_status.php', {
+    method: 'POST',
+    body: new URLSearchParams({ detection_id: verifyDetectionId, status: action, notes }),
+  });
+
+  if (result && result.success) {
+    const [toastType, toastMsg] = messages[action] || ['info', 'Status updated.'];
+    showToast(toastType, toastMsg);
     closeModal('verifyModal');
-
-    // Update the card visually (in production, re-fetch from server)
-    const card = document.querySelector(`.inv-room-card[data-status]`);
-  } catch (e) {
-    showToast('error', 'Failed to submit verification. Please try again.');
+    setTimeout(() => location.reload(), 900);
+  } else {
+    showToast('error', (result && result.message) || 'Failed to submit verification. Please try again.');
   }
 }
 
 /* ══════════════════════════════════════
-   RECALIBRATE
+   RECALIBRATE — links to the real Camera Setup
+   workflow (capture baseline + redraw ROIs);
+   see room-monitor.php for the same pattern.
 ══════════════════════════════════════ */
-function triggerRecalibrate(roomId) {
-  showToast('info',
-    'Recalibration request sent for ' + roomId + '. ' +
-    'The Python module will capture a new reference frame on next scan.');
-}
 </script>
 </body>
 </html>

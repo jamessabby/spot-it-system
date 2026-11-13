@@ -8,7 +8,7 @@ require_once __DIR__ . '/../config/env.php';
 require_once __DIR__ . '/_guard.php';
 spotit_require_admin();
 
-$active_page = 'surrender_log';
+$active_page = 'surrender';
 $user_role   = $_SESSION['user_role'] ?? 'student';
 ?>
 <!DOCTYPE html>

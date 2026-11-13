@@ -185,7 +185,6 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
           <div class="card" id="tourEventLog">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Detection Event Log</div>
-              <a href="#" class="card-action">Export <i class="fa-solid fa-download"></i></a>
             </div>
             <?php
             $events = [];
@@ -281,7 +280,6 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
           <div class="card" id="tourAlerts">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-bell-ring"></i> Active Alerts</div>
-              <a href="#" class="card-action">Mark all read</a>
             </div>
             <?php
             $alerts = [];

@@ -348,6 +348,12 @@ try {
 startLiveClock('liveClock');
 let currentDetailId;
 
+function filterPanelType(type, btn) {
+  document.querySelectorAll('.notif-filter-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  loadNotifPanel(type || undefined);
+}
+
 function openClaimModal(id, name, room) {
   currentDetailId = id;
   document.getElementById('claimItemName').textContent = name;
