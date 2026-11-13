@@ -152,7 +152,7 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
             <div class="setting-label" style="margin-bottom:10px;">Theme</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:380px;">
               <?php foreach([['light','fa-sun','Light'],['dark','fa-moon','Dark'],['system','fa-circle-half-stroke','System']] as [$t,$ic,$lb]): ?>
-              <div class="theme-option <?= $t==='light'?'active':'' ?>" onclick="selectThemeOption('<?= $t ?>',this)">
+              <div class="theme-option <?= $t==='light'?'active':'' ?>" data-theme="<?= $t ?>" onclick="selectThemeOption('<?= $t ?>',this)">
                 <div class="theme-preview <?= $t ?>"></div>
                 <div style="display:flex;align-items:center;gap:5px;margin-top:6px;font-size:.72rem;font-family:var(--font-display);font-weight:700;color:var(--text-muted);">
                   <i class="fa-solid <?= $ic ?>"></i> <?= $lb ?>
@@ -335,10 +335,76 @@ function markChanged() {
   document.getElementById('unsavedBar').style.display = 'flex';
 }
 
-function saveAllSettings() {
-  hasChanges = false;
-  document.getElementById('unsavedBar').style.display = 'none';
-  showToast('success', 'Settings saved successfully.');
+/* ══════════════════════════════════════
+   LOAD / SAVE — Phase 2B
+   Every [data-key] checkbox + the theme choice now round-trip through
+   auth/get_settings.php and auth/save_settings.php (spotit_user_db.user_settings,
+   scoped to the logged-in user). The System tab's 4 admin toggles and the 4
+   threshold number inputs are deliberately excluded — see save_settings.php's
+   docblock for why fixing those would mean inventing new behavior, not wiring
+   up existing storage.
+══════════════════════════════════════ */
+async function loadSettings() {
+  const res = await spotitFetch('../auth/get_settings.php');
+  if (!res || !res.success) return; // leave the PHP-rendered defaults in place
+  const s = res.settings;
+
+  document.querySelectorAll('[data-key]').forEach(input => {
+    const key = input.dataset.key;
+    if (Object.prototype.hasOwnProperty.call(s, key)) {
+      input.checked = !!s[key];
+    }
+  });
+
+  if (s.ui_theme) {
+    document.getElementById('themeChoice').value = s.ui_theme;
+    const opt = document.querySelector(`.theme-option[data-theme="${s.ui_theme}"]`);
+    if (opt) {
+      document.querySelectorAll('.theme-option').forEach(o => o.classList.remove('active'));
+      opt.classList.add('active');
+    }
+    // 'system' has no defined rendering of its own (no OS-preference watcher
+    // exists anywhere in this app) — only light/dark have a concrete value
+    // to actually apply, so that is all that is applied here.
+    if (s.ui_theme === 'light' || s.ui_theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', s.ui_theme);
+      localStorage.setItem('spotit_theme', s.ui_theme);
+    }
+  }
+}
+
+function collectSettingsPayload() {
+  const payload = {};
+  document.querySelectorAll('[data-key]').forEach(input => {
+    // sys_* (System tab, admin only) is intentionally excluded — see
+    // save_settings.php's docblock.
+    if (input.dataset.key.startsWith('sys_')) return;
+    payload[input.dataset.key] = input.checked;
+  });
+  payload.ui_theme = document.getElementById('themeChoice').value;
+  return payload;
+}
+
+async function saveAllSettings() {
+  const btn = document.getElementById('saveAllBtn');
+  btn.disabled = true;
+
+  const res = await spotitFetch('../auth/save_settings.php', {
+    method: 'POST',
+    body: new URLSearchParams({ settings: JSON.stringify(collectSettingsPayload()) }),
+  });
+
+  btn.disabled = false;
+
+  if (res && res.success) {
+    hasChanges = false;
+    document.getElementById('unsavedBar').style.display = 'none';
+    showToast('success', 'Preferences saved.');
+  } else {
+    // No fake success: leave the unsaved-changes bar up and say what
+    // actually happened.
+    showToast('error', (res && res.message) || 'Failed to save settings. Please try again.');
+  }
 }
 
 function discardChanges() {
@@ -358,6 +424,8 @@ function selectThemeOption(t, el) {
   }
   markChanged();
 }
+
+document.addEventListener('DOMContentLoaded', loadSettings);
 
 window.addEventListener('beforeunload', e => {
   if (hasChanges) { e.preventDefault(); e.returnValue = ''; }
