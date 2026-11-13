@@ -3,8 +3,7 @@
 Runs the SAME suggestion step the live detector uses — yolo_detector.suggest_rois()
 with the real models/yolox_s.onnx weights — on image files, and writes, for each
 image, into --out only:
-    <name>_suggestions.jpg   annotated: suggestions (orange, label class score) and,
-                             thin grey, every other YOLO detection for transparency
+    <name>_suggestions.jpg   annotated with suggestion boxes only by default
     <name>_suggestions.json  suggestion boxes in THIS IMAGE's pixel coordinates
 
 Nothing is registered: to use a suggestion you still review it in the ROI editor.
@@ -13,6 +12,7 @@ Usage:
     python tools/suggest_from_image.py IMAGE [IMAGE ...] --out DIR
         [--classes keyboard,mouse,tv,laptop] [--min-score 0.30]
         [--rois rois_MLH305.json --rois-frame 1152x648]   (optional, read-only comparison)
+        [--show-raw]   (include other YOLO detections for debugging)
 
 Coordinates: boxes are in the pixel space of the image you pass in. A 640x360
 screenshot is NOT the detector's frame — results on it understate what the live
@@ -37,6 +37,8 @@ def main():
     ap.add_argument("--out", required=True, help="output folder (created if missing)")
     ap.add_argument("--classes", default=",".join(SUGGEST_DEFAULT_CLASSES))
     ap.add_argument("--min-score", type=float, default=0.30)
+    ap.add_argument("--show-raw", action="store_true",
+                    help="include other YOLO detections in the preview, JSON, and console (debug only)")
     ap.add_argument("--rois", action="append", default=[],
                     help="registered ROI json to compare against (one per image, same order; read-only)")
     ap.add_argument("--rois-frame", default="1152x648", help="pixel size the ROI file was drawn on")
@@ -64,15 +66,18 @@ def main():
         vis = img.copy()
         thick = max(1, round(w / 640))
         fs = 0.35 * max(1.0, w / 640)
-        sugg_boxes = {(s["x"], s["y"], s["w"], s["h"]) for s in sugg}
         others = []
-        for d in raw:
-            x1, y1, x2, y2 = (int(round(v)) for v in d["box"])
-            if (x1, y1, x2 - x1, y2 - y1) in sugg_boxes and d["cls"] in classes:
-                continue
-            others.append({"class": d["cls"], "score": round(d["score"], 3), "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (150, 150, 150), 1)
-            cv2.putText(vis, f"{d['cls']} {d['score']:.2f}", (x1 + 2, y2 - 3), cv2.FONT_HERSHEY_SIMPLEX, fs * 0.85, (170, 170, 170), 1)
+        if a.show_raw:
+            sugg_boxes = {(s["class"], s["x"], s["y"], s["w"], s["h"]) for s in sugg}
+            for d in raw:
+                left, top, right, bottom = d["box"]
+                x, y = int(round(left)), int(round(top))
+                bw, bh = int(round(right - left)), int(round(bottom - top))
+                if (d["cls"], max(0, x), max(0, y), bw, bh) in sugg_boxes:
+                    continue
+                others.append({"class": d["cls"], "score": round(d["score"], 3), "x": x, "y": y, "w": bw, "h": bh})
+                cv2.rectangle(vis, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
+                cv2.putText(vis, f"{d['cls']} {d['score']:.2f}", (x + 2, y + bh - 3), cv2.FONT_HERSHEY_SIMPLEX, fs * 0.85, (170, 170, 170), 1)
         for s in sugg:
             x, y, bw, bh = s["x"], s["y"], s["w"], s["h"]
             cv2.rectangle(vis, (x, y), (x + bw, y + bh), (40, 160, 255), thick + 1)
