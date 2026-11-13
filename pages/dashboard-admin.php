@@ -79,7 +79,13 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
     <div class="topbar">
       <button class="tb-btn tb-hamburger" id="hamburgerBtn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
       <div><span class="topbar-title">Overview Dashboard</span><span class="topbar-sub">— CEAT Building, MLH</span></div>
-      <div class="live-pill" id="tourLiveIndicator"><div class="live-dot"></div>LIVE</div>
+      <!-- Phase 1B: this page has no auto-refresh (the room table and KPIs are
+           rendered once, at page load — see the manual Refresh button at
+           right) so a pulsing "LIVE" badge here was never true. Shows when
+           this snapshot was actually loaded instead of fabricating liveness. -->
+      <div class="live-pill" id="tourLiveIndicator" style="color:var(--text-dim);background:var(--bg-base);border-color:var(--border);" title="This page does not auto-refresh — use Refresh for current data.">
+        <div class="live-dot" style="background:var(--text-dim);animation:none;"></div>Loaded <?= date('H:i:s') ?>
+      </div>
       <div class="topbar-right">
         <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);" id="liveClock"></span>
         <button class="tb-btn" onclick="location.reload()" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
@@ -129,22 +135,36 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                       $dev       = $r['deviation'] !== null ? (int)$r['deviation'] : 0;
                       $liveCount = $r['live_count'] !== null ? (int)$r['live_count'] : $base;
                       $status    = $r['det_status'] ?? 'normal';
-                      if ($r['monitoring_status'] !== 'active') {
-                          $status = 'offline';
+
+                      // Phase 1B: camera/detector connectivity and the admin
+                      // pause flag are a different axis from the detection
+                      // status above, and from each other — collapsing both
+                      // into one generic "offline" hid a calm recalibration
+                      // pause behind the same label as a crashed detector.
+                      $conn = ms_room_connectivity_status($rid, $r['monitoring_status']);
+                      if ($conn) {
+                          $status = $conn['status'];
                       }
 
                       $statusLabel = match($status) {
                           'confirmed_missing' => 'MISSING',
                           'potential'         => 'POTENTIAL',
-                          'offline'           => 'OFFLINE',
+                          'offline'           => $conn['label'] ?? 'OFFLINE',
+                          'reconnecting'      => 'RECONNECTING',
+                          'paused'            => $conn['label'] ?? 'PAUSED',
+                          'no_camera'         => 'NO CAMERA',
                           default             => 'NORMAL',
                       };
 
-                      $badgeClass = match($status) {
-                          'confirmed_missing' => 'badge-alert',
-                          'potential'         => 'badge-warn',
-                          'offline'           => 'badge-muted',
-                          default             => 'badge-ok',
+                      $badgeClass = match($conn['severity'] ?? null) {
+                          'alert' => 'badge-alert',
+                          'warn'  => 'badge-warn',
+                          'muted' => 'badge-muted',
+                          default => match($status) {
+                              'confirmed_missing' => 'badge-alert',
+                              'potential'         => 'badge-warn',
+                              default             => 'badge-ok',
+                          },
                       };
 
                       $devClass = $dev < 0 ? 'dev-neg' : ($dev > 0 ? 'dev-pos' : 'dev-zero');

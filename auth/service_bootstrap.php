@@ -21,7 +21,8 @@ require_once __DIR__ . '/../services/monitoring/db.php';
 require_once __DIR__ . '/../services/lostfound/db.php';
 require_once __DIR__ . '/../services/user/db.php';
 require_once __DIR__ . '/../services/community/db.php';
-require_once __DIR__ . '/event_kinds.php';  // registered equipment vs. unregistered items
+require_once __DIR__ . '/event_kinds.php';     // registered equipment vs. unregistered items
+require_once __DIR__ . '/detector_state.php';  // detector_health() / ms_room_connectivity_status()
 
 // Instantiate once — singletons via static
 $authPdo      = getAuthDB();

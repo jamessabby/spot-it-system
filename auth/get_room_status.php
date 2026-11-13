@@ -145,6 +145,10 @@ try {
         'room_name'         => $room['room_name'] ?? $roomId,
         'floor_level'       => $room['floor'] ?? 'Ground Floor',
         'status'            => $missingCount > 0 ? 'DEVIATION' : 'NORMAL',
+        // Phase 1B: the administrative pause axis, kept distinct from camera/
+        // detector connectivity (which the page gets separately from
+        // detector_heartbeat.php). Already in $room — no extra query.
+        'monitoring_status' => $room['monitoring_status'] ?? 'active',
         'baseline_count'    => $baselineCount,
         'live_count'        => $liveCount,
         'missing_count'     => $missingCount,

@@ -144,10 +144,8 @@ try {
         $zones = $zonesByRoom[$rid] ?? [];
         $logs  = $logsByRoom[$rid]  ?? [];
 
-        // Determine room status from monitoring_status + active detection
-        if ($room['monitoring_status'] !== 'active') {
-            $roomStatus = 'offline';
-        } elseif ($det) {
+        // Determine room status from the active detection first...
+        if ($det) {
             $roomStatus = match($det['status']) {
                 'confirmed_missing' => 'missing',
                 'potential'         => 'potential',
@@ -155,6 +153,20 @@ try {
             };
         } else {
             $roomStatus = 'normal';
+        }
+
+        // ...then let camera/detector connectivity or an administrative pause
+        // override it. Phase 1B: these are a different axis from the
+        // detection status above, and from each other — collapsing both into
+        // one generic "offline" hid a calm recalibration pause behind the
+        // same label as a crashed detector. Folded into the existing
+        // 'offline' summary bucket (no new category for the pill counts),
+        // with its own more specific label text.
+        $roomStatusLabel = null;
+        $conn = ms_room_connectivity_status($rid, $room['monitoring_status']);
+        if ($conn) {
+            $roomStatus = 'offline';
+            $roomStatusLabel = $conn['label'];
         }
 
         // Live count = baseline minus deviation (since deviation is negative for missing items)
@@ -209,6 +221,7 @@ try {
             'cameras'          => (int)$room['camera_count'],
             'monitoring_status'=> $room['monitoring_status'],
             'status'           => $roomStatus,
+            'status_label'     => $roomStatusLabel,
             'baseline'         => (int)$room['baseline_count'],
             'live'             => $liveCount,
             'deviation'        => $deviation,

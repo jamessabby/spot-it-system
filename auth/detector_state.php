@@ -270,7 +270,11 @@ function detector_health(string $roomId): array
  *   NO_CAMERA         detector running, but no camera assigned to this room
  *   RECONNECTING      detector is re-opening the camera stream right now
  *   CAMERA_OFFLINE    detector running, camera not delivering new frames
- *   LIVE              new frames are arriving
+ *   STALE             detector running, camera reports live, but its last
+ *                     heartbeat is older than DETECTOR_STALE_SEC — still
+ *                     within the offline grace period, so not yet a failure,
+ *                     but old enough that calling it "live" would overclaim
+ *   LIVE              new frames are arriving and the heartbeat is fresh
  *
  * Heartbeats from an older main.py (camera = "online"/"offline", no frame age)
  * map onto LIVE / CAMERA_OFFLINE so a mixed deployment keeps working.
@@ -287,7 +291,9 @@ function detector_feed_state(?int $lastHeartbeat, array $hb, int $now): array
     $since = $lastFrameAt ? ' Last frame received at ' . date('H:i:s', $lastFrameAt) . " ({$frameAge}s ago)." : '';
 
     $offlineSec = defined('DETECTOR_OFFLINE_SEC') ? DETECTOR_OFFLINE_SEC : 30;
-    if (!$lastHeartbeat || $now - $lastHeartbeat > $offlineSec) {
+    $staleSec   = defined('DETECTOR_STALE_SEC') ? DETECTOR_STALE_SEC : 15;
+    $heartbeatAge = $lastHeartbeat !== null ? $now - $lastHeartbeat : null;
+    if (!$lastHeartbeat || $heartbeatAge > $offlineSec) {
         return $out('DETECTOR_OFFLINE', $lastHeartbeat
             ? 'The detector (main.py) stopped reporting at ' . date('H:i:s', $lastHeartbeat) . '. The picture shown is not live.' . $since
             : 'The detector (main.py) has never reported for this room.');
@@ -302,10 +308,66 @@ function detector_feed_state(?int $lastHeartbeat, array $hb, int $now): array
     if ($camera === 'offline') {
         return $out('CAMERA_OFFLINE', 'The detector is running, but the camera is not sending frames.' . $since);
     }
+    // Camera reports live/online/unknown. Still check heartbeat freshness before
+    // calling it LIVE — a heartbeat that is merely "not yet offline" is not the
+    // same as "confirmed moments ago". See DETECTOR_STALE_SEC above.
+    if ($heartbeatAge > $staleSec) {
+        return $out('STALE', 'The detector last checked in at ' . date('H:i:s', $lastHeartbeat)
+            . " ({$heartbeatAge}s ago). The picture may not reflect the current state." . $since);
+    }
     if ($camera === 'live' || $camera === 'online') {
         return $out('LIVE', 'Live.');
     }
     return $out('LIVE', 'Live (detector did not report camera state).');
+}
+
+// ── Administrative monitoring-pause axis ──────────────────────────────────────
+
+/**
+ * Phase 1B — one room's status along two axes kept deliberately distinct from
+ * each other, and from whatever detection-based status (confirmed_missing /
+ * potential / normal) the caller tracks separately:
+ *
+ *   - camera/detector connectivity, from the heartbeat file (detector_health())
+ *   - the administrative "monitoring paused" flag (rooms.monitoring_status),
+ *     set e.g. by the mass-deviation auto-flood-gate (CLAUDE.md §3c) — a
+ *     deliberate pause, not a connection failure
+ *
+ * Collapsing both into one generic "offline" (the bug this fixes) hides a
+ * calm, expected recalibration pause behind the same label as a crashed
+ * detector, and vice versa.
+ *
+ * Returns null when both axes are healthy (detector online, feed LIVE or
+ * STALE, monitoring_status active) — the caller's own detection-based status
+ * is authoritative in that case. Otherwise returns the one state that should
+ * take priority over it, with a human label and a generic severity
+ * ('alert'|'warn'|'muted') for the caller to map onto its own CSS. Takes
+ * $monitoringStatus as a plain value rather than querying the database —
+ * every caller already has the room row in hand.
+ *
+ * @return array{status:string, label:string, severity:string, health:array}|null
+ */
+function ms_room_connectivity_status(string $roomId, string $monitoringStatus): ?array
+{
+    $health = detector_health($roomId);
+    $feed   = $health['online'] ? $health['feed_state'] : 'DETECTOR_OFFLINE';
+
+    $connectivity = [
+        'DETECTOR_OFFLINE' => ['status' => 'offline',      'label' => 'Detector Offline',   'severity' => 'alert'],
+        'CAMERA_OFFLINE'   => ['status' => 'offline',      'label' => 'Camera Offline',     'severity' => 'alert'],
+        'RECONNECTING'     => ['status' => 'reconnecting', 'label' => 'Reconnecting',       'severity' => 'warn'],
+        'NO_CAMERA'        => ['status' => 'no_camera',    'label' => 'No Camera Assigned', 'severity' => 'muted'],
+    ];
+    if (isset($connectivity[$feed])) {
+        return $connectivity[$feed] + ['health' => $health];
+    }
+
+    if ($monitoringStatus !== 'active') {
+        $label = $monitoringStatus === 'calibrating' ? 'Calibrating' : 'Monitoring Paused';
+        return ['status' => 'paused', 'label' => $label, 'severity' => 'muted', 'health' => $health];
+    }
+
+    return null;
 }
 
 // ── Shared API-key auth for detector endpoints ────────────────────────────────

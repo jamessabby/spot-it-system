@@ -222,3 +222,10 @@ define('LIVE_VIEWER_TTL_SEC', 15);
 
 // A detector that has not checked in for this long is shown as offline.
 define('DETECTOR_OFFLINE_SEC', 30);
+
+// Heartbeats arrive every 10s (main.py's HEARTBEAT_SEC). Up to one missed beat
+// is normal network jitter and still shown as LIVE; beyond that but short of
+// DETECTOR_OFFLINE_SEC, the picture is shown as STALE rather than LIVE — a
+// claim this old is not "current" even though the detector has not formally
+// gone offline yet. See detector_feed_state() in auth/detector_state.php.
+define('DETECTOR_STALE_SEC', 15);

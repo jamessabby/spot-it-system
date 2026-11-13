@@ -248,16 +248,28 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                 }
                 
                 $status = 'normal';
-                if ($r['monitoring_status'] !== 'active') {
-                    $status = 'offline';
-                } elseif ($det) {
+                if ($det) {
                     $status = match($det['status']) {
                         'confirmed_missing' => 'missing',
                         'potential'         => 'potential',
                         default             => 'normal',
                     };
                 }
-                
+
+                // Phase 1B: camera/detector connectivity and the admin pause
+                // flag are a different axis from the detection status above —
+                // collapsing both into "offline" hid a calm recalibration
+                // pause behind the same label as a crashed detector. Folded
+                // into the existing 'offline' filter/count bucket (so the
+                // filter pills and summary strip need no new category), but
+                // carries its own, more specific label text.
+                $statusLabelOverride = null;
+                $conn = ms_room_connectivity_status($rid, $r['monitoring_status']);
+                if ($conn) {
+                    $status = 'offline';
+                    $statusLabelOverride = $conn['label'];
+                }
+
                 $liveCount = $det ? ($r['baseline_count'] + (int)$det['deviation']) : $r['baseline_count'];
                 
                 $rooms[] = [
@@ -267,6 +279,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                     'type'              => $r['room_type'],
                     'cameras'           => (int)$r['camera_count'],
                     'status'            => $status,
+                    'status_label'      => $statusLabelOverride,
                     'baseline'          => (int)$r['baseline_count'],
                     'live'              => (int)$liveCount,
                     'deviation'         => $det ? (int)$det['deviation'] : 0,
@@ -350,7 +363,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
             <div class="inv-status-wrap">
               <span class="inv-status-badge <?= $badgeCls[$st] ?>">
                 <span class="sb-dot"></span>
-                <?= $statusLabel[$st] ?>
+                <?= htmlspecialchars($room['status_label'] ?? $statusLabel[$st]) ?>
               </span>
               <?php if ($room['detection_at']): ?>
               <span style="font-family:var(--font-mono);font-size:.6rem;color:var(--text-dim);">
@@ -556,7 +569,7 @@ $normalCount = max(0, $sumRooms - $potentialCount - $missingCount);
                 </td>
                 <td>
                   <span class="inv-status-badge <?= $badgeCls[$st] ?>">
-                    <span class="sb-dot"></span><?= $statusLabel[$st] ?>
+                    <span class="sb-dot"></span><?= htmlspecialchars($room['status_label'] ?? $statusLabel[$st]) ?>
                   </span>
                 </td>
                 <td>
@@ -790,6 +803,7 @@ foreach ($rooms as $r) {
         'type'           => $r['type'],
         'cameras'        => $r['cameras'],
         'status'         => $r['status'],
+        'status_label'   => $r['status_label'] ?? null,
         'baseline'       => $r['baseline'],
         'live'           => $r['live'],
         'deviation'      => $r['deviation'],
@@ -887,6 +901,29 @@ function startAutoRefresh() {
   refreshInterval = setInterval(refreshData, 10000);
 }
 
+// Phase 1B: #livePill used to say "LIVE" unconditionally. This page's only
+// real claim to liveness is this auto-refresh loop, so the pill now reflects
+// whether it is actually running and actually succeeding — never a fabricated
+// state. No new polling: it just reads the outcome of the existing 10s poll.
+function setLivePill(state, detail) {
+  const pill = document.getElementById('livePill');
+  if (!pill) return;
+  const dot = pill.querySelector('.live-dot');
+  const styles = {
+    live:   { text: 'LIVE',           color: 'var(--ok)',      bg: 'var(--ok-bg)',    border: 'var(--ok-border)' },
+    paused: { text: 'AUTO-REFRESH OFF', color: 'var(--text-dim)', bg: 'var(--bg-base)', border: 'var(--border)' },
+    failed: { text: 'UPDATE FAILED',  color: 'var(--alert)',   bg: 'var(--alert-bg)', border: 'var(--alert-border)' },
+  };
+  const s = styles[state] || styles.paused;
+  pill.style.color = s.color;
+  pill.style.background = s.bg;
+  pill.style.borderColor = s.border;
+  pill.title = detail || '';
+  if (dot) { dot.style.background = s.color; dot.style.animation = state === 'live' ? '' : 'none'; }
+  const label = pill.lastChild;
+  if (label && label.nodeType === Node.TEXT_NODE) label.textContent = s.text;
+}
+
 function toggleAutoRefresh() {
   autoRefreshEnabled = !autoRefreshEnabled;
   const btn = document.getElementById('autoRefreshBtn');
@@ -895,11 +932,13 @@ function toggleAutoRefresh() {
     btn.style.color = 'var(--ok)';
     btn.title = 'Auto-refresh ON';
     showToast('success', 'Auto-refresh enabled — updates every 10 seconds.');
+    refreshData();
   } else {
     clearInterval(refreshInterval);
     btn.style.color = 'var(--text-dim)';
     btn.title = 'Auto-refresh OFF';
     showToast('warn', 'Auto-refresh paused. Click to resume.');
+    setLivePill('paused', 'Auto-refresh is off — data may be out of date.');
   }
 }
 
@@ -914,10 +953,14 @@ async function refreshData() {
       updatePillCounts(data.summary);
       const now = new Date().toLocaleTimeString('en-PH', { hour12: true });
       document.getElementById('lastRefreshed').textContent = now;
+      setLivePill('live', `Last updated ${now}`);
+    } else if (autoRefreshEnabled) {
+      setLivePill('failed', 'The last update from the server failed.');
     }
   } catch (e) {
     // Silent fail — do not interrupt the UI on a background poll
     console.warn('[Inventory] Refresh failed:', e);
+    if (autoRefreshEnabled) setLivePill('failed', 'The last update from the server failed.');
   } finally {
     setTimeout(() => btn.classList.remove('spinning'), 500);
   }
@@ -963,10 +1006,14 @@ function openDrawer(roomId) {
     offline: 'dim', calibrating: 'info',
   }[room.status] || 'ok';
 
-  const statusLabel = {
+  // Phase 1B: room.status_label carries the more specific wording (e.g.
+  // "Detector Offline" vs "Monitoring Paused") when ms_room_connectivity_status()
+  // overrode the detection-based status server-side; fall back to the generic
+  // label only when there is no override.
+  const statusLabel = room.status_label || ({
     normal: 'Normal', potential: 'Potentially Lost',
     missing: 'Confirmed Missing', offline: 'Offline', calibrating: 'Calibrating',
-  }[room.status] || 'Unknown';
+  }[room.status] || 'Unknown');
 
   const devNum = room.deviation;
   const devStr = devNum === null ? '—' : devNum === 0 ? '0' : (devNum > 0 ? '+' + devNum : '' + devNum);

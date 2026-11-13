@@ -922,6 +922,13 @@ async function resetSystemState() {
    LIVE CCTV SANDBOX INTEGRATION
 ══════════════════════════════════════ */
 const ROOM_ID = 'DESK';
+// Phase 1B: tapo_stream.php's MJPEG proxy is LOCAL-ONLY by design (CLAUDE.md
+// §1a) — it 501s in a remote deployment because rtsp://192.168.x.x is not
+// reachable from a hosted server. This page used to call it unconditionally,
+// so the sandbox showed "OFFLINE" in remote mode even with a healthy
+// detector. SPOTIT_REMOTE picks the same heartbeat-based source of truth
+// room-monitor.php already uses instead, in that mode only.
+const SPOTIT_REMOTE = <?= IS_REMOTE_DEPLOY ? 'true' : 'false' ?>;
 let currentQuality = 'high';
 const camState = { 1: 'connecting' };
 let livePollInterval = null;
@@ -975,11 +982,32 @@ function showDeskNotLive(data) {
   if (msg) msg.textContent = data ? data.reason : 'Camera offline.';
 }
 
+// Phase 1B — one status check, two sources. Local mode asks tapo_stream.php
+// (it can actually reach the camera there). Remote mode cannot, so it reads
+// the same heartbeat health room-monitor.php already relies on and maps it
+// onto the same {status, feed_state, reason} shape the rest of this page's
+// rendering code (showDeskNotLive, setCamState) already expects — no
+// rendering logic duplicated, only the source of truth changes.
+async function checkDeskCameraStatus() {
+  if (!SPOTIT_REMOTE) {
+    return spotitFetch(`../auth/tapo_stream.php?action=status&room_id=${ROOM_ID}&cam=1`);
+  }
+  const res = await spotitFetch(`../auth/detector_heartbeat.php?room_id=${ROOM_ID}`);
+  const h = (res && res.health) || {};
+  if (!res) return null;
+  const live = h.online && (h.feed_state === 'LIVE' || h.feed_state === 'STALE');
+  return {
+    status: live ? 'online' : (h.feed_state === 'RECONNECTING' ? 'reconnecting' : 'offline'),
+    feed_state: h.feed_state,
+    reason: h.feed_message || (h.online ? 'Camera not sending frames.' : 'Detector not reporting.'),
+  };
+}
+
 let deskFeedWatchTimer = null;
 function startDeskFeedWatch() {
   if (deskFeedWatchTimer) return;
   deskFeedWatchTimer = setInterval(async () => {
-    const data = await spotitFetch(`../auth/tapo_stream.php?action=status&room_id=${ROOM_ID}&cam=1`);
+    const data = await checkDeskCameraStatus();
     if (!data) return;                       // our own connection failed
     if (data.status === 'online') {
       if (camState[1] !== 'online') initCamera();   // came back: restart the feed
@@ -1017,9 +1045,9 @@ async function initCamera() {
   msg.textContent = 'Establishing secure tapo stream…';
 
   try {
-    const data = await spotitFetch(`../auth/tapo_stream.php?action=status&room_id=${ROOM_ID}&cam=1`);
+    const data = await checkDeskCameraStatus();
     if (data && data.status === 'online') {
-      
+
       setCamState('online');
       offline.style.display = 'none';
       

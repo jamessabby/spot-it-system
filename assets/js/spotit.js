@@ -163,6 +163,50 @@ async function spotitFetch(url, opts = {}) {
 
 
 /* ══════════════════════════════════════
+   DETECTOR CONNECTIVITY LABEL (Phase 1B)
+   One shared reading of auth/detector_heartbeat.php's `health` object, so
+   every page's LIVE/OFFLINE/STALE badge agrees with every other page's.
+   `health` is detector_health() from auth/detector_state.php — see that
+   file for what each feed_state means and why STALE exists.
+══════════════════════════════════════ */
+function spotitConnectivityLabel(health) {
+  const h = health || {};
+  if (!h.online) {
+    return {
+      text: 'DETECTOR OFFLINE',
+      color: '#dc3545',
+      severity: 'alert',
+      title: h.last_seen
+        ? `No heartbeat since ${h.last_seen}. Check that main.py is running.`
+        : 'This detector has never checked in.',
+    };
+  }
+  const notLive = {
+    CAMERA_OFFLINE: ['CAMERA OFFLINE', '#dc3545', 'alert'],
+    RECONNECTING:   ['RECONNECTING',   '#e6a700', 'warn'],
+    NO_CAMERA:      ['NO CAMERA',      '#888',    'muted'],
+    // STALE: detector is alive and the camera last reported live, but the
+    // heartbeat itself is old enough that "LIVE" would overclaim freshness.
+    STALE:          ['STALE',          '#e6a700', 'warn'],
+  };
+  if (notLive[h.feed_state]) {
+    const [text, color, severity] = notLive[h.feed_state];
+    return {
+      text: h.last_frame_time ? `${text} · last frame ${h.last_frame_time}` : text,
+      color, severity,
+      title: h.feed_message || text,
+    };
+  }
+  return {
+    text: h.fps ? `LIVE · ${h.fps} FPS` : 'LIVE',
+    color: '#00ff88',
+    severity: 'ok',
+    title: `Detector online — last seen ${h.seconds_ago}s ago.`,
+  };
+}
+
+
+/* ══════════════════════════════════════
    TIME AGO HELPER
 ══════════════════════════════════════ */
 function spotitTimeAgo(dateStr) {

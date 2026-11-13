@@ -44,12 +44,23 @@ $claimsCount = (int)$lfPdo->query(
 
 $totalAlerts = $cctvCount + $missingCount + $claimsCount;
 
-$offlineRoomsStmt = $monitorPdo->query(
+// Phase 1B: checked against EVERY enabled room, not just ones the admin paused
+// — a crashed detector on a room nobody paused used to leave no trace here at
+// all (the room just looked quiet). ms_room_connectivity_status() folds in
+// both axes (camera/detector connectivity and the administrative pause flag)
+// and returns null for rooms that are genuinely fine on both.
+$allEnabledRoomsStmt = $monitorPdo->query(
     "SELECT room_id, room_name, floor, monitoring_status
-     FROM rooms WHERE is_active = 1 AND is_enabled = 1 AND monitoring_status != 'active'
+     FROM rooms WHERE is_active = 1 AND is_enabled = 1
      ORDER BY room_id"
 );
-$offlineRooms = $offlineRoomsStmt->fetchAll();
+$offlineRooms = [];
+foreach ($allEnabledRoomsStmt->fetchAll() as $r) {
+    $conn = ms_room_connectivity_status($r['room_id'], $r['monitoring_status']);
+    if ($conn) {
+        $offlineRooms[] = $r + ['connectivity' => $conn];
+    }
+}
 $offlineCount = count($offlineRooms);
 
 // ── 2. Pull unresolved detections (CCTV deviations + confirmed missing) ───────
@@ -112,20 +123,28 @@ foreach ($detections as $d) {
 }
 
 foreach ($offlineRooms as $r) {
+    $conn = $r['connectivity'];
+    // Phase 1B: a real connectivity failure (icon: plug/wifi, red/amber) reads
+    // very differently from an administrative pause (icon: pause, muted gray)
+    // — collapsing them under one "Camera Offline" label was the bug.
+    $isPause = $conn['status'] === 'paused';
     $rows[] = [
         'rank'      => 3,
+        // Kept as 'offline' (not a new type) so the existing "Offline" filter
+        // tab and its count still find these rows; only the label/icon/
+        // severity below need to tell the two apart.
         'type'      => 'offline',
         'sub_id'    => 0,
-        'icon'      => 'fa-wifi',
-        'type_label'=> 'Camera Offline',
-        'type_sub'  => ucfirst($r['monitoring_status']),
+        'icon'      => $isPause ? 'fa-circle-pause' : ($conn['status'] === 'reconnecting' ? 'fa-rotate' : 'fa-plug-circle-xmark'),
+        'type_label'=> $conn['label'],
+        'type_sub'  => $isPause ? ucfirst($r['monitoring_status']) : 'CCTV / Detector',
         'subject'   => $r['room_name'],
         'subject_sub' => $r['floor'] ?: '—',
         'room'      => $r['room_id'],
         'room_name' => $r['room_name'],
         'ts'        => null,
         'elapsed'   => null,
-        'severity'  => 'dim',
+        'severity'  => match($conn['severity']) { 'alert' => 'alert', 'warn' => 'warn', default => 'dim' },
         'snap_a'    => null, 'snap_b' => null,
         'notes'     => null,
     ];
@@ -211,7 +230,12 @@ function al_js($value): string {
         <span class="topbar-title">Alerts</span>
         <span class="topbar-sub"> — Live Triage Queue</span>
       </div>
-      <div class="live-pill"><div class="live-dot"></div>LIVE</div>
+      <!-- Phase 1B: this page has no auto-refresh (it is a server-rendered
+           snapshot; see the manual Refresh button at right), so a pulsing
+           "LIVE" badge here was never true. -->
+      <div class="live-pill" style="color:var(--text-dim);background:var(--bg-base);border-color:var(--border);" title="This page does not auto-refresh — use Refresh for current data.">
+        <div class="live-dot" style="background:var(--text-dim);animation:none;"></div>Loaded <?= date('H:i:s') ?>
+      </div>
       <div class="topbar-right">
         <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);" id="liveClock"></span>
         <button class="tb-btn" onclick="location.reload()" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>

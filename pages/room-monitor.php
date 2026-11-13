@@ -79,7 +79,14 @@ $timer_mode    = $dm['timer_mode'] ?? 'testing_speed';
       <div class="live-pill" id="detectorPill" title="Checking detector...">
         <div class="live-dot" id="detectorDot"></div><span id="detectorLabel">LIVE FEED</span>
       </div>
-      
+      <!-- Phase 1B: the administrative pause (rooms.monitoring_status) is a
+           separate axis from camera/detector connectivity above — a paused
+           room is not the same thing as a connection failure. Hidden unless
+           the room is actually paused. -->
+      <div class="live-pill" id="monitoringPausedPill" style="display:none;background:var(--bg-base);color:var(--text-dim);border-color:var(--border);">
+        <i class="fa-solid fa-pause" style="font-size:.6rem;"></i><span id="monitoringPausedLabel">MONITORING PAUSED</span>
+      </div>
+
       <div class="topbar-right">
         <!-- Room Selector -->
         <!-- Detection mode: each option runs a different presence algorithm in main.py
@@ -268,6 +275,18 @@ async function pollRoomStatus() {
       if (stBadge) {
         stBadge.innerText = res.status;
         stBadge.style.color = (res.status === 'NORMAL') ? 'var(--ok)' : 'var(--alert)';
+      }
+
+      // Phase 1B: administrative pause, shown only when it applies — kept
+      // separate from the detectorPill's camera/detector connectivity.
+      const pausedPill = document.getElementById('monitoringPausedPill');
+      if (pausedPill) {
+        const paused = res.monitoring_status && res.monitoring_status !== 'active';
+        pausedPill.style.display = paused ? '' : 'none';
+        if (paused) {
+          document.getElementById('monitoringPausedLabel').textContent =
+            res.monitoring_status === 'calibrating' ? 'CALIBRATING' : 'MONITORING PAUSED';
+        }
       }
 
       // Refresh camera image element
@@ -660,30 +679,13 @@ async function pollDetectorHealth() {
       { cache: 'no-store' }
     );
     const data = await res.json();
-    const h = (data && data.health) || {};
-    // WEB-07: "detector running" is not "camera live". feed_state says which.
-    const notLive = { CAMERA_OFFLINE: ['CAMERA OFFLINE', '#dc3545'],
-                      RECONNECTING:   ['RECONNECTING',   '#e6a700'],
-                      NO_CAMERA:      ['NO CAMERA',      '#888'] };
-    if (h.online && notLive[h.feed_state]) {
-      const [text, colour] = notLive[h.feed_state];
-      dot.style.background = colour;
-      label.textContent = h.last_frame_time ? `${text} · last frame ${h.last_frame_time}` : text;
-      pill.style.opacity = '1';
-      pill.title = h.feed_message || text;
-    } else if (h.online) {
-      dot.style.background = '#00ff88';
-      label.textContent = h.fps ? `LIVE · ${h.fps} FPS` : 'LIVE FEED';
-      pill.style.opacity = '1';
-      pill.title = `Detector online — last seen ${h.seconds_ago}s ago (${data.deploy} mode)`;
-    } else {
-      dot.style.background = '#dc3545';
-      label.textContent = 'DETECTOR OFFLINE';
-      pill.style.opacity = '1';
-      pill.title = h.last_seen
-        ? `No heartbeat since ${h.last_seen}. Check that main.py is running on the lab PC.`
-        : 'This detector has never checked in. Start main.py on the lab PC.';
-    }
+    // Phase 1B: spotitConnectivityLabel() (assets/js/spotit.js) is the one
+    // shared reading of this health object — every page's badge agrees.
+    const l = spotitConnectivityLabel(data && data.health);
+    dot.style.background = l.color;
+    label.textContent = l.text;
+    pill.style.opacity = '1';
+    pill.title = l.title;
   } catch (e) {
     // Leave the badge as-is: a failed poll means OUR connection is unhappy,
     // which says nothing about whether the detector is running.
