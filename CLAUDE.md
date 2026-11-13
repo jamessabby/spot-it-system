@@ -642,6 +642,26 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Sidebar simplification):** `pages/_sidebar.php`'s admin side had grown to
+  22 links across 6 sections (Monitoring/Lost & Found/Management/My Activity/Community/
+  Account) with no distinction between pages opened every shift and pages opened a few
+  times a semester. Regrouped, same destinations/permissions, no page merges:
+  - **Daily-use pages promoted to an unlabeled top group** (the most visually prominent
+    position): Overview, Room Cameras, Alerts, Claiming Station.
+  - **Lost & Found** keeps Event Log, Surrender Log, Recovered Items, Donation &
+    Retention — day-to-day lost-and-found work, one level down.
+  - **Setup & Management** (new, demoted group): Inventory Monitor, Camera Setup, Room
+    Setup, Live Sandbox Test, Analytics & Audit, Users, System Logs — infrequent
+    setup/admin tools that were previously mixed in at the same visual weight as Alerts.
+  - Student sidebar already led with Lost & Found (Browse Items/My Claims/My Posts) —
+    left that structure, just reordered (Browse Items, My Posts, My Claims) to put the
+    two most-used pages first.
+  - Admin's "My Posts" moved from its own one-item "My Activity" section into the shared
+    Community section (next to Announcements/Forum, which it's actually part of).
+  No `active_page` keys, hrefs, or role gates changed — verified by re-sweeping every
+  sidebar link on both roles (correct URL + correct active-highlight) in the same
+  browser-harness run as the fixes above.
+
 - **2026-11-13 (Website polish pass — workflow/label fixes, pre-sidebar):** Walked both
   roles' navigation looking for dead buttons, broken links, misleading labels, and pages
   disagreeing about the same record. Confirmed and fixed, each a real bug not just a

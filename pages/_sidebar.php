@@ -2,6 +2,17 @@
 /**
  * S.P.O.T.-IT — Shared Sidebar Component (UPDATED)
  * pages/_sidebar.php
+ *
+ * Simplified 2026-11-13: admin had grown to 22 links across 6 sections
+ * (Monitoring/Lost & Found/Management/My Activity/Community/Account), most
+ * of them day-to-day-irrelevant setup tools competing for the same visual
+ * weight as the pages staff actually open every shift. Regrouped so the
+ * four daily-use pages sit at the top with no section label at all (most
+ * prominent position), Lost & Found keeps its own frequently-used group,
+ * and setup/management tools are demoted into one secondary group below.
+ * Student sidebar already put Lost & Found + My Posts at the top — left
+ * that structure as-is, just reordered by actual use frequency.
+ * No page merges, no URL/permission changes — same destinations as before.
  */
 $active  = $active_page  ?? '';
 $role    = $user_role    ?? ($_SESSION['user_role'] ?? 'student');
@@ -23,27 +34,23 @@ $initials = strtoupper(
   </div>
 
   <?php if ($role === 'admin'): ?>
-    <div class="sb-section">
-      <div class="sb-section-label">Monitoring</div>
+  <!-- Daily-use pages, no section label: the most visually prominent spot,
+       for the pages staff open every shift (Room Cameras, Alerts, Claiming
+       Station — the three named when this group was requested). -->
+  <div class="sb-section">
     <a href="dashboard-admin.php" class="sb-item <?= $active==='dashboard'?'active':'' ?>">
       <i class="fa-solid fa-gauge-high"></i> Overview
       <span class="sb-badge sb-badge-alert" id="sb-badge-alerts" style="display:none">0</span>
     </a>
-    <a href="inventory-monitor.php" class="sb-item <?= $active==='inventory'?'active':'' ?>">
-      <i class="fa-solid fa-boxes-stacked"></i> Inventory Monitor
-      <span class="sb-badge sb-badge-warn" id="sb-badge-warn" style="display:none">0</span>
-    </a>
     <a href="room-monitor.php" class="sb-item <?= $active==='rooms'?'active':'' ?>">
       <i class="fa-solid fa-video"></i> Room Cameras
     </a>
-    <a href="camera-setup.php" class="sb-item <?= $active==='camerasetup'?'active':'' ?>">
-      <i class="fa-solid fa-camera"></i> Camera Setup
-    </a>
-    <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
-      <i class="fa-solid fa-flask"></i> Live Sandbox Test
-    </a>
     <a href="alerts.php" class="sb-item <?= $active==='alerts'?'active':'' ?>">
       <i class="fa-solid fa-triangle-exclamation"></i> Alerts
+    </a>
+    <a href="claiming-station.php" class="sb-item <?= $active==='claiming'?'active':'' ?>">
+      <i class="fa-solid fa-hand-holding"></i> Claiming Station
+      <span class="sb-badge sb-badge-ok" id="sb-badge-claims" style="display:none">0</span>
     </a>
   </div>
 
@@ -55,31 +62,33 @@ $initials = strtoupper(
     <a href="surrender-log.php" class="sb-item <?= $active==='surrender'?'active':'' ?>">
       <i class="fa-solid fa-inbox"></i> Surrender Log
     </a>
-    <a href="claiming-station.php" class="sb-item <?= $active==='claiming'?'active':'' ?>">
-      <i class="fa-solid fa-hand-holding"></i> Claiming Station
-      <span class="sb-badge sb-badge-ok" id="sb-badge-claims" style="display:none">0</span>
-    </a>
     <a href="recovered-items.php" class="sb-item <?= $active==='recovered'?'active':'' ?>">
       <i class="fa-solid fa-box-open"></i> Recovered Items
     </a>
-    <?php if ($role === 'admin'): ?>
-    <!-- Admin only: this page permanently deletes CCTV evidence and claimant
-         photographs (CLAUDE.md §3c data retention lifecycle). -->
+    <!-- This page permanently deletes CCTV evidence and claimant photographs
+         (CLAUDE.md §3c data retention lifecycle). -->
     <a href="donation.php" class="sb-item <?= $active==='donation'?'active':'' ?>">
       <i class="fa-solid fa-hand-holding-heart"></i> Donation &amp; Retention
     </a>
-    <?php endif; ?>
   </div>
-  <?php endif; ?>
 
-  <?php if ($role === 'admin'): ?>
   <div class="sb-section">
-    <div class="sb-section-label">Management</div>
-    <a href="analytics.php" class="sb-item <?= $active==='analytics'?'active':'' ?>">
-      <i class="fa-solid fa-chart-line"></i> Analytics &amp; Audit
+    <div class="sb-section-label">Setup &amp; Management</div>
+    <a href="inventory-monitor.php" class="sb-item <?= $active==='inventory'?'active':'' ?>">
+      <i class="fa-solid fa-boxes-stacked"></i> Inventory Monitor
+      <span class="sb-badge sb-badge-warn" id="sb-badge-warn" style="display:none">0</span>
+    </a>
+    <a href="camera-setup.php" class="sb-item <?= $active==='camerasetup'?'active':'' ?>">
+      <i class="fa-solid fa-camera"></i> Camera Setup
     </a>
     <a href="room-setup.php" class="sb-item <?= $active==='setup'?'active':'' ?>">
       <i class="fa-solid fa-sliders"></i> Room Setup
+    </a>
+    <a href="desk-sandbox.php" class="sb-item <?= $active==='sandbox'?'active':'' ?>">
+      <i class="fa-solid fa-flask"></i> Live Sandbox Test
+    </a>
+    <a href="analytics.php" class="sb-item <?= $active==='analytics'?'active':'' ?>">
+      <i class="fa-solid fa-chart-line"></i> Analytics &amp; Audit
     </a>
     <a href="user-management.php" class="sb-item <?= $active==='users'?'active':'' ?>">
       <i class="fa-solid fa-users"></i> Users
@@ -96,20 +105,11 @@ $initials = strtoupper(
     <a href="lost-thread.php" class="sb-item <?= $active==='thread'?'active':'' ?>">
       <i class="fa-solid fa-magnifying-glass"></i> Browse Items
     </a>
+    <a href="my-posts.php" class="sb-item <?= $active==='posts'?'active':'' ?>">
+      <i class="fa-solid fa-pen-to-square"></i> My Posts
+    </a>
     <a href="dashboard-student.php" class="sb-item <?= $active==='student'?'active':'' ?>">
       <i class="fa-solid fa-clock-rotate-left"></i> My Claims
-    </a>
-    <a href="my-posts.php" class="sb-item <?= $active==='posts'?'active':'' ?>">
-      <i class="fa-solid fa-pen-to-square"></i> My Posts
-    </a>
-  </div>
-  <?php endif; ?>
-
-  <?php if ($role === 'admin'): ?>
-    <div class="sb-section">
-      <div class="sb-section-label">My Activity</div>
-    <a href="my-posts.php" class="sb-item <?= $active==='posts'?'active':'' ?>">
-      <i class="fa-solid fa-pen-to-square"></i> My Posts
     </a>
   </div>
   <?php endif; ?>
@@ -124,6 +124,11 @@ $initials = strtoupper(
     <a href="forum.php" class="sb-item <?= $active==='forum'?'active':'' ?>">
       <i class="fa-brands fa-reddit"></i> Community Forum
     </a>
+    <?php if ($role === 'admin'): ?>
+    <a href="my-posts.php" class="sb-item <?= $active==='posts'?'active':'' ?>">
+      <i class="fa-solid fa-pen-to-square"></i> My Posts
+    </a>
+    <?php endif; ?>
   </div>
 
   <div class="sb-section">
