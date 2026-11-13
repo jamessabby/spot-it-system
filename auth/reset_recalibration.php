@@ -16,6 +16,8 @@ if ($userRole !== 'admin' && $userRole !== 'staff') {
     exit;
 }
 
+spotit_require_csrf();
+
 $roomId = strtoupper(trim($_POST['room_id'] ?? 'DESK'));
 if (!$roomId) {
     http_response_code(400);

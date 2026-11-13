@@ -12,6 +12,8 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 
+spotit_require_csrf();
+
 $detection_id = (int)($_POST['detection_id'] ?? 0);
 $new_name     = trim($_POST['new_name'] ?? '');
 

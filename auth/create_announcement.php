@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 ms_require_auth('../pages/login.php');
 ms_require_role('admin', '../pages/login.php');
+spotit_require_csrf();
 
 $title    = trim($_POST['title']    ?? '');
 $content  = trim($_POST['content']  ?? '');

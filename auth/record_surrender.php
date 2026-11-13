@@ -27,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 ms_require_auth('../pages/login.php');
+spotit_require_csrf();
 
 // Admin only — matches pages/surrender-log.php's own spotit_require_admin()
 // gate. Checked again here because the page guard only stops a browser from

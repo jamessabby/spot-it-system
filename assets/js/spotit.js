@@ -145,8 +145,12 @@ let _consecutiveFetchFailures = 0;
 async function spotitFetch(url, opts = {}) {
   try {
     const res = await fetch(url, {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
       ...opts,
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-Token': window.SPOTIT_CSRF || '',
+        ...(opts.headers || {}),
+      },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     _consecutiveFetchFailures = 0;

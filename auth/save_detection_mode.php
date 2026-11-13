@@ -12,6 +12,8 @@ if (($_SESSION['user_role'] ?? '') !== 'admin' && ($_SESSION['user_role'] ?? '')
     exit;
 }
 
+spotit_require_csrf();
+
 $allowed = ['testing', 'production'];
 $mode    = trim($_POST['mode'] ?? '');
 

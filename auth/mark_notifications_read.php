@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 ms_require_auth('../pages/login.php');
+spotit_require_csrf();
 
 $userId = (int)$_SESSION['user_id'];
 $markAll = isset($_POST['all']) && $_POST['all'];

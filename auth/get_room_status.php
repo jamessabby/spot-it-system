@@ -7,6 +7,13 @@
 require_once __DIR__ . '/service_bootstrap.php';
 header('Content-Type: application/json; charset=utf-8');
 
+// No auth check existed here at all — any anonymous request could poll live
+// room/detection state. Admin-only, matching the Room Monitor/Inventory pages
+// that call this.
+if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
+    ms_json(['success' => false, 'message' => 'Unauthorized'], 403);
+}
+
 // Release session lock early for high-frequency polling requests
 session_write_close();
 

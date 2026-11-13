@@ -545,7 +545,7 @@ async function selectCategory(name) {
   let res = null;
   try {
     const r = await fetch('../auth/room_categories.php', {
-      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ action: 'select', room_id: currentRoomId, name }),
     });
     res = await r.json().catch(() => null);
@@ -628,7 +628,7 @@ async function saveCategoryEditor() {
   let res = null;
   try {
     const r = await fetch('../auth/room_categories.php', {
-      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ action: 'save', room_id: currentRoomId, categories: JSON.stringify(cats), assignments: JSON.stringify(assignments) }),
     });
     res = await r.json().catch(() => null);
@@ -654,7 +654,7 @@ async function switchPipelineMode(mode) {
   let res = null;
   try {
     const r = await fetch('../auth/toggle_detection_mode.php', {
-      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ pipeline: mode }),
     });
     res = await r.json().catch(() => null);

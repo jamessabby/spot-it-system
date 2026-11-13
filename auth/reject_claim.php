@@ -21,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 ms_require_auth('../pages/login.php');
+spotit_require_csrf();
 
 if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Staff or admin role required.'], 403);

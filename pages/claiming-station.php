@@ -63,7 +63,7 @@ $completedClaims = $completedClaimsStmt->fetchAll();
   <div class="main-content">
     <div class="topbar">
       <button class="tb-btn tb-hamburger" id="hamburgerBtn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
-      <div><span class="topbar-title">Claiming Station</span><span class="topbar-sub">— Dispensing Window · CEAT Lobby</span></div>
+      <div><span class="topbar-title">Claiming Station</span><span class="topbar-sub">— Dispensing Room</span></div>
       <div class="live-pill"><div class="live-dot"></div>STATION ACTIVE</div>
       <div class="topbar-right">
         <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);" id="liveClock"></span>
@@ -233,7 +233,7 @@ $completedClaims = $completedClaimsStmt->fetchAll();
                   </div>
                   <div class="webcam-hud" id="webcamHud" style="display:none;">
                     <span id="webcamTs"></span>
-                    <span>CAM-CLAIM · CEAT LOBBY</span>
+                    <span>CAM-CLAIM · DISPENSING ROOM</span>
                   </div>
                   <!-- Capture overlay -->
                   <div id="captureFlash" style="display:none;position:absolute;inset:0;background:#fff;border-radius:8px;opacity:0;transition:opacity .15s;"></div>
@@ -552,7 +552,7 @@ async function completeClaim() {
       }, 'image/jpeg', 0.85));
     }
 
-    const res  = await fetch('../auth/complete_claim.php', { method: 'POST', body: fd });
+    const res  = await fetch('../auth/complete_claim.php', { method: 'POST', headers: { 'X-CSRF-Token': window.SPOTIT_CSRF || '' }, body: fd });
     const data = await res.json();
 
     if (data.success) {

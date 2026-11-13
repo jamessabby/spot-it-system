@@ -69,6 +69,35 @@ if (!function_exists('spotit_csrf_token')) {
         }
         return hash_equals($_SESSION['spotit_csrf'], $submitted);
     }
+
+    /**
+     * Guard for the session-authenticated AJAX endpoints under auth/ — the
+     * ones a logged-in browser calls to change data (claims, detection
+     * review, room/ROI config, settings, forum posts, ...). They are reached
+     * only through fetch() from pages this app renders, which all load
+     * spotit.js and therefore send the token as the X-CSRF-Token header
+     * (set from the <meta name="spotit-csrf"> tag _sidebar.php/_guard.php
+     * emit) — a cross-site form or script on another origin cannot read
+     * that meta tag or set that header, so it cannot pass this check even
+     * while riding the victim's session cookie.
+     *
+     * Deliberately NOT used by the detector ingest endpoints
+     * (ingest_detection.php, ingest_baseline.php, ingest_live_frame.php,
+     * detector_heartbeat.php, detector_state.php) or by login/signup/reset
+     * — those authenticate with SPOTIT_DETECTION_KEY or their own
+     * long-lived form-field token respectively, not a browser session, so
+     * this header does not apply to them.
+     */
+    function spotit_require_csrf(): void
+    {
+        $submitted = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['csrf_token'] ?? null);
+        if (!spotit_csrf_verify($submitted)) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Invalid or missing security token. Please refresh the page and try again.']);
+            exit();
+        }
+    }
 }
 
 // ── CAPTCHA ───────────────────────────────────────────────────────────────────

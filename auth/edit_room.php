@@ -18,6 +18,8 @@ if (!in_array($role, ['admin', 'staff'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized. Admin role required.'], 403);
 }
 
+spotit_require_csrf();
+
 $roomId      = strtoupper(trim($_POST['room_id'] ?? ''));
 $roomName    = trim($_POST['room_name'] ?? '');
 $floor       = trim($_POST['floor'] ?? '');

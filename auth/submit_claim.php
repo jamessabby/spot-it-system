@@ -19,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 ms_require_auth('../pages/login.php');
+spotit_require_csrf();
 
 // ── Inputs ────────────────────────────────────────────────────────────────────
 $recovery_id = (int)($_POST['recovery_id'] ?? 0);
@@ -131,6 +132,6 @@ try {
 ms_json([
     'success'      => true,
     'claim_id'     => $claim_id,
-    'message'      => 'Claim submitted. Please visit the dispensing window with your university ID.',
+    'message'      => 'Claim submitted. Please visit the Dispensing Room with your university ID.',
     'submitted_at' => date('Y-m-d H:i:s'),
 ]);

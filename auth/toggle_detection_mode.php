@@ -12,6 +12,8 @@ if (($_SESSION['user_role'] ?? '') !== 'admin' && ($_SESSION['user_role'] ?? '')
     exit;
 }
 
+spotit_require_csrf();
+
 $mode_file = __DIR__ . '/../detection_mode.json';
 $current   = [];
 if (file_exists($mode_file)) {

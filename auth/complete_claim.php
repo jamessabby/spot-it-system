@@ -30,6 +30,8 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized. Staff or admin role required.'], 403);
 }
 
+spotit_require_csrf();
+
 $claim_id   = (int)($_POST['claim_id']    ?? 0);
 $staff_note = trim($_POST['staff_note']   ?? '');
 $actorId    = (int)$_SESSION['user_id'];

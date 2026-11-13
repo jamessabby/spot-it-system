@@ -743,7 +743,7 @@ async function submitValidation(validationStatus) {
   try {
     const res = await fetch('../auth/validate_detection.php', {
       method: 'POST',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ detection_id: currentEvent.detection_id, validation_status: validationStatus }),
     });
     result = await res.json().catch(() => null);
@@ -794,7 +794,7 @@ async function markEvent(action) {
   try {
     const res = await fetch('../auth/update_event_status.php', {
       method: 'POST',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ detection_id: currentEvent.detection_id, status }),
     });
     result = await res.json().catch(() => null);   // error responses carry a JSON message too

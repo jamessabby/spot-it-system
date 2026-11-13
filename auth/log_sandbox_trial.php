@@ -12,6 +12,8 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized.'], 403);
 }
 
+spotit_require_csrf();
+
 $action = $_POST['action'] ?? '';
 
 if ($action === 'clear') {

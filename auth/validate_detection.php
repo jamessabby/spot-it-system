@@ -32,6 +32,8 @@ if (!in_array($_SESSION['user_role'] ?? '', ['staff', 'admin'], true)) {
     ms_json(['success' => false, 'message' => 'Staff or admin role required.'], 403);
 }
 
+spotit_require_csrf();
+
 $detection_id    = (int)($_POST['detection_id']    ?? 0);
 $validation      = trim($_POST['validation_status'] ?? '');
 $notes           = trim($_POST['notes']             ?? '');

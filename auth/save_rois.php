@@ -18,6 +18,8 @@ if (!in_array($role, ['admin', 'staff'], true)) {
     ms_json(['success' => false, 'message' => 'Unauthorized access.'], 403);
 }
 
+spotit_require_csrf();
+
 $roomId   = strtoupper(trim($_POST['room_id'] ?? 'DESK'));
 $roisJson = $_POST['rois'] ?? '';
 

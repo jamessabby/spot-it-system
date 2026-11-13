@@ -131,6 +131,7 @@ $labels      = roomcat_labels($monitorPdo, $roomId);
 $action = $_POST['action'] ?? '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save') {
+    spotit_require_csrf();
     if ($role !== 'admin') {
         ms_json(['success' => false, 'message' => 'Only an admin can change room categories.'], 403);
     }
@@ -177,6 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save') {
 $resolved = roomcat_resolve($labels, $categories, $assignments);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'select') {
+    spotit_require_csrf();
     $name = trim((string) ($_POST['name'] ?? 'All'));
     $keywords = [];
     $show = [];

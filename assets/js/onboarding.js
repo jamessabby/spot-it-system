@@ -60,7 +60,7 @@
     try {
       await fetch('../auth/save_tour_status.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
         body: 'completed=1',
       });
     } catch (e) {

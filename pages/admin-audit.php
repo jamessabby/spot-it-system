@@ -6,9 +6,10 @@
  * MICROSERVICES: No SQL. Data from auth/get_audit.php via JS.
  */
 require_once __DIR__ . '/../config/env.php';
-// ms_require_role('admin', 'login.php?error=unauthorized');
+require_once __DIR__ . '/_guard.php';
+spotit_require_admin();
 $active_page = 'audit';
-$user_role   = 'admin';
+$user_role   = $_SESSION['user_role'] ?? 'student';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">

@@ -23,6 +23,7 @@ $initials = strtoupper(
   (strpos($uname, ' ') !== false ? substr($uname, strpos($uname,' ')+1, 1) : '')
 );
 ?>
+<script>window.SPOTIT_CSRF = <?= json_encode(spotit_csrf_token()) ?>;</script>
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
     <a href="index.php" class="sb-logo">

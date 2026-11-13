@@ -34,6 +34,7 @@ $reqFile = RUNTIME_PATH . "suggest_{$roomId}.request.json";
 $resFile = RUNTIME_PATH . "suggest_{$roomId}.result.json";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    spotit_require_csrf();
     $classes = array_values(array_intersect(
         SUGGEST_CLASSES,
         array_map('trim', explode(',', (string) ($_POST['classes'] ?? '')))

@@ -12,6 +12,8 @@ if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'staff') {
     exit;
 }
 
+spotit_require_csrf();
+
 $allowed = ['registered', 'unregistered'];
 $tracking_mode = trim($_POST['tracking_mode'] ?? '');
 

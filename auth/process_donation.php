@@ -50,6 +50,8 @@ $role   = $_SESSION['user_role'] ?? '';
 $userId = $_SESSION['user_id'] ?? null;
 session_write_close();
 
+spotit_require_csrf();
+
 if ($role !== 'admin') {
     ms_json(['success' => false, 'message' => 'Only administrators can process donations.'], 403);
 }

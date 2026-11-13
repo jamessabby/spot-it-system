@@ -643,7 +643,7 @@ async function requestRoiSuggestions() {
   let res = null;
   try {
     const r = await fetch('../auth/suggest_rois.php', {
-      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': window.SPOTIT_CSRF || '' },
       body: new URLSearchParams({ room_id: ROOM_ID, classes: classes.join(',') }),
     });
     res = await r.json().catch(() => null);

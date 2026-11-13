@@ -15,6 +15,8 @@ if (($_SESSION['user_role'] ?? '') !== 'admin') {
     ms_json(['success' => false, 'message' => 'Admin role required'], 403);
 }
 
+spotit_require_csrf();
+
 $roomId = strtoupper(trim($_POST['room_id'] ?? ''));
 if ($roomId === '' || $roomId === 'DESK') {
     ms_json(['success' => false, 'message' => 'Invalid room_id. Use reset_system_state.php for the DESK sandbox.'], 400);

@@ -219,7 +219,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
                     $activity[] = [
                         'color' => 'ok',
                         'icon'  => 'fa-circle-check',
-                        'label' => "Claim completed — " . htmlspecialchars($uc['item_type']) . " picked up at dispensing window.",
+                        'label' => "Claim completed — " . htmlspecialchars($uc['item_type']) . " picked up at the Dispensing Room.",
                         'time'  => date('F j, Y · H:i', strtotime($uc['claimed_at'])),
                         'timestamp' => strtotime($uc['claimed_at'])
                     ];
@@ -434,7 +434,7 @@ function deletePost(id) {
   const fd = new FormData();
   fd.append('post_id', id);
 
-  fetch('../auth/forum_delete_post.php', { method: 'POST', body: fd })
+  fetch('../auth/forum_delete_post.php', { method: 'POST', headers: { 'X-CSRF-Token': window.SPOTIT_CSRF || '' }, body: fd })
     .then(r => r.json())
     .then(data => {
       if (data.success) {
