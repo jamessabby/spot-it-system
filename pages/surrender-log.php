@@ -128,6 +128,95 @@ function toggleNotifPanel() {
   b.classList.toggle('open', window._notifPanelOpen);
   if (window._notifPanelOpen) loadNotifPanel();
 }
+
+/* ══════════════════════════════════════
+   SURRENDER LOG — list + record
+   Phase 2A: this page used to show "Loading surrender records..." forever
+   (nothing ever populated the table) and its Record button called an
+   undefined recordSurrender(). Both are real now, against
+   auth/get_surrender_logs.php and auth/record_surrender.php.
+══════════════════════════════════════ */
+const STATUS_LABELS = {
+  recovered:           { text: 'Available',     cls: 'badge-ok' },
+  pending_claim:       { text: 'Pending Claim',  cls: 'badge-warn' },
+  claimed:             { text: 'Claimed',        cls: 'badge-muted' },
+  unclaimed_archived:  { text: 'Archived',       cls: 'badge-muted' },
+  unknown:             { text: 'Unknown',        cls: 'badge-muted' },
+};
+
+async function loadSurrenderLog() {
+  const body = document.getElementById('surrenderBody');
+  const res = await spotitFetch('../auth/get_surrender_logs.php');
+  if (!res || !res.success) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--alert);font-size:.8rem;">Failed to load surrender records.</td></tr>';
+    return;
+  }
+  if (!res.items.length) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text-dim);font-size:.8rem;">No items have been surrendered yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = res.items.map(it => {
+    const st = STATUS_LABELS[it.status] || STATUS_LABELS.unknown;
+    const when = new Date(it.surrendered_at.replace(' ', 'T')).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+    return `
+      <tr>
+        <td>${when}</td>
+        <td>${escapeHtml(it.item_description)}</td>
+        <td>${escapeHtml(it.surrendered_by)}</td>
+        <td>${escapeHtml(it.found_location || '—')}</td>
+        <td>${escapeHtml(it.condition)}</td>
+        <td>${escapeHtml(it.processed_by)}</td>
+        <td><span class="badge ${st.cls}"><span class="bdot"></span>${st.text}</span></td>
+        <td></td>
+      </tr>`;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s ?? '';
+  return d.innerHTML;
+}
+
+async function recordSurrender() {
+  const itemDesc   = document.getElementById('sItemDesc').value.trim();
+  const location    = document.getElementById('sLocation').value.trim();
+  const condition   = document.getElementById('sCondition').value;
+  const surrenderedBy = document.getElementById('sSurrenderedBy').value.trim();
+
+  if (!itemDesc || !location) {
+    showToast('error', 'Item description and found location are required.');
+    return;
+  }
+
+  const btn = document.querySelector('#surrenderModal .modal-btn.recover');
+  btn.disabled = true;
+
+  const res = await spotitFetch('../auth/record_surrender.php', {
+    method: 'POST',
+    body: new URLSearchParams({
+      item_description: itemDesc,
+      found_location: location,
+      condition: condition,
+      surrendered_by: surrenderedBy,
+    }),
+  });
+
+  btn.disabled = false;
+
+  if (res && res.success) {
+    showToast('success', res.message || 'Surrender recorded.');
+    closeModal('surrenderModal');
+    ['sItemDesc', 'sLocation', 'sSurrenderedBy'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('sCondition').value = 'Good';
+    loadSurrenderLog();
+  } else {
+    // No fake success: the modal stays open and the real error is shown.
+    showToast('error', (res && res.message) || 'Failed to record surrender. Please try again.');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadSurrenderLog);
 </script>
 </body>
 </html>
