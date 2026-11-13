@@ -94,6 +94,7 @@ $claims = $claimStmt->fetchAll();
 // Rank: Confirmed Missing(1) -> Potential(2) -> Camera Offline(3)
 //       -> Verified Claim(4) -> Pending Claim(5) -> Pending Review(6)
 $rows = [];
+$registeredLabelsByRoom = [];
 
 foreach ($detections as $d) {
     $rank = match ($d['status']) {
@@ -101,6 +102,13 @@ foreach ($detections as $d) {
         'potential'          => 2,
         default              => 6, // pending — new detection, not yet escalated
     };
+    // Same registered-equipment-vs-unregistered-item distinction
+    // dashboard-admin.php's event pop-up already shows (auth/event_kinds.php) —
+    // Alerts' own "Verify Event" modal had no equivalent, so staff only found
+    // out AFTER clicking "Mark Recovered" whether it was claimable or not.
+    $rid = (string) $d['room_id'];
+    $registeredLabelsByRoom[$rid] ??= ms_registered_labels($monitorPdo, $rid);
+    $eventKind = ms_event_kind($d, $registeredLabelsByRoom[$rid]);
     $rows[] = [
         'rank'      => $rank,
         'type'      => 'cctv',
@@ -117,6 +125,7 @@ foreach ($detections as $d) {
         'severity'  => $d['status'] === 'confirmed_missing' ? 'alert' : ($d['status'] === 'potential' ? 'warn' : 'info'),
         'snap_a'    => ms_snapshot_url($d['snapshot_path']),
         'snap_b'    => ms_snapshot_url($d['snapshot_path_b']),
+        'recovered_hint' => ms_action_prompt($eventKind, 'recovered', $d['object_zone'] ?: 'this item'),
         'deviation' => (int)$d['deviation'],
         'notes'     => $d['notes'],
     ];
@@ -357,7 +366,7 @@ function al_js($value): string {
                   <div class="al-actions">
                   <?php if ($row['type'] === 'cctv'): ?>
                     <button class="btn btn-primary btn-sm"
-                      onclick='alOpenVerify(<?= (int)$row['sub_id'] ?>, <?= al_js($row['room']) ?>, <?= al_js($row['subject_sub']) ?>, <?= al_js($row['subject']) ?>)'>
+                      onclick='alOpenVerify(<?= (int)$row['sub_id'] ?>, <?= al_js($row['room']) ?>, <?= al_js($row['subject_sub']) ?>, <?= al_js($row['subject']) ?>, <?= al_js($row['recovered_hint'] ?? '') ?>)'>
                       <i class="fa-solid fa-eye"></i> Verify Event
                     </button>
                     <?php if ($row['snap_a'] || $row['snap_b']): ?>
@@ -411,6 +420,10 @@ function al_js($value): string {
         <label class="form-label">Staff Notes / Observation</label>
         <textarea class="form-control" id="verifyNotes" rows="3" placeholder="Describe what you found upon physical inspection…"></textarea>
       </div>
+      <!-- Registered equipment vs. unregistered item (auth/event_kinds.php) — shown
+           BEFORE the click, not just in the toast after, so staff know up front
+           whether "Mark Recovered" makes this claimable or returns it to the lab. -->
+      <div id="verifyRecoveredHint" style="display:none;padding:10px 12px;background:var(--bg-base);border:1px solid var(--border);border-radius:8px;font-size:.76rem;color:var(--text-muted);margin-bottom:12px;white-space:pre-line;"></div>
       <div class="modal-actions">
         <button class="modal-btn dismiss" onclick="closeModal('verifyModal')">Cancel</button>
         <button class="modal-btn dismiss" onclick="alStaffAction('dismissed')"><i class="fa-solid fa-ban"></i> False Alarm</button>
@@ -553,11 +566,14 @@ function alFilter() {
    VERIFY EVENT MODAL
 ══════════════════════════════════════ */
 let alActiveDetectionId = null;
-function alOpenVerify(detectionId, room, zone, itemName) {
+function alOpenVerify(detectionId, room, zone, itemName, recoveredHint) {
   alActiveDetectionId = detectionId;
   document.getElementById('verifyModalTitle').textContent = `Verify Detection Event — ${itemName}`;
   document.getElementById('verifyModalRoomZone').textContent = `${room} — ${zone}`;
   document.getElementById('verifyNotes').value = '';
+  const hintBox = document.getElementById('verifyRecoveredHint');
+  if (recoveredHint) { hintBox.textContent = recoveredHint; hintBox.style.display = ''; }
+  else { hintBox.style.display = 'none'; }
   openModal('verifyModal');
 }
 async function alStaffAction(status) {
@@ -569,7 +585,12 @@ async function alStaffAction(status) {
   });
   const messages = {
     dismissed:         ['warn',    'Event dismissed as false alarm.'],
-    recovered:         ['success', 'Item marked as recovered.'],
+    // 'recovered' means two different things depending on the item (see
+    // auth/event_kinds.php) — registered lab equipment goes back to the lab
+    // and is never claimable, while an unregistered item becomes claimable.
+    // A single generic toast hid that distinction; update_event_status.php
+    // already returns the right wording in result.message, so use it.
+    recovered:         ['success', (result && result.message) || 'Item marked as recovered.'],
     confirmed_missing: ['error',   'Escalated — confirmed missing.'],
   };
   const [toastType, toastMsg] = messages[status] || ['info', 'Status updated.'];

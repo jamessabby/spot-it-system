@@ -110,7 +110,9 @@ if ($claim['user_id']) {
             $item['detection_id'] ?? 0,
             $item['room_id'] ?? '',
             $claim_id,
-            'pages/lost-thread.php'
+            // No 'pages/' prefix: handleNotifClick (assets/js/spotit.js) runs
+            // from inside pages/*.php already, so that prefix 404s.
+            'lost-thread.php'
         );
     } catch (Throwable $e) {}
 }

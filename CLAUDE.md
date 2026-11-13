@@ -642,6 +642,80 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Website polish pass — workflow/label fixes, pre-sidebar):** Walked both
+  roles' navigation looking for dead buttons, broken links, misleading labels, and pages
+  disagreeing about the same record. Confirmed and fixed, each a real bug not just a
+  cosmetic nit:
+  - **Notification deep links 404'd.** `auth/complete_claim.php`, `reject_claim.php`, and
+    `create_announcement.php` stored `action_url` with a `pages/` prefix, but every
+    consumer (`handleNotifClick` in `assets/js/spotit.js`) already runs from inside
+    `/pages/`, so the link resolved to `/pages/pages/...` → 404. `complete_claim.php`'s
+    `claim_approved` notification also pointed students at `claiming-station.php`, which
+    is `spotit_require_admin()`-gated — even a working link would have bounced them
+    straight back out. All three now point students at `lost-thread.php` /
+    `announcements.php` with no prefix, matching the one call site that already did this
+    correctly (`submit_claim.php`'s `new_claim` notification).
+  - **Dead Claim button.** `pages/dashboard-student.php`'s "Recently Recovered" preview
+    showed a Claim button for `pending_claim` items too, which `auth/submit_claim.php`
+    always rejects (`status != 'recovered'`) — a generic "already claimed" error with no
+    indication the button shouldn't have been there. Now shows a "Claim Pending" badge
+    instead for that status, same pattern `pages/lost-thread.php` already used correctly.
+  - **Room Setup status wording regressed.** `pages/room-setup.php` computed its own
+    Active/Offline binary instead of using `ms_room_connectivity_status()` (the helper
+    every other page already migrated to — see the 2026-08-21-era fix this helper itself
+    documents), so a room paused by the mass-deviation auto-gate or mid-calibration showed
+    the same red "Offline" as an actually disconnected camera. Now uses the shared helper.
+  - **Alerts' "Mark Recovered" hid the registered-vs-unregistered outcome.** Clicking
+    Recovered on CCTV Deviation/Confirmed Missing rows always said "Item marked as
+    recovered," regardless of whether the item was registered lab equipment (never
+    claimable) or an unregistered item (becomes claimable) — `dashboard-admin.php`'s event
+    pop-up already showed this distinction via `ms_action_prompt()`; Alerts' own Verify
+    modal had no equivalent. Added the same hint before the click and made the toast use
+    `update_event_status.php`'s own `message` field after it.
+  - **lost-thread.php disagreed with itself.** Filter-tab counts ("All Items (14)" etc.)
+    were hardcoded literals next to a Thread Summary card computing the real counts from
+    the same table — now both read from one set of real queries. The "Pending Claim"
+    status-filter dropdown also always returned zero results (`"pending".includes(
+    "pendingclaim")` is never true); fixed the comparison direction.
+  - **inventory-monitor.php's filter pills showed wrong counts for up to 10s** on every
+    load — `startAutoRefresh()` only started the 10s interval, never calling `refreshData()`
+    immediately first. Now does both.
+  - **forum.php's linked-detection status never changed.** Posts auto-created for a
+    detection event hardcoded `'status' => 'Detected'` forever, even after staff recovered
+    or dismissed it — the same staleness `auth/get_notifications.php` already re-derives
+    for its own notifications. Now joins live state via `ms_detection_status_map()`, and
+    the status color only reads alert-red while the event is still open. Also: `sharePost()`
+    claimed "Link copied to clipboard" without copying anything (now really copies via
+    `navigator.clipboard`), and `savePost()` claimed "saved to your bookmarks" when no
+    bookmark feature exists anywhere in the app (now says so honestly).
+  - **Settings' System tab and Profile's edit/password/deactivate actions were UI
+    theater.** The System tab's 4 toggles and the 4 threshold inputs were already
+    (correctly) excluded from `save_settings.php`'s whitelist, but nothing on the page
+    *said* that — toggling one still showed the unsaved-changes bar and a "Preferences
+    saved" success toast. Now shown disabled with a "Not Yet Supported" badge instead.
+    `pages/profile.php` was worse: its own docblock claimed data came from
+    `auth/get_profile.php`, which didn't exist — every account saw identical hardcoded
+    fake values (ID "2021-00001", "Claims Submitted 2", "Account Age 14 days", ...), and
+    Save/Change Password/Deactivate Account all faked success with zero backend calls
+    (Deactivate's toast said "deactivation submitted" and just logged the user out,
+    leaving the account fully active — actively misleading for a security action). Built
+    the real `auth/get_profile.php` (read-only: real `users`/`user_profiles` data and real
+    claims/posts/account-age counts, no new editable field or write path) and reused it on
+    `settings.php`'s Account tab (which had the identical hardcoded-date problem — "Account
+    Status: Active", "Registration Date: June 1, 2026" for every user). The three write
+    actions are now honestly labeled "Not Yet Supported" rather than faked — building real
+    `update_profile.php`/`change_password.php`/`deactivate_account.php` endpoints was
+    treated as a new feature, out of scope for this polish pass, consistent with "don't
+    build new settings features" extended to Profile's analogous case.
+
+  Verified via the same isolated `spotit_test_*` DB + headless-browser harness as the Nov
+  13 claiming-station fix (see below) — 116/116 real click-through checks pass, including
+  this round's fixes alongside a full sidebar re-sweep (next entry). No production data,
+  `detection_mode.json`, or the real snapshot folder were touched (verified and restored
+  where the test run did touch `detection_mode.json` — `auth/update_event_status.php`
+  writes it unconditionally regardless of which DB is active, same caveat as the Nov 11
+  harness notes).
+
 - **2026-11-13 (Integrated regression pass — Claiming Station could not complete a real
   student claim):** Full integrated regression across manual surrender, simulated CCTV
   events, and notifications/snapshots, run against isolated `spotit_test_*` DBs (`php -S`

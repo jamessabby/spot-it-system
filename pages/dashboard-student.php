@@ -49,7 +49,7 @@ try {
 
     // 6. Fetch recently recovered items preview
     $recentRecoveries = $lfPdo->query("
-        SELECT recovery_id, item_type, item_description, room_id, recovered_at
+        SELECT recovery_id, item_type, item_description, room_id, recovered_at, status
         FROM recovered_items
         WHERE status IN ('recovered', 'pending_claim')
         ORDER BY recovered_at DESC
@@ -236,7 +236,15 @@ try {
                 <div style="font-size:.8rem;font-weight:600;color:var(--text-primary);"><?= htmlspecialchars($r['item_type'] ?? 'Unknown Item') ?></div>
                 <div style="font-size:.7rem;color:var(--text-dim);"><?= htmlspecialchars($r['room_id']) ?> · <?= date('M j', strtotime($r['recovered_at'])) ?></div>
               </div>
+              <?php if ($r['status'] === 'recovered'): ?>
               <button class="btn btn-sm btn-ok" onclick="openClaimModal(<?= $r['recovery_id'] ?>,'<?= htmlspecialchars(addslashes($r['item_type'] ?? 'Item')) ?>','<?= $r['room_id'] ?>')">Claim</button>
+              <?php else: ?>
+              <!-- status is 'pending_claim': someone already submitted a claim for this
+                   one (auth/submit_claim.php only accepts recovery_id where status='recovered'),
+                   so a Claim button here would always fail with a generic "already claimed"
+                   error. Say why instead of offering a dead-end action. -->
+              <span class="badge badge-warn" title="Someone has already submitted a claim for this item.">Claim Pending</span>
+              <?php endif; ?>
             </div>
             <?php endforeach; ?>
             <?php endif; ?>

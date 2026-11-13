@@ -80,7 +80,9 @@ try {
         0,
         '',
         0,
-        'pages/announcements.php'
+        // No 'pages/' prefix: handleNotifClick (assets/js/spotit.js) runs
+        // from inside pages/*.php already, so that prefix 404s.
+        'announcements.php'
     );
 } catch (Throwable $e) {
     // Non-critical — announcement was already created

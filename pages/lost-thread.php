@@ -15,6 +15,15 @@ $dbItemsStmt = $lfPdo->query("
     ORDER BY recovered_at DESC
 ");
 $dbItems = $dbItemsStmt->fetchAll();
+
+// Real counts, computed once and reused by both the filter tabs and the
+// Thread Summary card below — the tabs used to be hardcoded literal numbers
+// ("All Items (14)" etc.) that drifted from the real summary the moment any
+// item was claimed or added, disagreeing with itself on the same page.
+$cAvailable = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'recovered'")->fetchColumn();
+$cPending   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'pending_claim'")->fetchColumn();
+$cClaimed   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'claimed'")->fetchColumn();
+$cTotal     = $cAvailable + $cPending + $cClaimed;
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -68,10 +77,10 @@ $dbItems = $dbItemsStmt->fetchAll();
 
       <!-- Filter tabs -->
       <div class="filter-tabs" style="border:none;border-bottom:1px solid var(--border);padding-bottom:0;margin-bottom:18px;">
-        <div class="filter-tab active" onclick="setFilterTab(this);filterByTab('all')">All Items (14)</div>
-        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('available')">Available (9)</div>
-        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('pending')">Pending Claim (2)</div>
-        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('claimed')">Claimed (3)</div>
+        <div class="filter-tab active" onclick="setFilterTab(this);filterByTab('all')">All Items (<?= $cTotal ?>)</div>
+        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('available')">Available (<?= $cAvailable ?>)</div>
+        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('pending')">Pending Claim (<?= $cPending ?>)</div>
+        <div class="filter-tab" onclick="setFilterTab(this);filterByTab('claimed')">Claimed (<?= $cClaimed ?>)</div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start;">
@@ -190,11 +199,8 @@ $dbItems = $dbItemsStmt->fetchAll();
             <div class="card-head"><div class="card-title"><i class="fa-solid fa-chart-pie"></i> Thread Summary</div></div>
             <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
               <?php
-              $cAvailable = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'recovered'")->fetchColumn();
-              $cPending   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'pending_claim'")->fetchColumn();
-              $cClaimed   = (int)$lfPdo->query("SELECT COUNT(*) FROM recovered_items WHERE status = 'claimed'")->fetchColumn();
-              $cTotal     = $cAvailable + $cPending + $cClaimed;
-              
+              // $cAvailable/$cPending/$cClaimed/$cTotal computed once near the top of
+              // this file and reused by the filter tabs above.
               $summary = [
                   [$cAvailable, 'Available for claiming', 'ok'],
                   [$cPending,   'Pending claim review',   'warn'],
@@ -373,7 +379,10 @@ function filterThread() {
   document.querySelectorAll('.thread-card').forEach(card => {
     const matchQ    = !q    || card.dataset.name.includes(q) || card.textContent.toLowerCase().includes(q);
     const matchRoom = !room || card.dataset.room.toLowerCase().includes(room);
-    const matchStat = !stat || card.dataset.status.includes(stat.replace(' ',''));
+    // "Pending Claim" -> "pendingclaim" needs to match a card whose
+    // dataset.status is just "pending" — checking which way .includes() runs
+    // the other direction always returned zero results for that option.
+    const matchStat = !stat || stat.replace(' ','').startsWith(card.dataset.status);
     const show = matchQ && matchRoom && matchStat;
     card.style.display = show ? '' : 'none';
     if (show) visible++;

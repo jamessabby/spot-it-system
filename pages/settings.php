@@ -209,18 +209,23 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
           <div class="card-head"><div class="card-title"><i class="fa-solid fa-circle-user"></i> Account Details</div></div>
           <div style="padding:14px 18px;display:flex;flex-direction:column;gap:12px;">
             <?php
+            // Auth Provider/Status/Registration/Last Sign-In were hardcoded —
+            // "Microsoft OAuth 2.0" shown even for manual accounts, and the
+            // two dates were the same fixed string for every user. Real
+            // values are filled in by loadAccountInfo() from the same
+            // auth/get_profile.php used on pages/profile.php.
             $acctInfo = [
-              ['Account Type',       ucfirst($user_role).' Account'],
-              ['Auth Provider',      'Microsoft OAuth 2.0 (DLSU-D)'],
-              ['Email Domain',       '@dlsud.edu.ph'],
-              ['Account Status',     'Active'],
-              ['Registration Date',  'June 1, 2026'],
-              ['Last Sign-In',       'June 15, 2026 · 09:00 AM'],
+              ['Account Type',      ucfirst($user_role).' Account', null],
+              ['Auth Provider',     '—', 'acct-provider'],
+              ['Email Domain',      '@dlsud.edu.ph', null],
+              ['Account Status',    '—', 'acct-status'],
+              ['Registration Date', '—', 'acct-registered'],
+              ['Last Sign-In',      '—', 'acct-lastlogin'],
             ];
-            foreach ($acctInfo as [$k,$v]): ?>
+            foreach ($acctInfo as [$k,$v,$id]): ?>
             <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:.8rem;">
               <span style="color:var(--text-dim);"><?= $k ?></span>
-              <span style="font-family:var(--font-mono);font-size:.76rem;color:var(--text-primary);font-weight:600;"><?= $v ?></span>
+              <span style="font-family:var(--font-mono);font-size:.76rem;color:var(--text-primary);font-weight:600;" <?= $id ? 'id="'.$id.'"' : '' ?>><?= $v ?></span>
             </div>
             <?php endforeach; ?>
           </div>
@@ -253,7 +258,15 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
       <!-- ── SYSTEM (admin only) ── -->
       <div class="settings-section" id="sec-system" style="display:none;">
         <div class="card" style="border-color:rgba(208,2,27,.15);">
-          <div class="card-head" style="background:var(--alert-bg);"><div class="card-title" style="color:var(--alert);"><i class="fa-solid fa-server"></i> System Configuration — Admin Only</div></div>
+          <div class="card-head" style="background:var(--alert-bg);">
+            <div class="card-title" style="color:var(--alert);"><i class="fa-solid fa-server"></i> System Configuration — Admin Only</div>
+            <span class="badge badge-muted" style="margin-left:auto;">Not Yet Supported</span>
+          </div>
+          <div style="padding:10px 18px 0;font-size:.76rem;color:var(--text-dim);">
+            These describe site-wide effects, but nothing in this app currently stores or
+            acts on a site-wide flag — toggling one here changes nothing. Shown disabled so
+            that's clear instead of silently dropped on Save.
+          </div>
           <div style="padding:6px 0;">
             <?php
             $sysSettings = [
@@ -263,13 +276,13 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
               ['sys_detection_active','Detection Module Active','Enable/disable the Python detection module connection.',true],
             ];
             foreach ($sysSettings as [$key,$label,$desc,$default]): ?>
-            <div class="setting-row">
+            <div class="setting-row" style="opacity:.6;">
               <div class="setting-info">
                 <div class="setting-label"><?= $label ?></div>
                 <div class="setting-desc"><?= $desc ?></div>
               </div>
-              <label class="toggle-switch">
-                <input type="checkbox" data-key="<?= $key ?>" <?= $default?'checked':'' ?> onchange="markChanged()"/>
+              <label class="toggle-switch" title="Not yet supported">
+                <input type="checkbox" <?= $default?'checked':'' ?> disabled/>
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -277,26 +290,34 @@ $user_role   = $_SESSION['user_role'] ?? 'student';
           </div>
         </div>
         <div class="card" style="margin-top:16px;">
-          <div class="card-head"><div class="card-title"><i class="fa-solid fa-clock"></i> Detection Thresholds</div></div>
-          <div style="padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div class="card-head">
+            <div class="card-title"><i class="fa-solid fa-clock"></i> Detection Thresholds</div>
+            <span class="badge badge-muted" style="margin-left:auto;">Not Yet Supported</span>
+          </div>
+          <div style="padding:10px 18px 0;font-size:.76rem;color:var(--text-dim);">
+            These are the real values main.py uses (TIMER_POTENTIAL_MIN / TIMER_CONFIRMED_MIN
+            in config/env.php), but changing them here doesn't change the detector's actual
+            configuration — shown disabled rather than suggesting otherwise.
+          </div>
+          <div style="padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:14px;opacity:.6;">
             <div class="form-group">
               <label class="form-label">Potentially Lost Threshold (minutes)</label>
-              <input type="number" class="form-control" value="30" min="5" max="120"/>
+              <input type="number" class="form-control" value="30" min="5" max="120" disabled/>
               <div style="font-size:.68rem;color:var(--text-dim);margin-top:.25rem;">Default: 30 minutes</div>
             </div>
             <div class="form-group">
               <label class="form-label">Confirmed Missing Threshold (minutes)</label>
-              <input type="number" class="form-control" value="60" min="10" max="240"/>
+              <input type="number" class="form-control" value="60" min="10" max="240" disabled/>
               <div style="font-size:.68rem;color:var(--text-dim);margin-top:.25rem;">Default: 60 minutes</div>
             </div>
             <div class="form-group">
               <label class="form-label">Dashboard Poll Interval (seconds)</label>
-              <input type="number" class="form-control" value="10" min="5" max="60"/>
+              <input type="number" class="form-control" value="10" min="5" max="60" disabled/>
               <div style="font-size:.68rem;color:var(--text-dim);margin-top:.25rem;">How often JS checks for new detections</div>
             </div>
             <div class="form-group">
               <label class="form-label">Max Login Attempts Before Lockout</label>
-              <input type="number" class="form-control" value="5" min="3" max="10"/>
+              <input type="number" class="form-control" value="5" min="3" max="10" disabled/>
               <div style="font-size:.68rem;color:var(--text-dim);margin-top:.25rem;">Default: 5 attempts</div>
             </div>
           </div>
@@ -426,6 +447,20 @@ function selectThemeOption(t, el) {
 }
 
 document.addEventListener('DOMContentLoaded', loadSettings);
+
+/* ── Account tab — real values, was hardcoded (see $acctInfo above) ── */
+async function loadAccountInfo() {
+  const res = await spotitFetch('../auth/get_profile.php');
+  if (!res || !res.success) return;
+  const p = res.profile;
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('acct-provider', p.auth_provider === 'microsoft' ? 'Microsoft OAuth 2.0 (DLSU-D)' : 'Manual (email + password)');
+  set('acct-status', p.is_active ? 'Active' : 'Inactive');
+  const fmt = iso => iso ? new Date(iso.replace(' ', 'T')).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Never';
+  set('acct-registered', p.created_at ? new Date(p.created_at.replace(' ', 'T')).toLocaleDateString('en-PH', { dateStyle: 'medium' }) : '—');
+  set('acct-lastlogin', fmt(p.last_login_at));
+}
+document.addEventListener('DOMContentLoaded', loadAccountInfo);
 
 window.addEventListener('beforeunload', e => {
   if (hasChanges) { e.preventDefault(); e.returnValue = ''; }

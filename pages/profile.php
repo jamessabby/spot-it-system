@@ -89,18 +89,20 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
             <div style="padding:0;">
               <?php
               $stats = [
-                ['Claims Submitted','2','fa-hand-holding','ok'],
-                ['Items Recovered','2','fa-circle-check','ok'],
-                ['Posts Published','3','fa-pen-to-square','info'],
-                ['Account Age','14 days','fa-calendar','green'],
+                ['Claims Submitted','claims_submitted','fa-hand-holding','ok'],
+                ['Items Recovered','items_recovered','fa-circle-check','ok'],
+                ['Posts Published','posts_published','fa-pen-to-square','info'],
+                ['Account Age','account_age','fa-calendar','green'],
               ];
-              foreach ($stats as [$label,$val,$icon,$cls]): ?>
+              foreach ($stats as [$label,$key,$icon,$cls]): ?>
               <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);">
                 <div class="stat-icon <?= $cls ?>" style="width:32px;height:32px;border-radius:8px;font-size:.76rem;">
                   <i class="fa-solid <?= $icon ?>"></i>
                 </div>
                 <span style="font-size:.78rem;color:var(--text-muted);flex:1;"><?= $label ?></span>
-                <span style="font-family:var(--font-display);font-size:.88rem;font-weight:800;color:var(--text-primary);"><?= $val ?></span>
+                <!-- Filled by loadProfile() from the real auth/get_profile.php — these
+                     were hardcoded fake numbers identical for every account. -->
+                <span style="font-family:var(--font-display);font-size:.88rem;font-weight:800;color:var(--text-primary);" id="stat-<?= $key ?>">—</span>
               </div>
               <?php endforeach; ?>
             </div>
@@ -114,15 +116,13 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
           <div class="card">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-user"></i> Personal Information</div>
-              <button class="btn btn-primary btn-sm" onclick="saveSection('personal')">
-                <i class="fa-solid fa-floppy-disk"></i> Save Changes
-              </button>
+              <span class="badge badge-muted" title="Fields below show your real account data, but editing and saving isn't wired up yet.">Editing Not Yet Supported</span>
             </div>
             <div style="padding:20px;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
                 <div class="form-group">
                   <label class="form-label">Full Name</label>
-                  <input type="text" class="form-control" id="pFullName" value="<?= htmlspecialchars($uname) ?>"/>
+                  <input type="text" class="form-control" id="pFullName" value="<?= htmlspecialchars($uname) ?>" disabled/>
                 </div>
                 <div class="form-group">
                   <label class="form-label">University Email</label>
@@ -133,27 +133,22 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
                   <div style="font-size:.68rem;color:var(--text-dim);margin-top:.25rem;"><i class="fa-solid fa-lock" style="font-size:.6rem;"></i> Email is managed by your DLSU-D Microsoft account</div>
                 </div>
                 <div class="form-group">
+                  <!-- Real column (auth_db.users.id_number) — was a hardcoded
+                       "2021-00001" shown identically for every account. -->
                   <label class="form-label">University ID Number</label>
-                  <input type="text" class="form-control" id="pIdNumber" value="2021-00001" placeholder="e.g. 2021-00001"/>
+                  <input type="text" class="form-control" id="pIdNumber" value="" placeholder="Not on file" disabled/>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Contact Number</label>
-                  <input type="tel" class="form-control" id="pContact" value="" placeholder="09xx-xxx-xxxx"/>
+                  <input type="tel" class="form-control" id="pContact" value="" placeholder="Not on file" disabled/>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Course &amp; Program</label>
-                  <input type="text" class="form-control" id="pCourse" value="BS Computer Engineering" placeholder="e.g. BS Computer Engineering"/>
+                  <input type="text" class="form-control" id="pCourse" value="" placeholder="Not on file" disabled/>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Year Level</label>
-                  <select class="form-control" id="pYear">
-                    <option>1st Year</option>
-                    <option>2nd Year</option>
-                    <option selected>3rd Year</option>
-                    <option>4th Year</option>
-                    <option>5th Year</option>
-                    <option>Graduate</option>
-                  </select>
+                  <input type="text" class="form-control" id="pYear" value="" placeholder="Not on file" disabled/>
                 </div>
               </div>
             </div>
@@ -163,11 +158,12 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
           <div class="card">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-lock"></i> Change Password</div>
+              <span class="badge badge-muted">Not Yet Supported</span>
             </div>
             <div style="padding:20px;">
               <div style="padding:12px 14px;background:var(--info-bg);border:1px solid rgba(26,106,181,.2);border-radius:9px;font-size:.78rem;color:var(--text-primary);margin-bottom:16px;display:flex;gap:8px;">
                 <i class="fa-solid fa-circle-info" style="color:var(--info);flex-shrink:0;margin-top:1px;"></i>
-                <span>If you signed in via Microsoft, you don't need a password here. Password changes for your Microsoft account must be done through the <a href="https://account.microsoft.com" target="_blank" style="color:var(--info);">Microsoft account portal</a>.</span>
+                <span>If you signed in via Microsoft, you don't need a password here. Password changes for your Microsoft account must be done through the <a href="https://account.microsoft.com" target="_blank" style="color:var(--info);">Microsoft account portal</a>. For a manual account, this form doesn't actually change your password yet — nothing below is saved.</span>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
                 <div class="form-group" style="grid-column:1/-1;">
@@ -205,11 +201,12 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
           <div class="card" style="border-color:rgba(208,2,27,.2);">
             <div class="card-head" style="background:var(--alert-bg);">
               <div class="card-title" style="color:var(--alert);"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone</div>
+              <span class="badge badge-muted">Not Yet Supported</span>
             </div>
             <div style="padding:18px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
               <div>
                 <div style="font-family:var(--font-display);font-size:.84rem;font-weight:700;color:var(--text-primary);">Deactivate Account</div>
-                <div style="font-size:.76rem;color:var(--text-muted);margin-top:2px;">Your account will be deactivated and you will lose access to S.P.O.T.-IT. Contact an administrator to reactivate.</div>
+                <div style="font-size:.76rem;color:var(--text-muted);margin-top:2px;">Not implemented yet — clicking through only signs you out, your account stays active. To actually deactivate an account, contact an administrator.</div>
               </div>
               <button class="btn btn-alert btn-sm" onclick="openModal('deactivateModal')">
                 <i class="fa-solid fa-user-slash"></i> Deactivate
@@ -245,6 +242,26 @@ $initials    = strtoupper(substr($uname,0,1).(strpos($uname,' ')!==false?substr(
 <script>
 startLiveClock('liveClock');
 
+// Loads the real account data this page used to show fabricated values for
+// (same fake-ID-number/course/stats issue the page's own docblock already
+// promised was fixed by calling this endpoint — it just never existed).
+async function loadProfile() {
+  const res = await spotitFetch('../auth/get_profile.php');
+  if (!res || !res.success) return;
+  const p = res.profile;
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('pIdNumber', p.id_number);
+  set('pContact', p.phone);
+  set('pCourse', p.course);
+  set('pYear', p.year_level);
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('stat-claims_submitted', p.claims_submitted);
+  setText('stat-items_recovered', p.items_recovered);
+  setText('stat-posts_published', p.posts_published);
+  setText('stat-account_age', p.account_age_days + (p.account_age_days === 1 ? ' day' : ' days'));
+}
+document.addEventListener('DOMContentLoaded', loadProfile);
+
 function previewAvatar(input) {
   if (!input.files[0]) return;
   const reader = new FileReader();
@@ -256,11 +273,9 @@ function previewAvatar(input) {
     circle.textContent = '';
   };
   reader.readAsDataURL(input.files[0]);
-  showToast('success','Photo preview updated. Click Save Changes to upload.');
-}
-
-function saveSection(section) {
-  showToast('success','Profile information saved successfully.');
+  // Preview only — there is no upload endpoint yet, so no "Click Save to
+  // upload" promise that Save can't keep.
+  showToast('info','Preview only — photo upload isn\'t supported yet.');
 }
 
 function checkPwStrength(pw) {
@@ -277,22 +292,19 @@ function checkPwStrength(pw) {
 }
 
 function changePassword() {
-  const cur = document.getElementById('pwCurrent').value;
-  const nw  = document.getElementById('pwNew').value;
-  const con = document.getElementById('pwConfirm').value;
-  if (!cur || !nw || !con) { showToast('error','Please fill in all password fields.'); return; }
-  if (nw.length < 8) { showToast('error','New password must be at least 8 characters.'); return; }
-  if (nw !== con)    { showToast('error','New passwords do not match.'); return; }
-  showToast('success','Password updated successfully.');
-  ['pwCurrent','pwNew','pwConfirm'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('pwStrengthFill').style.width = '0';
+  // No auth/change_password.php exists yet — this used to validate the form
+  // and then claim "Password updated successfully." without changing anything,
+  // which is actively dangerous: a user could believe their password changed
+  // when it didn't.
+  showToast('error', 'Changing your password here isn\'t supported yet. Manual accounts can reset a forgotten password from the login page; Microsoft accounts use the Microsoft account portal.');
 }
 
 function deactivateAccount() {
-  const email = document.getElementById('deactivateConfirm').value.trim();
-  if (email !== '<?= addslashes($uemail) ?>') { showToast('error','Email does not match. Please try again.'); return; }
-  showToast('warn','Account deactivation submitted. Redirecting…');
-  setTimeout(() => window.location.href = '../auth/logout.php', 1500);
+  // No auth/deactivate_account.php exists yet — this used to claim
+  // "Account deactivation submitted" and then just log the user out, leaving
+  // the account fully active. Be honest instead of faking the action.
+  showToast('error', 'Account deactivation isn\'t supported yet. Contact an administrator if you need your account deactivated.');
+  closeModal('deactivateModal');
 }
 </script>
 </body>

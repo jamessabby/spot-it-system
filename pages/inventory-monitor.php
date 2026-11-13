@@ -898,6 +898,10 @@ let autoRefreshEnabled = true;
 let refreshInterval;
 
 function startAutoRefresh() {
+  // Was interval-only, so the hardcoded pill counts in the PHP markup stayed
+  // on screen — disagreeing with the real summary strip above them — for up
+  // to 10s on every page load until the first tick fired.
+  refreshData();
   refreshInterval = setInterval(refreshData, 10000);
 }
 

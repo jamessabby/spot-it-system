@@ -81,7 +81,25 @@ $roomsList = $roomsStmt->fetchAll();
             <?php else: ?>
             <?php foreach ($roomsList as $r):
                 $isEnabled = (int)($r['is_enabled'] ?? 1) === 1;
-                $status = !$isEnabled ? 'disabled' : ($r['monitoring_status'] === 'active' ? 'active' : 'offline');
+                // Was a plain active/"Offline" binary, which showed a deliberate
+                // mass-deviation recalibration pause (CLAUDE.md §3c) or an
+                // in-progress calibration the same red "Offline" as an actually
+                // disconnected camera — ms_room_connectivity_status() is the
+                // helper every other page already uses for this; room-setup.php
+                // was the one page still computing its own.
+                if (!$isEnabled) {
+                    $statusLabel = 'Disabled'; $badgeClass = 'badge-muted';
+                } else {
+                    $conn = ms_room_connectivity_status($r['room_id'], $r['monitoring_status']);
+                    if ($conn === null) {
+                        $statusLabel = 'Active'; $badgeClass = 'badge-ok';
+                    } else {
+                        $statusLabel = $conn['label'];
+                        $badgeClass = match ($conn['severity']) {
+                            'alert' => 'badge-alert', 'warn' => 'badge-warn', default => 'badge-muted',
+                        };
+                    }
+                }
                 $cal = $r['last_calibrated'] ? date('M j, Y', strtotime($r['last_calibrated'])) : '—';
                 // A disabled room keeps its camera_ip on record but no longer holds a
                 // claim on it, so show the IP struck through rather than hiding it.
@@ -99,7 +117,7 @@ $roomsList = $roomsStmt->fetchAll();
               <td style="text-align:center;"><?= (int)$r['camera_count'] ?></td>
               <td style="font-family:var(--font-mono);font-size:.7rem;"><?= $ip ?></td>
               <td style="text-align:center;font-family:var(--font-mono);"><?= (int)$r['baseline_count'] ?></td>
-              <td><span class="badge <?= $status==='active'?'badge-ok':'badge-alert' ?>"><?= ucfirst($status) ?></span></td>
+              <td><span class="badge <?= $badgeClass ?>"><?= htmlspecialchars($statusLabel) ?></span></td>
               <td style="font-size:.72rem;color:var(--text-dim);font-family:var(--font-mono);"><?= $cal ?></td>
               <td>
                 <button class="btn btn-sm" data-room="<?= htmlspecialchars(json_encode($r), ENT_QUOTES, 'UTF-8') ?>" onclick="openEditRoomModal(this)" title="Edit"><i class="fa-solid fa-pencil"></i></button>

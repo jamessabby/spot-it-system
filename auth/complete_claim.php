@@ -159,7 +159,13 @@ if ($claim['user_id']) {
             $detectionId ?? 0,
             $item['room_id'] ?? '',
             $claim_id,
-            'pages/claiming-station.php'
+            // Was 'pages/claiming-station.php' — wrong on two counts: the
+            // caller (pages/*.php, via handleNotifClick in spotit.js) is
+            // already under /pages/, so a 'pages/' prefix 404s; and
+            // claiming-station.php is spotit_require_admin()-gated, so even
+            // a working link would bounce the claimant straight back out.
+            // lost-thread.php is student-reachable and shows claim status.
+            'lost-thread.php'
         );
     } catch (Throwable $e) { /* non-critical */ }
 }

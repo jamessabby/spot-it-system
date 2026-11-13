@@ -38,6 +38,19 @@ if ($view === 'list') {
     $postStmt->execute([$post_id]);
     $post = $postStmt->fetch();
 }
+
+// Live status of every linked detection, the same way auth/get_notifications.php
+// re-derives it: a detection_thread auto-post is written once at ingest and
+// used to read a hardcoded "Detected" forever, even long after staff recovered
+// or dismissed the event — stale and misleading on exactly the threads meant
+// to carry the real outcome.
+$detIds = $post
+    ? array_filter([$post['detection_id'] ?? null])
+    : array_filter(array_column($dbPosts, 'detection_id'));
+$detectionStates = [];
+try {
+    $detectionStates = ms_detection_status_map($monitorPdo, $detIds);
+} catch (Throwable $ignored) { /* monitor DB down: fall back to "Detected" below */ }
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -135,11 +148,15 @@ if ($view === 'list') {
               
               $detection = null;
               if ($dp['detection_id']) {
+                  $liveState = $detectionStates[(int)$dp['detection_id']] ?? null;
                   $detection = [
                       'room'   => $dp['detection_room'],
                       'item'   => $dp['detection_item'],
                       'time'   => $dp['created_at'],
-                      'status' => 'Detected'
+                      'status' => $liveState['status_label'] ?? 'Detected',
+                      // A closed event (recovered/dismissed) shown in the same
+                      // alarm-red as an active one reads as still-ongoing.
+                      'status_color' => ($liveState['closed'] ?? false) ? 'var(--ok)' : 'var(--alert)',
                   ];
               }
 
@@ -233,7 +250,7 @@ if ($view === 'list') {
                   <strong><?= htmlspecialchars($p['detection']['item']) ?></strong> detected in
                   <strong><?= htmlspecialchars($p['detection']['room']) ?></strong> at
                   <strong><?= htmlspecialchars($p['detection']['time']) ?></strong> —
-                  Status: <strong style="color:var(--alert);"><?= htmlspecialchars($p['detection']['status']) ?></strong>
+                  Status: <strong style="color:<?= $p['detection']['status_color'] ?>;"><?= htmlspecialchars($p['detection']['status']) ?></strong>
                 </div>
               </div>
               <?php endif; ?>
@@ -363,11 +380,13 @@ if ($view === 'list') {
           
           $detection = null;
           if ($post['detection_id']) {
+              $liveState = $detectionStates[(int)$post['detection_id']] ?? null;
               $detection = [
                   'room'   => $post['detection_room'],
                   'item'   => $post['detection_item'],
                   'time'   => date('M j, Y · H:i:s', strtotime($post['created_at'])),
-                  'status' => 'Detected'
+                  'status' => $liveState['status_label'] ?? 'Detected',
+                  'status_color' => ($liveState['closed'] ?? false) ? 'var(--ok)' : 'var(--alert)',
               ];
           }
           
@@ -423,7 +442,7 @@ if ($view === 'list') {
               <strong><?= htmlspecialchars($detection['item']) ?></strong> detected in
               <strong><?= htmlspecialchars($detection['room']) ?></strong> at
               <strong><?= htmlspecialchars($detection['time']) ?></strong> —
-              Status: <strong style="color:var(--alert);"><?= htmlspecialchars($detection['status']) ?></strong>
+              Status: <strong style="color:<?= $detection['status_color'] ?>;"><?= htmlspecialchars($detection['status']) ?></strong>
             </div>
           </div>
 
@@ -893,8 +912,20 @@ async function submitPost() {
   }
 }
 
-function sharePost(id) { showToast('info','Link copied to clipboard.'); }
-function savePost(id)  { showToast('success','Post saved to your bookmarks.'); }
+function sharePost(id) {
+  const url = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '/forum.php') + '?view=post&post=' + id;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(
+      () => showToast('info', 'Link copied to clipboard.'),
+      () => showToast('error', 'Could not copy the link. Your browser may have blocked clipboard access.')
+    );
+  } else {
+    showToast('error', 'Clipboard access is not available in this browser.');
+  }
+}
+// No bookmarking feature exists anywhere in this app (no table, no endpoint) —
+// this used to claim success and silently do nothing instead.
+function savePost(id)  { showToast('info','Bookmarks aren\'t available yet.'); }
 function removePost(id){ if(confirm('Remove this post?')) showToast('warn','Post removed.'); }
 function viewPost(id)  { window.location.href = 'forum.php?view=post&post=' + id; }
 
