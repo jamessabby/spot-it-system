@@ -351,7 +351,16 @@ if ($selectedRoomId !== '') {
             <div id="suggestWarning" style="display:none; font-size:.68rem; padding:8px 10px; border-radius:6px; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); color:#a67c00;"></div>
             <div id="suggestStatus" style="font-size:.66rem; color:var(--text-muted);">Proposals appear as dashed orange boxes on the canvas. Keep, rename, delete, or draw your own.</div>
           </div>
-          <div style="font-weight:800; font-size:.8rem; color:var(--text-primary);"><i class="fa-solid fa-list"></i> Target ROI Zones List</div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+            <div style="font-weight:800; font-size:.8rem; color:var(--text-primary);"><i class="fa-solid fa-list"></i> Target ROI Zones List</div>
+            <!-- Display-only, same as Room Monitor's category filter: hides other
+                 categories' zones from THIS LIST/CANVAS only. editorRois always
+                 keeps every category in memory; Save always sends all of it. -->
+            <select id="editorCategorySelect" onchange="selectEditorCategory(this.value)" title="Show one category at a time while editing. Saving always keeps every category — this never deletes anything hidden."
+                    style="font-size:.7rem; font-weight:700; padding:4px 8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-base); color:var(--text-primary);">
+              <option value="All">Showing: All categories</option>
+            </select>
+          </div>
           <div id="roiList" style="display:flex; flex-direction:column; gap:10px; flex:1; overflow-y:auto; min-height:200px;">
             <!-- Rendered dynamically -->
           </div>
@@ -378,6 +387,54 @@ const ROOM_ID = '<?= htmlspecialchars($selectedRoomId) ?>';
 let rois = <?= json_encode($roisList) ?>;
 let editorRois = [];
 let editorImg = new Image();
+
+// ── Category state (display-only; see editorCategorySelect above) ──────────
+// editorRois ALWAYS holds every category's zones, whether or not the editor
+// is currently showing them. activeEditorCategory only controls what
+// renderRoiList()/redrawEditorCanvas() draw — it never removes anything from
+// editorRois, and saveRoisToSystem() always sends the full array. That is
+// what makes "save mice" safe without wiping previously-saved monitors.
+let editorCategories = [];        // [{name, keywords}] for this room
+let editorRoiCategoryMap = {};    // label -> category, resolved server-side (room_categories.php)
+let activeEditorCategory = 'All';
+
+/** Which category a zone belongs to: server-resolved first (covers explicit
+ * admin assignments from the Room Monitor category editor), then the same
+ * keyword-match rule room_categories.php uses for labels it has not seen yet
+ * (freshly suggested or hand-drawn this session). */
+function categoryOfRoi(roi) {
+  if (editorRoiCategoryMap[roi.label]) return editorRoiCategoryMap[roi.label];
+  const low = roi.label.toLowerCase();
+  for (const cat of editorCategories) {
+    if (low.includes(cat.name.toLowerCase()) || (cat.keywords || []).some(k => k && low.includes(String(k).toLowerCase()))) {
+      return cat.name;
+    }
+  }
+  return null;
+}
+
+function renderEditorCategorySelect() {
+  const sel = document.getElementById('editorCategorySelect');
+  if (!sel) return;
+  const prev = activeEditorCategory;
+  sel.innerHTML = '<option value="All">Showing: All categories</option>'
+    + editorCategories.map(c => `<option value="${c.name.replace(/"/g, '&quot;')}">Showing: ${c.name}</option>`).join('');
+  // Keep the admin's current focus across a reload/re-fetch when that category still exists.
+  activeEditorCategory = editorCategories.some(c => c.name === prev) ? prev : 'All';
+  sel.value = activeEditorCategory;
+}
+
+function selectEditorCategory(name) {
+  activeEditorCategory = name;
+  renderRoiList();
+  redrawEditorCanvas();
+  // Convenience only: focus the Auto-ROI checkboxes on this category's class.
+  // The admin can still check others by hand; "All" leaves checkboxes as-is.
+  if (name !== 'All') {
+    const cls = suggestClassForCategory({ name, keywords: (editorCategories.find(c => c.name === name) || {}).keywords });
+    document.querySelectorAll('.sugg-cls').forEach(cb => { cb.checked = !!cls && cb.value === cls; });
+  }
+}
 
 function switchRoom(val) {
   window.location.href = 'camera-setup.php?room=' + val;
@@ -448,8 +505,9 @@ async function resetSystemSetup() {
 // ── WEB ROI CANVAS EDITOR ───────────────────────────────────────────────────
 function openRoiEditor() {
   openModal('roiEditorModal');
+  activeEditorCategory = 'All';   // always open showing everything
   loadExistingRoisForEditor();
-  loadSuggestClasses();
+  loadEditorCategoryData();
 }
 
 function closeRoiEditor() {
@@ -526,7 +584,14 @@ function setupCanvasDragging() {
     const rh = Math.round(Math.abs(currentY - startY));
 
     if (rw > 10 && rh > 10) {
-      const label = `zone_${editorRois.length + 1}`;
+      // While a specific category is focused, default the new box's label to
+      // that category's own name so it lands in the right category (and stays
+      // visible) without the admin having to rename it first.
+      const stem = activeEditorCategory !== 'All'
+        ? activeEditorCategory.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'zone'
+        : 'zone';
+      let n = 1, label = `${stem}_${n}`;
+      while (editorRois.some(r => r.label === label)) label = `${stem}_${++n}`;
       const tier = detectRoiTier(label);
       editorRois.push({ label, x: rx, y: ry, w: rw, h: rh, tier: tier });
       renderRoiList();
@@ -555,6 +620,10 @@ function redrawEditorCanvas(drawPreview = false) {
   }
 
   editorRois.forEach((roi, idx) => {
+    // Display-only category filter: a hidden zone is still in editorRois (and
+    // still gets saved) — it just isn't drawn while a different category is
+    // being focused on.
+    if (activeEditorCategory !== 'All' && categoryOfRoi(roi) !== activeEditorCategory) return;
     ctx.strokeStyle = roi.suggested ? '#ff9f40' : '#5cffac';
     ctx.lineWidth = 2;
     if (roi.suggested) ctx.setLineDash([6, 4]);
@@ -580,7 +649,15 @@ function redrawEditorCanvas(drawPreview = false) {
 function renderRoiList() {
   const container = document.getElementById('roiList');
   if (!container) return;
-  container.innerHTML = editorRois.map((roi, idx) => `
+  // Build from (roi, realIdx) pairs over the FULL editorRois array, then filter
+  // for display only — onclick handlers below must keep using realIdx so a
+  // filtered view can never point its Delete/rename buttons at the wrong zone.
+  const all = editorRois.map((roi, idx) => ({ roi, idx }));
+  const shown = activeEditorCategory === 'All'
+    ? all
+    : all.filter(({ roi }) => categoryOfRoi(roi) === activeEditorCategory);
+  const hiddenCount = all.length - shown.length;
+  container.innerHTML = (shown.length ? shown.map(({ roi, idx }) => `
     <div style="display:flex; flex-direction:column; gap:6px; padding:10px; border-radius:6px; border:1px solid var(--border); background:var(--bg-base);">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <span style="font-weight:800; font-size:.7rem; color:var(--text-dim);">Zone #${idx+1}${roi.suggested ? ` <span style="color:#ff9f40;">· suggested (${roi.sourceClass} ${roi.score})</span>` : ''}</span>
@@ -601,7 +678,8 @@ function renderRoiList() {
         Coords: x:${roi.x}, y:${roi.y} · Size: w:${roi.w}, h:${roi.h}
       </div>
     </div>
-  `).join('');
+  `).join('') : '<div class="text-center py-3" style="color:var(--text-dim); font-size:.78rem;">No zones in this category yet. Run Auto-ROI or draw one.</div>')
+    + (hiddenCount ? `<div style="font-size:.66rem; color:var(--text-muted); padding:6px 2px;"><i class="fa-solid fa-eye-slash"></i> ${hiddenCount} zone(s) in other categories are hidden, not deleted — they will still be saved.</div>` : '');
 }
 
 function updateEditorRoiLabel(idx, val) {
@@ -657,22 +735,35 @@ function suggestClassForCategory(cat) {
   return null;
 }
 
-// Builds the "Scan & Suggest" checkboxes from THIS room's configured equipment
-// categories (auth/room_categories.php) instead of a fixed, hardcoded list —
-// so a brand-new room gets a working auto-ROI workflow with zero code changes,
-// and a room whose categories are oscilloscopes/power supplies correctly shows
-// none, with that fact stated plainly instead of silently offering nothing.
-async function loadSuggestClasses() {
-  const list = document.getElementById('suggestClassList');
-  const unsupported = document.getElementById('suggestUnsupported');
-  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  unsupported.style.display = 'none';
+// Fetches THIS room's configured equipment categories (auth/room_categories.php)
+// ONCE and feeds both the Auto-ROI checkboxes and the "Showing:" category
+// selector above the ROI list — so a brand-new room gets a working auto-ROI
+// workflow with zero code changes, and a room whose categories are
+// oscilloscopes/power supplies correctly shows none, stated plainly instead
+// of silently offering nothing.
+let editorCategoryLoadFailed = false;
+
+async function loadEditorCategoryData() {
   let data = null;
   try {
     data = await (await fetch(`../auth/room_categories.php?room_id=${ROOM_ID}&t=${Date.now()}`)).json();
   } catch (e) { /* handled below */ }
-  const categories = (data && data.success && Array.isArray(data.categories)) ? data.categories : [];
-  if (!data || !data.success) {
+  editorCategoryLoadFailed = !data || !data.success;
+  editorCategories = editorCategoryLoadFailed ? [] : (Array.isArray(data.categories) ? data.categories : []);
+  editorRoiCategoryMap = {};
+  if (!editorCategoryLoadFailed) {
+    (data.rois || []).forEach(r => { if (r.category) editorRoiCategoryMap[r.label] = r.category; });
+  }
+  renderSuggestClassList();
+  renderEditorCategorySelect();
+}
+
+function renderSuggestClassList() {
+  const list = document.getElementById('suggestClassList');
+  const unsupported = document.getElementById('suggestUnsupported');
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  unsupported.style.display = 'none';
+  if (editorCategoryLoadFailed) {
     list.innerHTML = '<span style="color:var(--red-main);">Could not load this room\'s equipment categories. Configure them from Room Monitor, or select classes manually.</span>'
       + ['keyboard','mouse','tv','laptop'].map(c => `<label><input type="checkbox" class="sugg-cls" value="${c}" ${c==='keyboard'||c==='mouse'?'checked':''}> ${c}</label>`).join('');
     return;
@@ -680,7 +771,7 @@ async function loadSuggestClasses() {
   const seen = new Set();
   const boxes = [];
   const skipped = [];
-  for (const cat of categories) {
+  for (const cat of editorCategories) {
     const cls = suggestClassForCategory(cat);
     if (!cls) { skipped.push(cat.name); continue; }
     if (seen.has(cls)) continue; // e.g. "Monitor" and "Screen" both map to the tv checkbox
@@ -781,10 +872,22 @@ function applySuggestions(result) {
 }
 
 function discardSuggestions() {
-  editorRois = editorRois.filter(r => !r.suggested);
+  // Scoped to what's currently shown: discarding while focused on Mouse must
+  // not also wipe an earlier, still-unreviewed Monitor scan hidden by the
+  // filter — that would break "keep unsaved suggestions when switching
+  // categories" just as surely as a bad Save would.
+  const before = editorRois.length;
+  editorRois = editorRois.filter(r => {
+    if (!r.suggested) return true;
+    if (activeEditorCategory === 'All') return false; // discard every unreviewed suggestion
+    return categoryOfRoi(r) !== activeEditorCategory;  // keep other categories' pending suggestions
+  });
   renderRoiList();
   redrawEditorCanvas();
-  document.getElementById('suggestStatus').textContent = 'Suggestions discarded.';
+  const removed = before - editorRois.length;
+  document.getElementById('suggestStatus').textContent = activeEditorCategory === 'All'
+    ? `${removed} suggestion(s) discarded.`
+    : `${removed} "${activeEditorCategory}" suggestion(s) discarded. Other categories' pending suggestions are untouched.`;
 }
 
 async function saveRoisToSystem() {
