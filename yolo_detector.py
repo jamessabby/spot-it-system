@@ -174,8 +174,20 @@ def suggest_rois(detector, frame_bgr, classes=SUGGEST_DEFAULT_CLASSES, out_size=
     kept = []
     for d in sorted(dets, key=lambda d: -d["score"]):
         cls = d["cls"]
-        if cls not in wanted and not (screens_as_monitor and cls == "laptop"):
+        is_monitor_candidate = (cls == "tv" and "tv" in wanted) or (screens_as_monitor and cls == "laptop")
+        if cls not in wanted and not is_monitor_candidate:
             continue
+        # Monitor aspect-ratio floor: on the ROOM_1 reference frame a dark doorway
+        # scored 0.77 as "tv" at w/h=0.27 (tall and narrow, like a door) while
+        # every real monitor on the same frame, seen from the same angle, measured
+        # w/h >= 0.60. Reject anything thinner than that with margin, before it
+        # ever reaches the admin for review. Scoped to monitor candidates only —
+        # a plain "laptop" (not standing in for a monitor) is left alone, since no
+        # evidence here says its aspect ratio misbehaves the same way.
+        if is_monitor_candidate:
+            bw, bh = d["box"][2] - d["box"][0], d["box"][3] - d["box"][1]
+            if bh <= 0 or bw / bh < MONITOR_MIN_ASPECT:
+                continue
         # Cross-class duplicates: the same object often comes back as both "tv"
         # and "laptop". Class-aware NMS keeps both, so drop any box that heavily
         # overlaps a higher-scoring suggestion of ANY class.
@@ -197,6 +209,7 @@ def suggest_rois(detector, frame_bgr, classes=SUGGEST_DEFAULT_CLASSES, out_size=
 
 
 SUGGEST_DUP_IOU = 0.55
+MONITOR_MIN_ASPECT = 0.45
 
 
 def _box_iou_xyxy(a, b):

@@ -422,9 +422,23 @@ def handle_roi_suggestion_request(raw_frame, frame):
     classes = set(request.get("classes") or SUGGEST_DEFAULT_CLASSES)
     fh, fw = frame.shape[:2]
     rh, rw = raw_frame.shape[:2]
+    # Which RTSP profile actually supplied raw_frame. The stream1->stream2 fallback
+    # (VideoStream.update(), ~line 1042) is silent on purpose for live monitoring —
+    # detection still works at 640x360 — but a suggestion run on the sub-stream can
+    # miss small items like mice that native resolution would catch, with nothing
+    # in the UI to say why. source_w/source_h alone (640x360) hints at this but
+    # doesn't name the cause; stream_name does.
+    stream = getattr(cap, "stream_name", None) or "unknown"
     result = {"room_id": ROOM_ID, "request_mtime": mtime, "created_at": datetime.now().isoformat(timespec="seconds"),
-              "frame_w": fw, "frame_h": fh, "source_w": rw, "source_h": rh, "classes": sorted(classes),
-              "suggestions": [], "error": None}
+              "frame_w": fw, "frame_h": fh, "source_w": rw, "source_h": rh, "stream": stream,
+              "classes": sorted(classes), "suggestions": [], "error": None, "warning": None}
+    if stream == "stream2":
+        result["warning"] = (
+            f"Generated from the low-resolution sub-stream (stream2, {rw}x{rh}) because the camera's "
+            "main stream (stream1) was unavailable — likely another RTSP viewer already connected. "
+            "Small items (mice, distant keyboards) may be missed. Close other live viewers for this "
+            "room and click Suggest again for a full-resolution pass."
+        )
     y = get_yolo()
     if y is None:
         result["error"] = "YOLO model unavailable on the detector PC (models/yolox_s.onnx)."
@@ -441,7 +455,9 @@ def handle_roi_suggestion_request(raw_frame, frame):
         json.dump(result, f)
     os.replace(out + ".tmp", out)
     print(f"[SPOT-IT][SUGGEST] {len(result['suggestions'])} ROI suggestion(s) for {ROOM_ID} "
-          f"from a {rw}x{rh} frame -> {fw}x{fh} coordinates" + (f" — {result['error']}" if result["error"] else ""))
+          f"from a {rw}x{rh} frame ({stream}) -> {fw}x{fh} coordinates"
+          + (f" — {result['error']}" if result["error"] else "")
+          + (f" — WARNING: {result['warning']}" if result["warning"] else ""))
 
 
 def evaluate_roi_presence_yolo(frame_bgr, roi, now, prev_state=None):

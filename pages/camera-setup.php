@@ -327,20 +327,29 @@ if ($selectedRoomId !== '') {
 
         <!-- Details & list area -->
         <div style="display:flex; flex-direction:column; gap:12px; height:100%; max-height:540px;">
-          <!-- Automatic ROI suggestions (experimental, YOLO) -->
-          <div id="suggestPanel" style="padding:10px; border-radius:8px; border:1px dashed rgba(255,159,64,.6); background:rgba(255,159,64,.06); display:flex; flex-direction:column; gap:8px;">
-            <div style="font-weight:800; font-size:.74rem; color:var(--text-primary);"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest ROIs (YOLO, experimental)</div>
-            <div style="display:flex; flex-wrap:wrap; gap:10px; font-size:.7rem;">
-              <label><input type="checkbox" class="sugg-cls" value="keyboard" checked> Keyboards</label>
-              <label><input type="checkbox" class="sugg-cls" value="mouse" checked> Mice</label>
-              <label><input type="checkbox" class="sugg-cls" value="tv"> Monitors</label>
-              <label><input type="checkbox" class="sugg-cls" value="laptop"> Laptops</label>
+          <!-- Automatic ROI suggestions — the primary setup workflow. Manual
+               drawing (below) is for items this scan misses, not the normal
+               way to register a room. Classes offered here are driven by this
+               room's own configured equipment categories (auth/room_categories.php),
+               never hardcoded per room — see loadSuggestClasses(). -->
+          <div id="suggestPanel" style="padding:12px; border-radius:8px; border:1px solid var(--accent, #4a7dff); background:rgba(74,125,255,.06); display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+              <div style="font-weight:800; font-size:.78rem; color:var(--text-primary);"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Detect ROIs</div>
+              <span style="font-size:.6rem; font-weight:800; letter-spacing:.04em; color:#4a7dff; text-transform:uppercase;">Start here</span>
             </div>
+            <div style="font-size:.68rem; color:var(--text-muted); line-height:1.4;">
+              Scans this room's configured equipment categories on the live camera and proposes boxes to review below. Draw boxes by hand only for items the scan misses.
+            </div>
+            <div id="suggestClassList" style="display:flex; flex-wrap:wrap; gap:10px; font-size:.7rem;">
+              <span style="color:var(--text-muted);">Loading this room's equipment categories…</span>
+            </div>
+            <div id="suggestUnsupported" style="font-size:.64rem; color:var(--text-muted); display:none;"></div>
             <div style="display:flex; gap:8px;">
-              <button class="btn btn-sm" id="btnSuggest" onclick="requestRoiSuggestions()" style="flex:1; justify-content:center;"><i class="fa-solid fa-magnifying-glass"></i> Suggest from live frame</button>
-              <button class="btn btn-sm" onclick="discardSuggestions()" title="Remove all suggested boxes that are still unreviewed">Discard suggestions</button>
+              <button class="btn btn-primary btn-sm" id="btnSuggest" onclick="requestRoiSuggestions()" style="flex:1; justify-content:center;"><i class="fa-solid fa-magnifying-glass"></i> Scan &amp; Suggest</button>
+              <button class="btn btn-sm" onclick="discardSuggestions()" title="Remove all suggested boxes that are still unreviewed">Discard</button>
             </div>
-            <div id="suggestStatus" style="font-size:.66rem; color:var(--text-muted);">Proposals appear as dashed orange boxes. Keep, rename, delete, or draw your own. Oscilloscopes and power supplies are not detectable — draw those manually.</div>
+            <div id="suggestWarning" style="display:none; font-size:.68rem; padding:8px 10px; border-radius:6px; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); color:#a67c00;"></div>
+            <div id="suggestStatus" style="font-size:.66rem; color:var(--text-muted);">Proposals appear as dashed orange boxes on the canvas. Keep, rename, delete, or draw your own.</div>
           </div>
           <div style="font-weight:800; font-size:.8rem; color:var(--text-primary);"><i class="fa-solid fa-list"></i> Target ROI Zones List</div>
           <div id="roiList" style="display:flex; flex-direction:column; gap:10px; flex:1; overflow-y:auto; min-height:200px;">
@@ -440,6 +449,7 @@ async function resetSystemSetup() {
 function openRoiEditor() {
   openModal('roiEditorModal');
   loadExistingRoisForEditor();
+  loadSuggestClasses();
 }
 
 function closeRoiEditor() {
@@ -626,6 +636,66 @@ function deleteEditorRoi(idx) {
 // save button. Nothing is stored until Save.
 let suggestPollTimer = null;
 
+// Category -> COCO class usable for auto-suggestion. Mirrors the slice of
+// yolo_detector.py's LABEL_TO_CLASSES that auth/suggest_rois.php's
+// SUGGEST_CLASSES allowlist actually accepts (keyboard, mouse, tv, laptop,
+// cell phone) — NOT the full belongings list main.py uses for monitoring.
+// Keep these three in sync if any of them changes.
+const SUGGEST_CATEGORY_CLASSES = [
+  { match: ['keyboard', 'kb'], cls: 'keyboard' },
+  { match: ['mouse'], cls: 'mouse' },
+  { match: ['monitor', 'screen', 'display', 'tv'], cls: 'tv' },
+  { match: ['laptop'], cls: 'laptop' },
+  { match: ['phone'], cls: 'cell phone' },
+];
+
+function suggestClassForCategory(cat) {
+  const haystacks = [cat.name, ...(cat.keywords || [])].map(s => String(s).toLowerCase());
+  for (const entry of SUGGEST_CATEGORY_CLASSES) {
+    if (haystacks.some(h => entry.match.some(m => h.includes(m)))) return entry.cls;
+  }
+  return null;
+}
+
+// Builds the "Scan & Suggest" checkboxes from THIS room's configured equipment
+// categories (auth/room_categories.php) instead of a fixed, hardcoded list —
+// so a brand-new room gets a working auto-ROI workflow with zero code changes,
+// and a room whose categories are oscilloscopes/power supplies correctly shows
+// none, with that fact stated plainly instead of silently offering nothing.
+async function loadSuggestClasses() {
+  const list = document.getElementById('suggestClassList');
+  const unsupported = document.getElementById('suggestUnsupported');
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  unsupported.style.display = 'none';
+  let data = null;
+  try {
+    data = await (await fetch(`../auth/room_categories.php?room_id=${ROOM_ID}&t=${Date.now()}`)).json();
+  } catch (e) { /* handled below */ }
+  const categories = (data && data.success && Array.isArray(data.categories)) ? data.categories : [];
+  if (!data || !data.success) {
+    list.innerHTML = '<span style="color:var(--red-main);">Could not load this room\'s equipment categories. Configure them from Room Monitor, or select classes manually.</span>'
+      + ['keyboard','mouse','tv','laptop'].map(c => `<label><input type="checkbox" class="sugg-cls" value="${c}" ${c==='keyboard'||c==='mouse'?'checked':''}> ${c}</label>`).join('');
+    return;
+  }
+  const seen = new Set();
+  const boxes = [];
+  const skipped = [];
+  for (const cat of categories) {
+    const cls = suggestClassForCategory(cat);
+    if (!cls) { skipped.push(cat.name); continue; }
+    if (seen.has(cls)) continue; // e.g. "Monitor" and "Screen" both map to the tv checkbox
+    seen.add(cls);
+    const checked = cls === 'keyboard' || cls === 'mouse' ? 'checked' : '';
+    boxes.push(`<label title="Category: ${esc(cat.name)}"><input type="checkbox" class="sugg-cls" value="${cls}" ${checked}> ${esc(cat.name)}</label>`);
+  }
+  list.innerHTML = boxes.length ? boxes.join('')
+    : '<span style="color:var(--text-muted);">None of this room\'s configured categories can be auto-detected by camera — draw all boxes manually below.</span>';
+  if (skipped.length) {
+    unsupported.style.display = 'block';
+    unsupported.innerHTML = `<i class="fa-solid fa-circle-info"></i> Not auto-detectable by camera (no object-detection class for these): <strong>${skipped.map(esc).join(', ')}</strong>. Draw these manually.`;
+  }
+}
+
 function _iou(a, b) {
   const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
   const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
@@ -640,6 +710,7 @@ async function requestRoiSuggestions() {
   const btn = document.getElementById('btnSuggest');
   btn.disabled = true;
   status.textContent = 'Asking the detector for proposals…';
+  document.getElementById('suggestWarning').style.display = 'none';
   let res = null;
   try {
     const r = await fetch('../auth/suggest_rois.php', {
@@ -674,6 +745,13 @@ async function requestRoiSuggestions() {
 
 function applySuggestions(result) {
   const status = document.getElementById('suggestStatus');
+  const warnBox = document.getElementById('suggestWarning');
+  if (result.warning) {
+    warnBox.style.display = 'block';
+    warnBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${result.warning}`;
+  } else {
+    warnBox.style.display = 'none';
+  }
   if (result.error) { status.textContent = result.error; showToast('error', result.error); return; }
   // Resolution guard (Fix 1): boxes are in the detector frame's coordinates and
   // must match the baseline this editor draws on, or they would land elsewhere.
