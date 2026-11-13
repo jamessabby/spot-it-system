@@ -16,8 +16,15 @@ $recoveredItemsStmt = $lfPdo->query("
 $recoveredItems = $recoveredItemsStmt->fetchAll();
 
 // 2. Fetch pending claims queue
+// FIX: c.id (the claims PRIMARY KEY complete_claim.php actually needs) was
+// already selected here but dropped in the render loop below, which built
+// claiming-station's on-page data from r.recovery_id instead — a different
+// autoincrement sequence that only matches c.id by coincidence. See CLAUDE.md
+// 2026-11-13 for the full story; c.id is now kept all the way to the button.
 $pendingClaimsStmt = $lfPdo->query("
-    SELECT c.id, c.claimant_name as name, c.university_id as id_no, r.item_type as item, c.submitted_at
+    SELECT c.id, c.claimant_name as name, c.university_id as id_no,
+           c.contact, c.item_description as claim_desc,
+           r.item_type as item, r.room_id as room, c.submitted_at
     FROM claims c
     INNER JOIN recovered_items r ON c.recovery_id = r.recovery_id
     WHERE c.status = 'pending'
@@ -321,9 +328,13 @@ $completedClaims = $completedClaimsStmt->fetchAll();
             $pending = [];
             foreach ($pendingClaims as $pc) {
                 $pending[] = [
+                    'claim_id'  => $pc['id'],
                     'name'      => $pc['name'],
                     'item'      => $pc['item'],
-                    'id'        => $pc['id_no'],
+                    'room'      => $pc['room'],
+                    'contact'   => $pc['contact'],
+                    'desc'      => $pc['claim_desc'],
+                    'id_no'     => $pc['id_no'],
                     'submitted' => date('H:i', strtotime($pc['submitted_at']))
                 ];
             }
@@ -332,11 +343,18 @@ $completedClaims = $completedClaimsStmt->fetchAll();
             <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:.78rem;">No pending claims in queue.</div>
             <?php else: ?>
             <?php foreach ($pending as $p): ?>
-            <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+            <div style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;"
+                 onclick="selectPendingClaim(<?= (int)$p['claim_id'] ?>,
+                                              '<?= htmlspecialchars(addslashes($p['name']), ENT_QUOTES) ?>',
+                                              '<?= htmlspecialchars(addslashes($p['id_no']), ENT_QUOTES) ?>',
+                                              '<?= htmlspecialchars(addslashes($p['item']), ENT_QUOTES) ?>',
+                                              '<?= htmlspecialchars(addslashes($p['room'] ?? ''), ENT_QUOTES) ?>',
+                                              '<?= htmlspecialchars(addslashes($p['contact'] ?? ''), ENT_QUOTES) ?>',
+                                              '<?= htmlspecialchars(addslashes($p['desc'] ?? ''), ENT_QUOTES) ?>')">
               <div style="font-family:var(--font-display);font-size:.8rem;font-weight:700;color:var(--text-primary);"><?= htmlspecialchars($p['name']) ?></div>
               <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">Claiming: <?= htmlspecialchars($p['item']) ?></div>
               <div style="display:flex;gap:8px;align-items:center;margin-top:5px;">
-                <span class="col-mono" style="font-size:.64rem;">ID: <?= htmlspecialchars($p['id']) ?></span>
+                <span class="col-mono" style="font-size:.64rem;">ID: <?= htmlspecialchars($p['id_no']) ?></span>
                 <span class="col-mono" style="font-size:.64rem;">· <?= htmlspecialchars($p['submitted']) ?></span>
                 <span class="event-status-tag est-pending" style="margin-left:auto;">Pending</span>
               </div>
@@ -389,6 +407,11 @@ let currentStep = 1;
 let selectedItemId = null, selectedItemName = '', selectedItemRoom = '';
 let photoCaptured = false;
 let webcamStream = null;
+// True once a REAL claims.id is selected via the Pending Claims Queue (the
+// only id complete_claim.php can act on). Browsing "available" recovered
+// items (selectItem(), below) sets this false — those have no claims row
+// yet, so completing one is blocked instead of failing silently at Step 4.
+let selectedViaClaim = false;
 
 // Webcam HUD clock
 setInterval(function(){
@@ -412,9 +435,26 @@ function selectItem(id, name, room) {
   document.querySelectorAll('.item-card').forEach(c=>c.classList.remove('selected'));
   document.getElementById('item-'+id).classList.add('selected');
   selectedItemId = id; selectedItemName = name; selectedItemRoom = room;
+  selectedViaClaim = false;
   setTimeout(()=>goToStep(2), 300);
   document.getElementById('selectedItemName').textContent = name;
   document.getElementById('selectedItemRoom').textContent = room;
+}
+
+// Pending Claims Queue row click — the real path for "student already
+// submitted a claim, staff now completes it". claimId is claims.id, the only
+// id complete_claim.php accepts; claimant info is prefilled from what the
+// student already submitted (still editable before confirming).
+function selectPendingClaim(claimId, name, idNo, itemName, room, contact, desc) {
+  selectedItemId = claimId; selectedItemName = itemName; selectedItemRoom = room;
+  selectedViaClaim = true;
+  document.getElementById('selectedItemName').textContent = itemName;
+  document.getElementById('selectedItemRoom').textContent = room;
+  document.getElementById('claimName').value    = name;
+  document.getElementById('claimId').value      = idNo;
+  document.getElementById('claimContact').value = contact;
+  document.getElementById('claimDesc').value    = desc;
+  goToStep(2);
 }
 
 function validateStep2() {
@@ -489,6 +529,10 @@ function populateConfirm() {
 async function completeClaim() {
   const staffName = document.getElementById('staffName').value.trim();
   if (!staffName) { showToast('error','Please enter the processing staff name.'); return; }
+  if (!selectedViaClaim) {
+    showToast('error', 'No claim has been submitted for this item yet. Ask the student to submit a claim first, then complete it from the Pending Claims Queue.');
+    return;
+  }
 
   const btn = document.querySelector('#step4 .btn-primary');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving…'; }

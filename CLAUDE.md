@@ -642,6 +642,37 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Integrated regression pass — Claiming Station could not complete a real
+  student claim):** Full integrated regression across manual surrender, simulated CCTV
+  events, and notifications/snapshots, run against isolated `spotit_test_*` DBs (`php -S`
+  router + env-var DB overrides, same harness as the Nov 11/12 runs — see memory
+  `isolated-e2e-harness`) plus a real headless-browser click-through (Edge, CDP, two
+  isolated browser contexts for the admin and student sessions — no selenium/playwright
+  install available this session, so a minimal CDP driver was written instead).
+  34/34 server+DB checks and 19/19 real click-through checks passed after one fix:
+  `pages/claiming-station.php`'s Pending Claims Queue fetched `claims.id` (the only id
+  `auth/complete_claim.php` accepts) in its SQL but **dropped it before rendering**, and
+  the queue rows had no click handler at all — staff had no way to open a specific pending
+  claim. The page's only working "Complete Handoff" path (Step 1 → 4) sent `claim_id =
+  recovery_id` instead, a different autoincrement sequence that only matches `claims.id`
+  by coincidence (confirmed on live test data: recovery_id 21 vs its own claim's id 8).
+  So a student-submitted claim could essentially never be completed through the actual
+  UI — `complete_claim.php` would return "Claim not found." Fixed by keeping `claims.id`
+  through to the row (`$pending[]` now carries `claim_id`, plus `room`/`contact`/`desc`
+  columns added to the query) and adding `selectPendingClaim()`, wired to each queue row's
+  onclick, which sets `selectedItemId` to the real claim id and prefills Step 2 from the
+  student's own submission. The old Step-1 "browse available items" path is left in place
+  for visibility, but `completeClaim()` now refuses to submit for an item selected that way
+  (`selectedViaClaim` flag) with a clear toast instead of a dead-end "Claim not found" at
+  Step 4 — confirmed blocked in the browser suite. No backend file changed; `complete_claim.php`,
+  `submit_claim.php`, `record_surrender.php`, and the registered-vs-unregistered event-kind
+  logic (`auth/event_kinds.php`) all verified correct as-is (CCTV-simulated registered
+  equipment stays out of Lost & Found; an unregistered item becomes claimable exactly once;
+  two detections on the same zone no longer collide on disk, confirming the Nov 12 snapshot
+  fix still holds). `detection_mode.json` was touched by the test run (`update_event_status.php`
+  writes to it unconditionally, not just in local mode) and restored via `git checkout` —
+  worth knowing if a future isolated test run needs to snapshot/restore it deliberately.
+
 - **2026-11-13 (Phase 2C — My Posts made real; no CCTV involved):** `pages/my-posts.php`'s
   listing and empty state were already real (queried `forum_posts` by session `user_id`), but
   every action button on the page was fake: `submitPost()` never called any endpoint and just
