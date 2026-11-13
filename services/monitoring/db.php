@@ -86,3 +86,30 @@ function ms_dashboard_kpis(PDO $monitorPdo): array
         'today'         => (int) ($row['today'] ?? 0),
     ];
 }
+
+/**
+ * Per-room count of unresolved CCTV alerts — WEB-05 (Option A): the Admin
+ * Dashboard's Room Status table shows this as "Open Alerts" instead of the
+ * ambiguous "Deviation" column, and links straight to this same set on
+ * alerts.php?scope=cctv&room=<id>. Same status list as ms_dashboard_kpis()'s
+ * $open, kept here instead of re-typing it, specifically so the two numbers
+ * cannot drift apart: pending/potential/confirmed_missing are "unresolved",
+ * recovered/dismissed are not, regardless of which page is asking.
+ *
+ * @return array<string,int> room_id => open alert count (rooms with zero are
+ *                            simply absent — callers should default to 0)
+ */
+function ms_open_alert_counts_by_room(PDO $monitorPdo): array
+{
+    $rows = $monitorPdo->query("
+        SELECT room_id, COUNT(*) AS n
+        FROM detections
+        WHERE status IN ('pending','potential','confirmed_missing') AND is_removed = 0
+        GROUP BY room_id
+    ")->fetchAll();
+    $out = [];
+    foreach ($rows as $r) {
+        $out[$r['room_id']] = (int) $r['n'];
+    }
+    return $out;
+}

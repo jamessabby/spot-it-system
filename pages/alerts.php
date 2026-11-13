@@ -305,6 +305,10 @@ function al_js($value): string {
         <div class="filter-tab" data-scope="cctv" onclick="alSetScope(this)">CCTV Alerts (<?= $cctvCount + $missingCount ?>)</div>
         <div class="filter-tab" data-scope="offline" onclick="alSetScope(this)">Offline (<?= $offlineCount ?>)</div>
         <div class="filter-tab" data-scope="claim" onclick="alSetScope(this)">Claim Requests (<?= $claimsCount ?>)</div>
+        <div id="alRoomFilterChip" style="display:none;align-items:center;gap:6px;margin-left:auto;font-size:.76rem;color:var(--text-muted);background:var(--bg-base);border:1px solid var(--border);border-radius:100px;padding:4px 6px 4px 12px;">
+          Room: <strong id="alRoomFilterLabel" style="color:var(--text-primary);"></strong>
+          <button type="button" onclick="alClearRoomFilter()" title="Clear room filter" style="background:none;border:none;cursor:pointer;color:var(--text-dim);padding:2px 6px;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
       </div>
 
       <!-- Triage table -->
@@ -336,7 +340,7 @@ function al_js($value): string {
               <?php foreach ($rows as $row):
                 $searchBlob = strtolower($row['room'] . ' ' . ($row['room_name'] ?? '') . ' ' . $row['subject'] . ' ' . $row['subject_sub']);
               ?>
-              <tr class="al-row" data-type="<?= $row['type'] ?>" data-search="<?= htmlspecialchars($searchBlob) ?>">
+              <tr class="al-row" data-type="<?= $row['type'] ?>" data-room="<?= htmlspecialchars($row['room'] ?? '') ?>" data-search="<?= htmlspecialchars($searchBlob) ?>">
                 <td>
                   <div class="al-type-cell">
                     <div class="al-type-icon tp-<?= $row['type'] ?>"><i class="fa-solid <?= $row['icon'] ?>"></i></div>
@@ -540,25 +544,47 @@ function toggleNotifPanel() {
    SEARCH + FILTER PILLS
 ══════════════════════════════════════ */
 let alScope = 'all';
+let alRoomFilter = null; // exact room_id, or null for no room filter (WEB-05)
 function alSetScope(btn) {
   document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
   alScope = btn.dataset.scope;
   alFilter();
 }
+function alClearRoomFilter() {
+  alRoomFilter = null;
+  document.getElementById('alRoomFilterChip').style.display = 'none';
+  const url = new URL(location.href);
+  url.searchParams.delete('room');
+  history.replaceState(null, '', url);
+  alFilter();
+}
 // alerts.php?scope=cctv|offline|claim opens on that tab (the dashboard's
-// "Active Deviations" card links here — WEB-04).
+// "Active Deviations" card links here — WEB-04). alerts.php?room=<id>, used
+// together with scope=cctv by the Room Status table's "Open Alerts" count
+// (WEB-05), narrows the list to exactly that room's rows — an EXACT match on
+// data-room, not the fuzzy text search below, so another room's alert can
+// never leak in just because its name/zone text happens to contain the code.
 document.addEventListener('DOMContentLoaded', () => {
-  const scope = new URLSearchParams(location.search).get('scope');
+  const params = new URLSearchParams(location.search);
+  const scope = params.get('scope');
   const tab = scope && document.querySelector(`.filter-tab[data-scope="${CSS.escape(scope)}"]`);
   if (tab) alSetScope(tab);
+  const room = params.get('room');
+  if (room) {
+    alRoomFilter = room;
+    document.getElementById('alRoomFilterLabel').textContent = room;
+    document.getElementById('alRoomFilterChip').style.display = 'inline-flex';
+  }
+  alFilter();
 });
 function alFilter() {
   const q = document.getElementById('alertSearch').value.trim().toLowerCase();
   document.querySelectorAll('#alertTableBody .al-row').forEach(row => {
     const matchesScope = (alScope === 'all') || (row.dataset.type === alScope);
+    const matchesRoom = !alRoomFilter || row.dataset.room === alRoomFilter;
     const matchesSearch = !q || row.dataset.search.includes(q);
-    row.classList.toggle('al-hidden', !(matchesScope && matchesSearch));
+    row.classList.toggle('al-hidden', !(matchesScope && matchesRoom && matchesSearch));
   });
 }
 

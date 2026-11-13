@@ -36,6 +36,11 @@ $roomStatusStmt = $monitorPdo->prepare("
 $roomStatusStmt->execute();
 $liveRooms = $roomStatusStmt->fetchAll();
 
+// WEB-05 (Option A): "Open Alerts" per room — same unresolved-status rule the
+// Alerts page itself filters on (ms_open_alert_counts_by_room() in
+// services/monitoring/db.php), so the two numbers cannot drift apart.
+$openAlertCounts = ms_open_alert_counts_by_room($monitorPdo);
+
 // Fetch recent event logs (latest 20; the tabs below count and filter these)
 $recentEventsStmt = $monitorPdo->query("
     SELECT d.detection_id, d.room_id, d.object_zone, d.object_type, d.detected_at, d.live_count, d.baseline_count, d.deviation, d.status, d.validation_status, d.verified_by,
@@ -122,7 +127,7 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
             </div>
             <div id="roomTableWrap" style="overflow-x:auto;max-height:350px;transition:max-height 0.3s ease;">
               <table class="data-table">
-                <thead><tr><th>Room</th><th>Live / Baseline</th><th>Deviation</th><th>Status</th><th>Timer</th><th>Last Event</th><th></th></tr></thead>
+                <thead><tr><th>Room</th><th>Live / Baseline</th><th>Open Alerts</th><th>Status</th><th>Timer</th><th>Last Event</th><th></th></tr></thead>
                 <tbody>
                   <?php if (empty($liveRooms)): ?>
                   <tr>
@@ -132,7 +137,6 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                   <?php foreach ($liveRooms as $r):
                       $rid       = $r['room_id'];
                       $base      = (int)$r['baseline_count'];
-                      $dev       = $r['deviation'] !== null ? (int)$r['deviation'] : 0;
                       $liveCount = $r['live_count'] !== null ? (int)$r['live_count'] : $base;
                       $status    = $r['det_status'] ?? 'normal';
 
@@ -167,13 +171,18 @@ $activeAlerts = $activeAlertsStmt->fetchAll();
                           },
                       };
 
-                      $devClass = $dev < 0 ? 'dev-neg' : ($dev > 0 ? 'dev-pos' : 'dev-zero');
-                      $devSign  = $dev < 0 ? '−' . abs($dev) : ($dev > 0 ? '+' . $dev : '0');
+                      $openAlerts = $openAlertCounts[$rid] ?? 0;
                   ?>
                   <tr>
                     <td><div class="col-id"><?= htmlspecialchars($rid) ?></div><div class="col-sub"><?= htmlspecialchars($r['room_name']) ?></div></td>
                     <td><span style="font-family:var(--font-mono);font-size:.88rem;font-weight:600;"><?= $liveCount ?></span><span class="col-mono"> / <?= $base ?></span></td>
-                    <td><span class="dev-chip <?= $devClass ?>"><?= $devSign ?></span></td>
+                    <td>
+                      <?php if ($openAlerts > 0): ?>
+                        <a class="dev-chip dev-pos" style="text-decoration:none;cursor:pointer;" title="View this room's unresolved alerts" href="alerts.php?scope=cctv&room=<?= urlencode($rid) ?>"><?= $openAlerts ?></a>
+                      <?php else: ?>
+                        <span class="col-mono">0</span>
+                      <?php endif; ?>
+                    </td>
                     <td><span class="badge <?= $badgeClass ?>"><span class="bdot"></span><?= $statusLabel ?></span></td>
                     <td>
                       <?php if ($status === 'confirmed_missing' || $status === 'potential'): ?>
