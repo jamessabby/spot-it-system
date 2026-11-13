@@ -57,7 +57,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
       <div><span class="topbar-title">My Posts &amp; Activity</span><span class="topbar-sub">— Your submissions and reports</span></div>
       <div class="topbar-right">
         <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);" id="liveClock"></span>
-        <button class="tb-btn" onclick="openModal('newPostModal')"><i class="fa-solid fa-plus"></i></button>
+        <button class="tb-btn" onclick="openCreatePostModal()"><i class="fa-solid fa-plus"></i></button>
         <button class="tb-btn" onclick="toggleTheme()"><i class="fa-solid fa-circle-half-stroke"></i></button>
       </div>
     </div>
@@ -80,7 +80,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
           <div class="card">
             <div class="card-head">
               <div class="card-title"><i class="fa-solid fa-pen-to-square"></i> My Submitted Posts</div>
-              <button class="btn btn-primary btn-sm" onclick="openModal('newPostModal')">
+              <button class="btn btn-primary btn-sm" onclick="openCreatePostModal()">
                 <i class="fa-solid fa-plus"></i> New Post
               </button>
             </div>
@@ -128,7 +128,21 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
                      'views'      => 0,
                      'status'     => $up['is_locked'] ? 'Locked' : 'Active',
                      'st_cls'     => $up['is_locked'] ? 'est-dismissed' : 'est-pending',
-                     'match'      => null
+                     'match'      => null,
+                     'locked'     => (bool)$up['is_locked'],
+                 ];
+             }
+             // Data for the Edit modal — keyed by post_id, type bucketed to the
+             // three post-type buttons the modal actually offers.
+             $postsData = [];
+             foreach ($posts as $p) {
+                 $bucketType = $p['type'] === 'lost' ? 'lost' : ($p['type'] === 'found' ? 'found' : 'claim');
+                 $postsData[$p['id']] = [
+                     'title'  => $p['title'],
+                     'desc'   => $p['desc'],
+                     'room'   => $p['room'] === 'General' ? '' : $p['room'],
+                     'type'   => $bucketType,
+                     'locked' => $p['locked'],
                  ];
              }
              ?>
@@ -164,8 +178,8 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
                    </div>
                  </div>
                  <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">
-                   <button class="btn btn-sm" onclick="editPost()"><i class="fa-solid fa-pencil"></i></button>
-                   <button class="btn btn-sm" onclick="deletePost(this)"><i class="fa-solid fa-trash"></i></button>
+                   <button class="btn btn-sm" onclick="editPost(<?= (int)$p['id'] ?>)"><i class="fa-solid fa-pencil"></i></button>
+                   <button class="btn btn-sm" onclick="deletePost(<?= (int)$p['id'] ?>)"><i class="fa-solid fa-trash"></i></button>
                  </div>
                </div>
              </div>
@@ -286,7 +300,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
 <!-- New Post Modal -->
 <div class="modal-overlay" id="newPostModal" onclick="if(event.target===this)closeModal('newPostModal')">
   <div class="modal-box" style="max-width:500px;">
-    <div class="modal-head"><div class="modal-title">Create New Post</div><div class="modal-close" onclick="closeModal('newPostModal')"><i class="fa-solid fa-xmark"></i></div></div>
+    <div class="modal-head"><div class="modal-title" id="postModalTitle">Create New Post</div><div class="modal-close" onclick="closeModal('newPostModal')"><i class="fa-solid fa-xmark"></i></div></div>
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">Post Type</label>
@@ -325,7 +339,7 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
       </div>
       <div class="modal-actions">
         <button class="modal-btn dismiss" onclick="closeModal('newPostModal')">Cancel</button>
-        <button class="modal-btn recover" onclick="submitPost()"><i class="fa-solid fa-paper-plane"></i> Submit Post</button>
+        <button class="modal-btn recover" onclick="submitPost()"><i class="fa-solid fa-paper-plane"></i> <span id="postModalSubmitLabel">Submit Post</span></button>
       </div>
     </div>
   </div>
@@ -335,6 +349,9 @@ $pendingClaimsCount = (int)$pendingClaimsStmt->fetchColumn();
 <script src="../assets/js/spotit.js"></script>
 <script>
 startLiveClock('liveClock');
+const postsData = <?= json_encode($postsData, JSON_UNESCAPED_UNICODE) ?>;
+let editingPostId = null;
+
 function selectPostType(t) {
   document.querySelectorAll('.post-type-btn').forEach(b=>{b.style.borderColor='var(--border)';b.style.background='';});
   const el = document.getElementById('pt_'+t);
@@ -342,16 +359,92 @@ function selectPostType(t) {
   el.style.background  = 'var(--green-pale)';
   document.getElementById('postType').value = t;
 }
+
+function resetPostForm() {
+  document.getElementById('postTitle').value = '';
+  document.getElementById('postDesc').value = '';
+  document.getElementById('postRoom').value = '';
+  document.getElementById('postContact').value = '';
+  selectPostType('lost');
+}
+
+function openCreatePostModal() {
+  editingPostId = null;
+  resetPostForm();
+  document.getElementById('postModalTitle').textContent = 'Create New Post';
+  document.getElementById('postModalSubmitLabel').textContent = 'Submit Post';
+  openModal('newPostModal');
+}
+
+function editPost(id) {
+  const p = postsData[id];
+  if (!p) { showToast('error','Post data not found.'); return; }
+  if (p.locked) { showToast('error','This post is locked by an admin and cannot be edited.'); return; }
+  editingPostId = id;
+  document.getElementById('postTitle').value = p.title;
+  document.getElementById('postDesc').value = p.desc;
+  document.getElementById('postRoom').value = p.room;
+  document.getElementById('postContact').value = '';
+  selectPostType(p.type);
+  document.getElementById('postModalTitle').textContent = 'Edit Post';
+  document.getElementById('postModalSubmitLabel').textContent = 'Save Changes';
+  openModal('newPostModal');
+}
+
 function submitPost() {
   const title = document.getElementById('postTitle').value.trim();
   const desc  = document.getElementById('postDesc').value.trim();
   if (!title || !desc) { showToast('error','Please fill in the title and description.'); return; }
-  closeModal('newPostModal');
-  showToast('success','Post submitted successfully and is now visible in the Lost & Found thread.');
+
+  const type    = document.getElementById('postType').value;
+  const room    = document.getElementById('postRoom').value;
+  const contact = document.getElementById('postContact').value.trim();
+  const category = type === 'lost' ? 'lost_and_found' : (type === 'found' ? 'found_item' : 'general');
+  const content = contact ? (desc + '\n\nContact: ' + contact) : desc;
+
+  const fd = new FormData();
+  fd.append('title', title);
+  fd.append('content', content);
+  fd.append('category', category);
+  if (room) fd.append('flair', room);
+
+  const isEdit = !!editingPostId;
+  if (isEdit) fd.append('post_id', editingPostId);
+  const url = isEdit ? '../auth/forum_update_post.php' : '../auth/forum_submit_post.php';
+
+  fetch(url, { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        closeModal('newPostModal');
+        showToast('success', isEdit ? 'Post updated.' : 'Post submitted successfully and is now visible in the Lost & Found thread.');
+        setTimeout(() => location.reload(), 900);
+      } else {
+        showToast('error', data.message || 'Failed to save post.');
+      }
+    })
+    .catch(() => showToast('error', 'Network error. Please try again.'));
 }
-function editPost()   { showToast('info','Edit post feature coming soon.'); }
-function deletePost(btn) {
-  if (confirm('Delete this post?')) { btn.closest('div[style]').style.opacity = '.4'; showToast('warn','Post deleted.'); }
+
+function deletePost(id) {
+  const p = postsData[id];
+  if (p && p.locked) { showToast('error','This post is locked by an admin and cannot be deleted.'); return; }
+  if (!confirm('Delete this post?')) return;
+
+  const fd = new FormData();
+  fd.append('post_id', id);
+
+  fetch('../auth/forum_delete_post.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast('warn', 'Post deleted.');
+        setTimeout(() => location.reload(), 700);
+      } else {
+        showToast('error', data.message || 'Failed to delete post.');
+      }
+    })
+    .catch(() => showToast('error', 'Network error. Please try again.'));
 }
 </script>
 </body>

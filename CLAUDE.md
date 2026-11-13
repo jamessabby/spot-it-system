@@ -642,6 +642,32 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Phase 2C — My Posts made real; no CCTV involved):** `pages/my-posts.php`'s
+  listing and empty state were already real (queried `forum_posts` by session `user_id`), but
+  every action button on the page was fake: `submitPost()` never called any endpoint and just
+  showed a success toast, `editPost()` said "coming soon," and `deletePost()` faded the DOM row
+  and showed a toast without touching the database. Two endpoints didn't exist anywhere in the
+  app (not even on `pages/forum.php`, whose own `removePost()`/`removeComment()` are the same
+  kind of fake and are **not** touched here — out of this phase's scope): `auth/forum_delete_post.php`
+  (soft-deletes via the existing `forum_posts.is_removed` column) and `auth/forum_update_post.php`
+  (updates title/content/category/flair). Both check `user_id` ownership (403 on mismatch) and
+  refuse an admin-locked thread (`is_locked`) even for its own author, mirroring the lock check
+  `forum_submit_comment.php` already does. `my-posts.php`'s Edit button now reuses the existing
+  "New Post" modal pre-filled from a `postsData` map embedded in the page (no new UI, per scope);
+  Save/Submit routes to update-vs-create based on whether an edit is in progress, then reloads to
+  re-render from the DB. Verified over HTTP only (no browser) against the `spotit_test_*` DB clones
+  via a scratch `php -S` router with a `/__login` session shortcut (session-only; no CSRF/Turnstile,
+  which are UI concerns unrelated to this fix) — see [[isolated-e2e-harness]] in memory. Confirmed:
+  honest empty state for two fresh accounts; a created post appears only on its author's page;
+  edit persists across a reload; delete is a soft-delete (`is_removed=1`, row kept) and the page
+  returns to the empty state; a locked thread blocks edit/delete for its own author; and a second
+  account's direct POST to update/delete someone else's post is rejected 403 and leaves the row
+  unchanged. The actual on-screen click-through (opening the modal, clicking Edit/Delete in a
+  real browser) was **not** run — Selenium/Playwright weren't available in this session and
+  installing one was declined by the permission layer — so that layer is UNVERIFIED, though the
+  rendered HTML was confirmed to carry the right `onclick="editPost(<id>)"` /
+  `deletePost(<id>)` wiring.
+
 - **2026-11-12 (Snapshot A filenames made unique per event — the "unique per-event
   names" follow-up noted below):** `auth/ingest_detection.php` used to "preserve" the
   filename main.py sent (`{label}_registered_N.jpg` / `{label}_snapshot_A.jpg`) verbatim
