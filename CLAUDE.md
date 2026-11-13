@@ -642,6 +642,41 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Category-scoped Camera Setup editing, non-destructive; commit 6a14501):**
+  Room Monitor already had a "Showing: &lt;category&gt;" display-only filter for the
+  live video; Camera Setup's ROI *editor* had no category concept at all — it always
+  loaded and showed every saved zone together. Direction asked for the same kind of
+  filter inside the editor, but `auth/save_rois.php` **replaces the whole room** on
+  every save, which makes a naive per-category view dangerous: show only "Mouse",
+  save, and every other category's zones are gone. Fixed by keeping the filter purely
+  cosmetic client-side — `editorRois` always holds every category in memory;
+  `renderRoiList()`/`redrawEditorCanvas()` filter what they *draw*; `saveRoisToSystem()`
+  is unchanged and always sends the complete array. `categoryOfRoi()` resolves a zone's
+  category server-side-first (explicit assignments from Room Monitor's own category
+  editor), falling back to the same keyword match `auth/room_categories.php` uses for
+  labels it hasn't seen yet. `discardSuggestions()` was also scoped to the active
+  category — it previously wiped every unreviewed suggestion regardless of which
+  category was in view, which would have silently discarded an earlier, different
+  category's still-pending scan.
+  - Verified on an isolated test DB (room ZZT4): save 2 monitors -> simulate reopen ->
+    switch to Mouse -> accept a new mouse -> save -> both monitors AND the mouse
+    persist; `room_categories.php`'s own resolution re-buckets them correctly. Six
+    client-side logic checks (categoryOfRoi, the dedup-vs-merge distinction, discard
+    scoping) run directly in Node against the shipped code, including proof that two
+    genuinely distinct adjacent items (a mouse beside a keyboard) are not treated as
+    duplicates by the existing 0.5 IoU dedup threshold.
+  - Also re-verified (not a code change) that Room Monitor's *live* category filter
+    still doesn't touch detection: set it to "Mouse" for a test room, then POSTed a
+    real monitor-zone detection through the same API-key endpoint `main.py` uses —
+    inserted and surfaced via `get_detections.php` exactly as normal.
+  - Checked and found **not a bug**: a claim that suggestions are "capped at the
+    number of saved ROIs." `ROOM_1` has zero saved ROIs and still returns 40
+    suggestions from one scan; `MLH305` has 6 saved ROIs and returns 19.
+    `suggest_rois()` runs `detect_tiled()` over the full native frame with no
+    reference to any saved-ROI count anywhere in the code. The real problem in a
+    crowded room (ROOM_1, ~20+ real workstations, 40 overlapping on-screen labels) is
+    review workload, not a cap — which the category filter above now addresses.
+
 - **2026-11-13 (Auto-ROI made the primary Camera Setup workflow; commit 4665ba2):**
   Camera Setup's suggestion panel offered the same 4 hardcoded checkboxes for every
   room and was styled as a secondary "experimental" feature. It is now category-driven
