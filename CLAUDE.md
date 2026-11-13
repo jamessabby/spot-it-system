@@ -642,6 +642,85 @@ Run these after any change, in this order, before considering a fix done:
 
 ## 9. Change Log & Project History
 
+- **2026-11-13 (Website backlog closeout — WEB-01–16, CSRF hardening; commits
+  1c1be2b, 2de6499):** Closed the remaining open items in `md_files/MASTER_ISSUES.md`
+  §3 and did the pre-hosting security pass §7a/§3 of this file ask for. No detector
+  logic, thresholds, ROIs, or calibration files were touched.
+  - **WEB-02:** Landing page "Engineers" label -> "Student Researchers".
+    **WEB-01:** re-read every claim on `index.php` against §3/§3a — nothing else
+    overstated, no change needed.
+  - **WEB-06:** Analytics' "Avg. Confidence Score" card now has a tooltip with the
+    real formula (50% template-match delta + 30% ROI change% + 20% count deviation,
+    capped 0-100) and says plainly it is not a calibrated probability. Full formula
+    for the manuscript/viva: see `auth/ingest_detection.php` lines ~231-258 — it's
+    unchanged, just now explained in the UI.
+  - **WEB-05:** left the Deviation column as-is per instruction; two option writeups
+    were given directly to Sab, not committed here (no decision to re-litigate).
+  - **WEB-10:** "Dispensing Room" is now the one consistent pickup-location term
+    everywhere a claim instruction appears (was a mix of "dispensing window",
+    "CEAT building lobby", "CEAT dispensing window"). `lost-thread.php`'s item
+    cards, claim modal and detail modal now show "Found in `<room>`" and
+    "Pickup: Dispensing Room" as two separate lines instead of one blended one;
+    same split added to `dashboard-student.php`'s My Claims row. No per-room pickup
+    setting or invented room number — pickup is still the single physical location
+    §3c already assumed. Verified with two manually-surrendered items AND two
+    CCTV-recovered unregistered items across two different test rooms (ZZT1, ZZT2)
+    showing the same pickup line.
+  - **WEB-03/04/07/08/09/12/13/14/15/16:** re-verified against current code/DB
+    rather than the Nov 8 report — all still correct as the Nov 11-13 entries below
+    already fixed them (Turnstile is real `siteverify`, MS OAuth never auto-grants
+    admin, mailer has a real `resend`/`mail`/`log` driver chain, KPI cards link out,
+    event-log tabs/counts are real, My Posts layout and the dashboard inline-script
+    bug both still hold fixed). No regressions found.
+  - **Security pass (CSRF):** CSRF tokens previously existed only on the pre-login
+    forms. Every other session-authenticated `auth/*.php` endpoint that changes data
+    (~30 of them — claims, detection review, room/ROI config, settings, forum,
+    donation processing...) took no token at all. Added `spotit_require_csrf()`
+    (`config/security.php`), called from all of them; detector-key endpoints and the
+    login/signup/reset token are untouched since neither rides a browser session.
+    Token is emitted once per page as `window.SPOTIT_CSRF` by `_sidebar.php` and
+    attached automatically by `spotitFetch()`; the handful of raw `fetch()` call
+    sites got the header added by hand.
+  - **Security pass (found while sweeping, not CSRF):** `auth/clear_snapshots.php`
+    had no authentication at all — any anonymous POST from any origin could wipe
+    every non-baseline file in `uploads/snapshots/`. Now admin/staff + CSRF-gated.
+    `pages/admin-audit.php` had its admin guard commented out and `$user_role`
+    hardcoded to `'admin'` for every visitor — fully rendered for an anonymous
+    request. Restored the standard `_guard.php` gate. `auth/get_room_status.php`
+    and `auth/get_desk_status.php` had no auth check at all; added the same
+    admin/staff check their sibling status endpoints already use.
+  - **How this was verified:** isolated `spotit_test_*` DB clones (already existing
+    from the Nov 11/12 harness, see memory `isolated-e2e-harness`) behind a
+    `php -S` router with a `/__login` session shortcut, run through XAMPP's own
+    `php.exe` (the PATH one has no `pdo_mysql`). Added a second test room `ZZT2` for
+    the two-source-rooms check above. Confirmed end to end: manual surrender ->
+    student claim -> staff handoff closes the chain; a registered-equipment
+    recovery stays out of Lost & Found while an unregistered-item recovery becomes
+    claimable; notifications reflect the real event state; Settings and My Posts
+    create/edit/delete all persist across reload. Every page was re-fetched as
+    anonymous/student/admin to confirm no guard regressed (this is how the
+    `admin-audit.php` gap above was actually found). `detection_mode.json` was
+    touched by this traffic exactly as the Nov 11/12 harness notes warned it would
+    be, and was restored via `git checkout` immediately after — confirmed clean.
+    No real `uploads/snapshots/` files were touched.
+  - **Real Chromium click-through (not just DB-level), requested after the first pass:**
+    installed `websocket-client` and drove headless Edge via its own
+    `--remote-debugging-port` with a ~40-line hand-rolled CDP client (no Selenium/
+    Playwright needed) against the same isolated test app. Clicked the actual buttons —
+    not the underlying JS functions — for the four flows the new CSRF checks touch:
+    Record Surrender, Submit Claim, the Pending-Claims-Queue row → Complete Handoff, and
+    Verify Event → Mark Recovered, chaining the claim one flow submits into the next
+    flow's completion. 13/15 scripted assertions passed; the 2 that didn't were the test
+    script's own result-capture shim returning null, not real failures — both outcomes
+    were confirmed correct by reading the DB directly afterward (the completed claim
+    carried the exact name typed into the real form field; the detection's status was
+    `recovered`). Full method and gotchas (the `pip install`/`tasklist` combo getting
+    blocked as "Undermining Oversight", filtering `Stop-Process` to the one PID this
+    session launched rather than all of `msedge.exe`) are in memory `isolated-e2e-harness`.
+    Known leftovers in the test DBs/`uploads/snapshots/` from this and prior sessions are
+    listed there too; nothing was deleted without separate approval, per
+    `deletion-needs-explicit-approval`.
+
 - **2026-11-13 (Sidebar simplification):** `pages/_sidebar.php`'s admin side had grown to
   22 links across 6 sections (Monitoring/Lost & Found/Management/My Activity/Community/
   Account) with no distinction between pages opened every shift and pages opened a few
