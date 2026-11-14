@@ -1,21 +1,21 @@
 {
-    "mode": "testing",
-    "tracking_mode": "registered",
-    "reset_paused": true,
-    "reset_rois": true,
-    "reset_timestamp": 1794388543,
-    "updated_at": "2026-11-11 21:49:41",
+  "mode": "testing",
+  "tracking_mode": "registered",
+  "reset_paused": false,
+  "reset_rois": false,
+  "reset_timestamp": 1794388543,
+  "updated_at": "2026-11-14 00:00:00",
+  "room_id": "MLH305",
+  "pipeline": "gatekeeper",
+  "clear_alerts": false,
+  "clear_alerts_timestamp": 1793679015,
+  "timer_mode": "production_speed",
+  "display_filter": {
     "room_id": "MLH301",
-    "pipeline": "gatekeeper",
-    "clear_alerts": false,
-    "clear_alerts_timestamp": 1793679015,
-    "timer_mode": "production_speed",
-    "display_filter": {
-        "room_id": "MLH301",
-        "name": "Oscilloscope",
-        "keywords": [
-            "oscilloscope",
-            "scope"
-        ]
-    }
+    "name": "Oscilloscope",
+    "keywords": [
+      "oscilloscope",
+      "scope"
+    ]
+  }
 }
