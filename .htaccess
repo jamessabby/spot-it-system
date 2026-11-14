@@ -102,8 +102,16 @@ ServerSignature Off
 # ── File caching for assets ───────────────────────────────────────────────────
 <IfModule mod_expires.c>
   ExpiresActive On
-  ExpiresByType text/css             "access plus 7 days"
-  ExpiresByType application/javascript "access plus 7 days"
+  # JS/CSS are short-lived on purpose (2026-11-14): a 7-day expiry meant a
+  # browser that cached spotit.js before the 2026-08-22 CSRF-header change
+  # kept serving the pre-CSRF copy for up to a week after — every admin
+  # write action (edit/delete/toggle room, etc.) failed with a generic
+  # "Failed to..." toast and no visible error, because the stale script
+  # never attached X-CSRF-Token at all. ETag/Last-Modified still let an
+  # unchanged file return 304 cheaply; this only shortens how long a
+  # genuinely new file can go unnoticed.
+  ExpiresByType text/css             "access plus 1 hour"
+  ExpiresByType application/javascript "access plus 1 hour"
   ExpiresByType image/jpeg           "access plus 30 days"
   ExpiresByType image/png            "access plus 30 days"
   ExpiresByType image/webp           "access plus 30 days"
