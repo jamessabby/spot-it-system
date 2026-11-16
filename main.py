@@ -63,15 +63,15 @@ LIVE_FRAME_URL = f"{_API_BASE}/ingest_live_frame.php"
 BASELINE_URL = f"{_API_BASE}/ingest_baseline.php"
 HEARTBEAT_URL = f"{_API_BASE}/detector_heartbeat.php"
 
-CONFIG_POLL_SEC = 3.0       # how often to ask the server for config + commands
-HEARTBEAT_SEC = 10.0        # how often to report "still alive" (offline after 30s)
+CONFIG_POLL_SEC = 3.0  # how often to ask the server for config + commands
+HEARTBEAT_SEC = 10.0  # how often to report "still alive" (offline after 30s)
 # WEB-07: no NEW camera frame for this long = the camera is not live, whatever
 # the image file on disk says (it is rewritten every loop with the cached frame).
 CAMERA_STALE_SEC = 3.0
-LIVE_FRAME_ACTIVE_SEC = 1.0   # frame push rate while somebody is watching
-LIVE_FRAME_IDLE_SEC = 15.0    # ...and while nobody is. Continuous 1 fps would be
-                              # roughly 5 GB per room per day, nearly all wasted.
-LIVE_FRAME_MAX_WIDTH = 960    # downscale before upload; the dashboard shows it small
+LIVE_FRAME_ACTIVE_SEC = 1.0  # frame push rate while somebody is watching
+LIVE_FRAME_IDLE_SEC = 15.0  # ...and while nobody is. Continuous 1 fps would be
+# roughly 5 GB per room per day, nearly all wasted.
+LIVE_FRAME_MAX_WIDTH = 960  # downscale before upload; the dashboard shows it small
 LIVE_FRAME_QUALITY = 70
 
 # Headless by default (unchanged). A Windows service account has no desktop
@@ -100,6 +100,8 @@ SCENE_MOTION_LIMIT = (
     0.20  # % of frame-to-frame motion allowed before pausing monitoring
 )
 CONSISTENCY_FRAMES = 25  # 25 consecutive frames (~0.8s @ 30 FPS) for balanced stability
+
+
 # ── DESK / SANDBOX CAMERA ────────────────────────────────────────────────
 # Single source of truth for the sandbox camera. It used to be pasted into
 # three places in this file plus four PHP files, so a DHCP lease change or a
@@ -123,9 +125,7 @@ def _local_setting(key):
     )
     try:
         with open(path, encoding="utf-8") as f:
-            m = re.search(
-                r"'%s'\s*=>\s*'((?:[^'\\]|\\.)*)'" % re.escape(key), f.read()
-            )
+            m = re.search(r"'%s'\s*=>\s*'((?:[^'\\]|\\.)*)'" % re.escape(key), f.read())
     except OSError:
         return None
     return re.sub(r"\\(.)", r"\1", m.group(1)) if m else None
@@ -171,9 +171,7 @@ AB_STATS = {
     "dnn_calls": 0,  # actual MobileNetV2 forward passes
     "dnn_seconds": 0.0,  # total wall time inside those forward passes
 }
-MATCH_SCORE_THRESHOLD = (
-    0.48  # legacy template-match score — retained only by main_classical_only.py A/B baseline
-)
+MATCH_SCORE_THRESHOLD = 0.48  # legacy template-match score — retained only by main_classical_only.py A/B baseline
 
 # ── LIVE PIPELINE SWITCH (dashboard-controlled A/B demo) ─────────────────
 # "gatekeeper" = dual-template presence test with the MobileNetV2 embedding.
@@ -202,7 +200,7 @@ CLASSICAL_MATCH_THRESHOLD = 0.55
 #   sim_empty   : removed    0.765-0.819 | occluded  0.362-0.522
 # Both thresholds sit in the middle of a wide empirical gap, not on an edge.
 SIM_PRESENT = 0.80  # >= this vs the "item here" template  -> item is still there (lowered for position tolerance)
-SIM_EMPTY = 0.55    # >= this vs the "item gone"  template  -> bare surface revealed (lowered for weak inpaints)
+SIM_EMPTY = 0.55  # >= this vs the "item gone"  template  -> bare surface revealed (lowered for weak inpaints)
 FOOTPRINT_MIN_FRAC = 0.03  # item smaller than 3% of its box -> ROI drawn far too loose
 
 # ── LEFT-ITEM (unregistered) DETECTION GATES ────────────────────────────────
@@ -216,22 +214,28 @@ FOOTPRINT_MIN_FRAC = 0.03  # item smaller than 3% of its box -> ROI drawn far to
 # a closed book on a chair seat sat right on the edge of every one of them.
 # LEFT_MIN_LAPLACIAN is the gate that most often blocks such items: a matte
 # cover viewed at CCTV distance simply has little texture variance.
-LEFT_DIFF_THRESHOLD = 30      # was 35   — per-pixel delta vs baseline
-LEFT_MIN_AREA = 2500          # was 4500 — blob area in px (~50x50)
-LEFT_MIN_LAPLACIAN = 40.0     # was 85.0 — texture variance (object vs flat shadow)
+LEFT_DIFF_THRESHOLD = 30  # was 35   — per-pixel delta vs baseline
+LEFT_MIN_AREA = 2500  # was 4500 — blob area in px (~50x50)
+LEFT_MIN_LAPLACIAN = 40.0  # was 85.0 — texture variance (object vs flat shadow)
 LEFT_MIN_EDGE_DENSITY = 0.02  # was 0.03 — crisp-outline requirement
 # Print why near-miss blobs were rejected, so these can be tuned from measured
 # numbers rather than by trial and error. Throttled to one report per second.
 LEFT_DEBUG_REJECTS = True
 _left_reject_log_t = 0.0
 # Unregistered-item tracking (2026-11-11). See the left-item block in the loop.
-LEFT_ROI_MARGIN = 8            # px around registered ROIs excluded from left-item search
-LEFT_TRACK_IOU = 0.30          # overlap needed to treat a blob as the same object as before
-LEFT_TAKEN_CONFIRM_SEC = 1.5   # object must be gone this long before Snapshot B ("taken")
-LEFT_FORGET_SEC = 4.0          # gone this long -> track forgotten (returns as a new object)
-LEFT_PERSON_FILTER = os.environ.get("SPOTIT_LEFT_PERSON_FILTER", "1").strip().lower() not in ("0", "false", "no", "off")
-LEFT_PERSON_OVERLAP = 0.50     # blob this much covered by a YOLO "person" box -> a person, not a belonging
-_left_tracks = {}              # track id -> {"box": (x, y, w, h), "last_seen": t}
+LEFT_ROI_MARGIN = 8  # px around registered ROIs excluded from left-item search
+LEFT_TRACK_IOU = 0.30  # overlap needed to treat a blob as the same object as before
+LEFT_TAKEN_CONFIRM_SEC = (
+    1.5  # object must be gone this long before Snapshot B ("taken")
+)
+LEFT_FORGET_SEC = 4.0  # gone this long -> track forgotten (returns as a new object)
+LEFT_PERSON_FILTER = os.environ.get(
+    "SPOTIT_LEFT_PERSON_FILTER", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+LEFT_PERSON_OVERLAP = (
+    0.50  # blob this much covered by a YOLO "person" box -> a person, not a belonging
+)
+_left_tracks = {}  # track id -> {"box": (x, y, w, h), "last_seen": t}
 _left_next_id = [1]
 
 
@@ -265,7 +269,14 @@ try:
     _here = os.path.dirname(os.path.abspath(__file__))
     if _here not in sys.path:
         sys.path.insert(0, _here)
-    from yolo_detector import YoloDetector, overlap_frac, iou as _yolo_iou, classes_for_label, suggest_rois
+    from yolo_detector import (
+        YoloDetector,
+        overlap_frac,
+        iou as _yolo_iou,
+        classes_for_label,
+        suggest_rois,
+    )
+
     _YOLO_IMPORT_ERROR = None
 except Exception as _e:  # keep detection running without it
     YoloDetector = None
@@ -274,17 +285,20 @@ except Exception as _e:  # keep detection running without it
     def overlap_frac(box, roi):
         return 0.0
 
+
 YOLO_MODEL_PATH = os.path.join("models", "yolox_s.onnx")
-YOLO_MIN_INTERVAL = 0.5      # seconds between YOLO passes (results cached in between)
-YOLO_PRESENT_IOU = 0.20      # expected-class box this aligned with the ROI -> PRESENT
-YOLO_CENTER_COVER = 0.50     # ...or centred in the ROI and covering this much of it
-YOLO_PERSON_COVER = 0.15     # a person covering this much of the ROI -> OCCLUDED
+YOLO_MIN_INTERVAL = 0.5  # seconds between YOLO passes (results cached in between)
+YOLO_PRESENT_IOU = 0.20  # expected-class box this aligned with the ROI -> PRESENT
+YOLO_CENTER_COVER = 0.50  # ...or centred in the ROI and covering this much of it
+YOLO_PERSON_COVER = 0.15  # a person covering this much of the ROI -> OCCLUDED
 _yolo = None
 _yolo_warned = False
 _yolo_cache = {"t": -1e9, "dets": []}
-_yolo_roi_ok = {}            # label -> True (YOLO sees it) / False (cannot) / None (no COCO class)
+_yolo_roi_ok = (
+    {}
+)  # label -> True (YOLO sees it) / False (cannot) / None (no COCO class)
 _yolo_calib_key = None
-_yolo_person_over = {}       # label -> a person covers this ROI right now (YOLO mode)
+_yolo_person_over = {}  # label -> a person covers this ROI right now (YOLO mode)
 
 # ── PERSON GUARD (RD-03, 2026-11-11) ───────────────────────────────────────
 # Evidence (Nov 3 recordings, YOLO person boxes over each ROI): during the
@@ -295,9 +309,11 @@ _yolo_person_over = {}       # label -> a person covers this ROI right now (YOLO
 # held as OCCLUDED, and the stuck-occlusion escape cannot fire for it. Applies
 # to the MobileNetV2 and YOLO modes; the classical mode stays the untouched A/B
 # baseline. SPOTIT_PERSON_GUARD=0 disables it. Uses YOLO person detection.
-PERSON_GUARD_ENABLED = os.environ.get("SPOTIT_PERSON_GUARD", "1").strip().lower() not in ("0", "false", "no", "off")
+PERSON_GUARD_ENABLED = os.environ.get(
+    "SPOTIT_PERSON_GUARD", "1"
+).strip().lower() not in ("0", "false", "no", "off")
 PERSON_GUARD_COVER = 0.20
-_person_over = {}            # label -> a detected person covers this ROI right now
+_person_over = {}  # label -> a detected person covers this ROI right now
 
 # ── ROOM MONITOR CATEGORY FILTER (display only, 2026-11-11) ─────────────────
 # Room Monitor can show only one equipment category (e.g. Keyboard). This hides
@@ -323,7 +339,9 @@ def get_yolo():
     global _yolo, _yolo_warned
     if _yolo is None and not _yolo_warned:
         if YoloDetector is None:
-            print(f"[SPOT-IT][YOLO][WARN] yolo_detector unavailable ({_YOLO_IMPORT_ERROR}) — YOLO features off.")
+            print(
+                f"[SPOT-IT][YOLO][WARN] yolo_detector unavailable ({_YOLO_IMPORT_ERROR}) — YOLO features off."
+            )
             _yolo_warned = True
         else:
             det = YoloDetector(YOLO_MODEL_PATH, conf=0.30)
@@ -331,7 +349,9 @@ def get_yolo():
                 _yolo = det
                 print(f"[SPOT-IT][YOLO] YOLOX-S loaded from {YOLO_MODEL_PATH}.")
             else:
-                print(f"[SPOT-IT][YOLO][WARN] {YOLO_MODEL_PATH} not found — YOLO features off.")
+                print(
+                    f"[SPOT-IT][YOLO][WARN] {YOLO_MODEL_PATH} not found — YOLO features off."
+                )
                 _yolo_warned = True
     return _yolo
 
@@ -360,7 +380,8 @@ def _yolo_matches(det_box, roi_xywh):
     cx, cy = (det_box[0] + det_box[2]) / 2, (det_box[1] + det_box[3]) / 2
     centred = x <= cx <= x + w and y <= cy <= y + h
     return _yolo_iou(det_box, roi_xywh) >= YOLO_PRESENT_IOU or (
-        centred and overlap_frac(det_box, roi_xywh) >= YOLO_CENTER_COVER)
+        centred and overlap_frac(det_box, roi_xywh) >= YOLO_CENTER_COVER
+    )
 
 
 def yolo_calibrate(rois):
@@ -381,13 +402,20 @@ def yolo_calibrate(rois):
         box = (r["x"], r["y"], r["w"], r["h"])
         if not want:
             _yolo_roi_ok[label] = None
-            print(f"[SPOT-IT][YOLO][CALIB] '{label}': no COCO class for this equipment — uses the MobileNetV2 gatekeeper.")
+            print(
+                f"[SPOT-IT][YOLO][CALIB] '{label}': no COCO class for this equipment — uses the MobileNetV2 gatekeeper."
+            )
             continue
         seen = any(d["cls"] in want and _yolo_matches(d["box"], box) for d in dets)
         _yolo_roi_ok[label] = seen
-        print(f"[SPOT-IT][YOLO][CALIB] '{label}': " + (
-            f"YOLO sees {sorted(want)} on the baseline — YOLO decides." if seen else
-            f"YOLO does NOT see {sorted(want)} on the baseline (too small/unclear) — uses the MobileNetV2 gatekeeper."))
+        print(
+            f"[SPOT-IT][YOLO][CALIB] '{label}': "
+            + (
+                f"YOLO sees {sorted(want)} on the baseline — YOLO decides."
+                if seen
+                else f"YOLO does NOT see {sorted(want)} on the baseline (too small/unclear) — uses the MobileNetV2 gatekeeper."
+            )
+        )
 
 
 # ── Automatic ROI suggestions (independent of the monitoring mode) ──────────
@@ -429,9 +457,20 @@ def handle_roi_suggestion_request(raw_frame, frame):
     # in the UI to say why. source_w/source_h alone (640x360) hints at this but
     # doesn't name the cause; stream_name does.
     stream = getattr(cap, "stream_name", None) or "unknown"
-    result = {"room_id": ROOM_ID, "request_mtime": mtime, "created_at": datetime.now().isoformat(timespec="seconds"),
-              "frame_w": fw, "frame_h": fh, "source_w": rw, "source_h": rh, "stream": stream,
-              "classes": sorted(classes), "suggestions": [], "error": None, "warning": None}
+    result = {
+        "room_id": ROOM_ID,
+        "request_mtime": mtime,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "frame_w": fw,
+        "frame_h": fh,
+        "source_w": rw,
+        "source_h": rh,
+        "stream": stream,
+        "classes": sorted(classes),
+        "suggestions": [],
+        "error": None,
+        "warning": None,
+    }
     if stream == "stream2":
         result["warning"] = (
             f"Generated from the low-resolution sub-stream (stream2, {rw}x{rh}) because the camera's "
@@ -441,23 +480,31 @@ def handle_roi_suggestion_request(raw_frame, frame):
         )
     y = get_yolo()
     if y is None:
-        result["error"] = "YOLO model unavailable on the detector PC (models/yolox_s.onnx)."
+        result["error"] = (
+            "YOLO model unavailable on the detector PC (models/yolox_s.onnx)."
+        )
     else:
         t0 = time.time()
         # Same function the standalone image tool uses (yolo_detector.suggest_rois).
         result["suggestions"], _ = suggest_rois(
-            y, raw_frame, classes=classes, out_size=(fw, fh),
-            min_score=float(request.get("min_score", 0.30)))
+            y,
+            raw_frame,
+            classes=classes,
+            out_size=(fw, fh),
+            min_score=float(request.get("min_score", 0.30)),
+        )
         result["elapsed_ms"] = int((time.time() - t0) * 1000)
     os.makedirs(SUGGEST_DIR, exist_ok=True)
     out = os.path.join(SUGGEST_DIR, f"suggest_{ROOM_ID}.result.json")
     with open(out + ".tmp", "w", encoding="utf-8") as f:
         json.dump(result, f)
     os.replace(out + ".tmp", out)
-    print(f"[SPOT-IT][SUGGEST] {len(result['suggestions'])} ROI suggestion(s) for {ROOM_ID} "
-          f"from a {rw}x{rh} frame ({stream}) -> {fw}x{fh} coordinates"
-          + (f" — {result['error']}" if result["error"] else "")
-          + (f" — WARNING: {result['warning']}" if result["warning"] else ""))
+    print(
+        f"[SPOT-IT][SUGGEST] {len(result['suggestions'])} ROI suggestion(s) for {ROOM_ID} "
+        f"from a {rw}x{rh} frame ({stream}) -> {fw}x{fh} coordinates"
+        + (f" — {result['error']}" if result["error"] else "")
+        + (f" — WARNING: {result['warning']}" if result["warning"] else "")
+    )
 
 
 def evaluate_roi_presence_yolo(frame_bgr, roi, now, prev_state=None):
@@ -472,19 +519,26 @@ def evaluate_roi_presence_yolo(frame_bgr, roi, now, prev_state=None):
         return evaluate_roi_presence(frame_bgr, roi, prev_state=prev_state)
     box = (roi["x"], roi["y"], roi["w"], roi["h"])
     want = classes_for_label(label)
-    best = max((d["score"] for d in dets if d["cls"] in want and _yolo_matches(d["box"], box)), default=0.0)
-    person = max((overlap_frac(d["box"], box) for d in dets if d["cls"] == "person"), default=0.0)
+    best = max(
+        (d["score"] for d in dets if d["cls"] in want and _yolo_matches(d["box"], box)),
+        default=0.0,
+    )
+    person = max(
+        (overlap_frac(d["box"], box) for d in dets if d["cls"] == "person"), default=0.0
+    )
     if best > 0:
         return "PRESENT", best, person, True
     if person >= YOLO_PERSON_COVER:
         _yolo_person_over[label] = True
         return "OCCLUDED", best, person, True
     return "ABSENT", best, person, True
+
+
 # Confirmation is wall-clock, not frame counts: the loop outruns the RTSP frame
 # rate, so counting iterations does not measure elapsed time (see BUGS.md,
 # "Instant Stage Escalation in Loop" — same fix already applied to left items).
-MISSING_CONFIRM_SEC = 1.0   # continuous ABSENT time before an item is flagged RED
-RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before a RED alert auto-resolves
+MISSING_CONFIRM_SEC = 1.0  # continuous ABSENT time before an item is flagged RED
+RECOVER_CONFIRM_SEC = 0.5  # continuous PRESENT time before a RED alert auto-resolves
 
 # ── STUCK-OCCLUSION ESCAPE ───────────────────────────────────────────────
 # The dual-template test can only declare ABSENT when the "item gone" template
@@ -506,7 +560,7 @@ RECOVER_CONFIRM_SEC = 0.5   # continuous PRESENT time before a RED alert auto-re
 # OCCLUDED_STILL_MOTION resets the accumulator. This is why the escape is not a
 # plain timeout — a plain timeout would eventually alarm on a motionless hand,
 # which is the exact false positive BUGS.md §3.3 exists to avoid.
-OCCLUDED_MAX_SEC = 5.0        # continuous still-occlusion before it counts as absence
+OCCLUDED_MAX_SEC = 5.0  # continuous still-occlusion before it counts as absence
 OCCLUDED_STILL_MOTION = 0.02  # ROI frame-to-frame motion below which it is "not moving"
 
 # ── SURROUNDING-AREA (RING) OBSTRUCTION GUARD — Fix 2, controlled experiment ──
@@ -535,12 +589,15 @@ OCCLUDED_STILL_MOTION = 0.02  # ROI frame-to-frame motion below which it is "not
 # ring_fg is still computed and logged so live lab data can settle the tuning.
 # SPOTIT_RING_GUARD=1 enables it for experiments.
 RING_GUARD_ENABLED = os.environ.get("SPOTIT_RING_GUARD", "0").strip().lower() in (
-    "1", "true", "yes", "on"
+    "1",
+    "true",
+    "yes",
+    "on",
 )
-RING_BG_SEC = 30.0        # background memory: how long until a static change is absorbed
-RING_MARGIN_FRAC = 0.5    # ring width as a fraction of the ROI's shorter side...
-RING_MIN_PX = 12          # ...but never thinner than this (small mouse ROIs)
-RING_BUSY_FRAC = 0.10     # ring foreground fraction above which the view is "not clear"
+RING_BG_SEC = 30.0  # background memory: how long until a static change is absorbed
+RING_MARGIN_FRAC = 0.5  # ring width as a fraction of the ROI's shorter side...
+RING_MIN_PX = 12  # ...but never thinner than this (small mouse ROIs)
+RING_BUSY_FRAC = 0.10  # ring foreground fraction above which the view is "not clear"
 
 # ── TEXTURE CHECK — Fix 3A, experimental (SPOTIT_TEXTURE_GATE=0 disables) ──────
 # Lab evidence (Nov 3 recordings, box interiors): MobileNetV2 scored BARE DESK at
@@ -556,10 +613,10 @@ RING_BUSY_FRAC = 0.10     # ring foreground fraction above which the view is "no
 #     resting on a keyboard could time out into a false MISSING.
 # Classical (Canny) only; MobileNetV2 stays a secondary signal. Applied only to
 # ROIs whose baseline has some texture at all.
-TEXTURE_GATE_ENABLED = os.environ.get("SPOTIT_TEXTURE_GATE", "1").strip().lower() not in (
-    "0", "false", "no", "off"
-)
-TEXTURE_MIN_EDGE = 0.08      # baseline edge density below which the check is skipped
+TEXTURE_GATE_ENABLED = os.environ.get(
+    "SPOTIT_TEXTURE_GATE", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+TEXTURE_MIN_EDGE = 0.08  # baseline edge density below which the check is skipped
 # Only equipment whose identity IS its texture. Keyboards (keys) and instrument
 # front panels lose most of their edges when removed (measured 0.26-0.44 of
 # baseline). A mouse does not: lifting it off its mousepad leaves the pad's edges
@@ -568,17 +625,21 @@ TEXTURE_MIN_EDGE = 0.08      # baseline edge density below which the check is sk
 # Nov 3 recordings (caught before Fix 3, missed after). Mice therefore keep the
 # pre-Fix-3 behaviour. Override with SPOTIT_TEXTURE_KEYWORDS (comma-separated).
 TEXTURE_GATE_KEYWORDS = tuple(
-    k.strip().lower() for k in os.environ.get(
+    k.strip().lower()
+    for k in os.environ.get(
         "SPOTIT_TEXTURE_KEYWORDS", "keyboard,oscilloscope,powersupply,power_supply,psu"
-    ).split(",") if k.strip()
+    ).split(",")
+    if k.strip()
 )
 
 
 def texture_gate_applies(label):
     low = label.lower()
     return any(k in low for k in TEXTURE_GATE_KEYWORDS)
-TEXTURE_PRESENT_MIN = 0.75   # live/baseline edge ratio needed to call it PRESENT
-TEXTURE_GONE_MAX = 0.50      # ratio below which the texture counts as "mostly gone"
+
+
+TEXTURE_PRESENT_MIN = 0.75  # live/baseline edge ratio needed to call it PRESENT
+TEXTURE_GONE_MAX = 0.50  # ratio below which the texture counts as "mostly gone"
 
 # ── LOW VISIBILITY — Fix 3B, experimental (SPOTIT_LOW_VIS=0 disables) ──────────
 # If, at calibration, the "item here" and "item gone" templates already look
@@ -587,7 +648,10 @@ TEXTURE_GONE_MAX = 0.50      # ratio below which the texture counts as "mostly g
 # 0.52-0.65. Such ROIs show grey LOW VISIBILITY, never alert, and are left out of
 # the dashboard state (so they can neither raise nor auto-resolve an alert).
 LOW_VIS_ENABLED = os.environ.get("SPOTIT_LOW_VIS", "1").strip().lower() not in (
-    "0", "false", "no", "off"
+    "0",
+    "false",
+    "no",
+    "off",
 )
 LOW_VIS_SEPARABILITY = 0.75  # cos(here, gone) at or above this -> LOW VISIBILITY
 # v2 adds frame_w / frame_h / stream / roi_res, so every row proves what
@@ -851,7 +915,6 @@ def dnn_embed(bgr_crop):
                 f"cases will be treated as PRESENT (fail open, never a false alarm)."
             )
         return None
-
 
 
 def validate_presence_dnn(
@@ -1133,7 +1196,9 @@ class VideoStream:
                 self.last_good_frame_at = time.time()
                 self.ever_received = True
                 self.stream_name = self._profile(used)
-                print(f"[SPOT-IT][WATCHDOG] Reconnected successfully ({self.stream_name}).")
+                print(
+                    f"[SPOT-IT][WATCHDOG] Reconnected successfully ({self.stream_name})."
+                )
             else:
                 print("[SPOT-IT][WATCHDOG] Reconnect attempt failed — will retry.")
             self.reconnecting = False
@@ -1160,12 +1225,16 @@ class VideoStream:
         'reconnecting'. The frame itself cannot tell you this: read() keeps
         returning the last cached frame after the camera stops."""
         with self.lock:
-            age = (time.time() - self.last_good_frame_at) if self.ever_received else None
+            age = (
+                (time.time() - self.last_good_frame_at) if self.ever_received else None
+            )
             if self.reconnecting:
                 return "reconnecting", age
             if self.cap is None:
                 return "offline", age
-        return ("live" if age is not None and age <= CAMERA_STALE_SEC else "offline"), age
+        return (
+            "live" if age is not None and age <= CAMERA_STALE_SEC else "offline"
+        ), age
 
     def read(self):
         with self.lock:
@@ -1253,6 +1322,74 @@ class FileStream:
                 pass
 
 
+def get_camera_rtsp_url(room_id):
+    """
+    Query get_room_camera.php dynamically to fetch camera credentials and RTSP URL for the given room.
+    """
+    try:
+        # Build URL dynamically from API_URL to support localhost or production server domain
+        base_url = API_URL.split("/auth/")[0]
+        url = f"{base_url}/auth/get_room_camera.php?room_id={room_id}&api_key={API_KEY}"
+
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success") and data.get("configured"):
+                rtsp_url = data.get("rtsp_url")
+                print(
+                    f"[SPOT-IT] Retrieved camera RTSP url for room '{room_id}' dynamically."
+                )
+                return rtsp_url
+            else:
+                print(
+                    f"[SPOT-IT][INFO] Room '{room_id}' has NO camera configured in database."
+                )
+                if room_id == "DESK":
+                    return RTSP_URL
+                return None
+        else:
+            print(
+                f"[SPOT-IT][WARN] Failed to contact get_room_camera.php, status: {response.status_code}"
+            )
+    except Exception as e:
+        print(f"[SPOT-IT][ERROR] Error fetching dynamic camera credentials: {e}")
+
+    if room_id == "DESK":
+        return RTSP_URL
+    return None
+
+
+# ── RESOLVE THIS ROOM'S CAMERA BEFORE OPENING ANYTHING ────────────────────
+# Must run before VideoStream opens. A lab room's real RTSP URL/credentials
+# live in spotit_monitor_db.rooms (via get_room_camera.php), not in the
+# DESK-only RTSP_URL built above from DESK_CAMERA_*. Opening with RTSP_URL
+# first — the old bug — meant a lab room's very first connection attempt
+# always used the DESK sandbox account and failed 401, silently "corrected"
+# later only if a dynamic room switch happened to run (it never does for a
+# room passed on the command line — see CLI_ROOM_ID below).
+if AB_REPLAY:
+    CURRENT_RTSP_URL = AB_SOURCE
+elif ROOM_ID == "DESK":
+    CURRENT_RTSP_URL = RTSP_URL
+else:
+    CURRENT_RTSP_URL = get_camera_rtsp_url(ROOM_ID)
+print(
+    f"[SPOT-IT] Room '{ROOM_ID}' camera resolution: "
+    + (
+        "replay file"
+        if AB_REPLAY
+        else (
+            "DESK sandbox config"
+            if ROOM_ID == "DESK"
+            else (
+                "assigned (get_room_camera.php)"
+                if CURRENT_RTSP_URL
+                else "NONE — no camera assigned or lookup failed"
+            )
+        )
+    )
+)
+
 # ── CONNECT TO STREAM ─────────────────────────────────────────────────────
 if AB_REPLAY:
     if not os.path.exists(AB_SOURCE):
@@ -1267,11 +1404,22 @@ if AB_REPLAY:
         f"[SPOT-IT][A/B] Clip: {cap.total_frames} frames @ {cap.fps:.1f} fps "
         f"(~{cap.total_frames / cap.fps:.1f}s) | API posting DISABLED"
     )
+elif CURRENT_RTSP_URL is None:
+    # No camera assigned to this room (or the get_room_camera.php lookup
+    # failed — the function above already printed which). Do not fall back to
+    # DESK and do not try to open a capture at all; the main loop's existing
+    # `CURRENT_RTSP_URL is None or cap is None` branch renders a STANDBY frame
+    # and keeps polling for a camera assignment instead of crashing.
+    print(
+        f"[SPOT-IT][STANDBY] No camera for room '{ROOM_ID}'. Assign one in Room Setup; "
+        f"not opening any capture."
+    )
+    cap = None
 else:
     # Never print the password: console output ends up in logs and screenshots.
-    _rtsp_redacted = re.sub(r"//([^:/@]+):[^@]*@", r"//\1:***@", RTSP_URL)
+    _rtsp_redacted = re.sub(r"//([^:/@]+):[^@]*@", r"//\1:***@", CURRENT_RTSP_URL)
     print(f"[SPOT-IT] Connecting to stream: {_rtsp_redacted}")
-    cap = VideoStream(RTSP_URL).start()
+    cap = VideoStream(CURRENT_RTSP_URL).start()
 
     # Wait up to 15 seconds for the background connection to resolve
     start_wait = time.time()
@@ -1285,13 +1433,30 @@ else:
         print("[SPOT-IT][WARN] Camera not reachable yet — will keep retrying. Check:")
         print("  1. Camera and this PC are on the same network")
         print(f"  2. URL is correct: {_rtsp_redacted}")
+        print(
+            "  3. The room-config lookup itself succeeded (see 'camera resolution' above) "
+            "— if it did, this failure is the camera's RTSP response, not the lookup."
+        )
 
-print("[SPOT-IT] Stream connected. Starting detection loop...")
+if cap is not None:
+    print("[SPOT-IT] Stream connected. Starting detection loop...")
+else:
+    print(
+        "[SPOT-IT] Starting in standby — no camera assigned. Detection loop running, scoring nothing."
+    )
 print("[SPOT-IT] Press Q to quit.\n")
 
 # ── LOAD / AUTO-CAPTURE REFERENCE FRAME ──────────────────────────────────
 ref_bgr = cv2.imread(REF_IMAGE)
-if ref_bgr is None or ref_bgr.shape[0] < 50:
+if (ref_bgr is None or ref_bgr.shape[0] < 50) and cap is None:
+    # Standby (no camera assigned): nothing to read a baseline from. Don't
+    # touch `cap.read()` here — the main loop's own STANDBY branch is what
+    # actually waits for a camera to show up.
+    print(
+        "[SPOT-IT] No baseline and no camera assigned — staying in standby, no auto-capture attempted."
+    )
+    ref_bgr = None
+elif ref_bgr is None or ref_bgr.shape[0] < 50:
     print(
         f"[SPOT-IT] Reference image missing or invalid! Capturing baseline directly from VideoStream..."
     )
@@ -1392,7 +1557,11 @@ def validate_presence_classical(crop, label="object"):
     is being rejected.
     """
     if crop is None or crop.shape[0] < 20 or crop.shape[1] < 20:
-        return False, 0.0, {"reason": "crop too small", "w": 0 if crop is None else crop.shape[1]}
+        return (
+            False,
+            0.0,
+            {"reason": "crop too small", "w": 0 if crop is None else crop.shape[1]},
+        )
     try:
         gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         laplacian_var = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
@@ -1657,9 +1826,12 @@ def evaluate_roi_presence(frame_bgr, roi, prev_state=None):
     # must also still be there. Measured on the whole box (inset), the same region
     # the baseline texture was measured on.
     edge_ratio = None
-    if (TEXTURE_GATE_ENABLED and tpl.get("edge_ref", 0.0) >= TEXTURE_MIN_EDGE
-            and texture_gate_applies(label)):
-        box = frame_bgr[y:y + h, x:x + w]
+    if (
+        TEXTURE_GATE_ENABLED
+        and tpl.get("edge_ref", 0.0) >= TEXTURE_MIN_EDGE
+        and texture_gate_applies(label)
+    ):
+        box = frame_bgr[y : y + h, x : x + w]
         edge_ratio = _edge_density(_inset(box)) / tpl["edge_ref"]
     _edge_ratio[label] = edge_ratio
     texture_ok = edge_ratio is None or edge_ratio >= TEXTURE_PRESENT_MIN
@@ -1733,7 +1905,9 @@ def roi_in_frame(roi, frame_w, frame_h):
         x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
     except (KeyError, TypeError, ValueError):
         return False
-    return w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= frame_w and y + h <= frame_h
+    return (
+        w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= frame_w and y + h <= frame_h
+    )
 
 
 def check_calibration(live_w, live_h):
@@ -1745,24 +1919,37 @@ def check_calibration(live_w, live_h):
     ref_h, ref_w = ref_bgr.shape[:2]
     rec = roi_recorded_size(roi_list)
     roi_res = (
-        "legacy" if rec == "legacy"
-        else "inconsistent" if rec is None
-        else f"{rec[0]}x{rec[1]}"
+        "legacy"
+        if rec == "legacy"
+        else "inconsistent" if rec is None else f"{rec[0]}x{rec[1]}"
     )
     if (live_w, live_h) != (ref_w, ref_h):
-        return (False, f"Live frame {live_w}x{live_h} does not match baseline {ref_w}x{ref_h}",
-                roi_res, set())
+        return (
+            False,
+            f"Live frame {live_w}x{live_h} does not match baseline {ref_w}x{ref_h}",
+            roi_res,
+            set(),
+        )
     if rec is None:
         return False, "ROI file has inconsistent resolution records", roi_res, set()
     if rec != "legacy" and rec != (ref_w, ref_h):
-        return (False, f"ROIs were drawn on a {rec[0]}x{rec[1]} image, baseline is {ref_w}x{ref_h}",
-                roi_res, set())
+        return (
+            False,
+            f"ROIs were drawn on a {rec[0]}x{rec[1]} image, baseline is {ref_w}x{ref_h}",
+            roi_res,
+            set(),
+        )
     bad = {r["label"] for r in roi_list if not roi_in_frame(r, ref_w, ref_h)}
     if bad and rec == "legacy":
         # An unstamped file with boxes past the edge is direct evidence it was
         # drawn at another resolution, so none of its boxes can be trusted.
-        return (False, f"{len(bad)} ROI(s) fall outside the {ref_w}x{ref_h} frame - "
-                f"ROI file was probably drawn at another resolution", roi_res, bad)
+        return (
+            False,
+            f"{len(bad)} ROI(s) fall outside the {ref_w}x{ref_h} frame - "
+            f"ROI file was probably drawn at another resolution",
+            roi_res,
+            bad,
+        )
     return True, "", roi_res, bad
 
 
@@ -1779,7 +1966,7 @@ def ring_foreground(fg_mask, roi):
     ox0, oy0 = max(0, x - m), max(0, y - m)
     ox1, oy1 = min(W, x + w + m), min(H, y + h + m)
     outer = cv2.countNonZero(fg_mask[oy0:oy1, ox0:ox1])
-    inner = cv2.countNonZero(fg_mask[y:y + h, x:x + w])
+    inner = cv2.countNonZero(fg_mask[y : y + h, x : x + w])
     ring_area = (ox1 - ox0) * (oy1 - oy0) - w * h
     return (outer - inner) / ring_area if ring_area > 0 else 0.0
 
@@ -1787,7 +1974,7 @@ def ring_foreground(fg_mask, roi):
 def _inset(crop, px=2):
     """Trim a thin border so edges of the box itself never count as texture."""
     h, w = crop.shape[:2]
-    return crop[px:h - px, px:w - px] if h > 2 * px + 4 and w > 2 * px + 4 else crop
+    return crop[px : h - px, px : w - px] if h > 2 * px + 4 and w > 2 * px + 4 else crop
 
 
 def _edge_density(bgr_crop):
@@ -1865,8 +2052,12 @@ def calibrate_roi_baselines(ref_image_bgr, rois):
             "low_vis": False,
         }
         if tpl["embed_present"] is not None and tpl["embed_empty"] is not None:
-            tpl["separability"] = float(np.dot(tpl["embed_present"], tpl["embed_empty"]))
-            tpl["low_vis"] = LOW_VIS_ENABLED and tpl["separability"] >= LOW_VIS_SEPARABILITY
+            tpl["separability"] = float(
+                np.dot(tpl["embed_present"], tpl["embed_empty"])
+            )
+            tpl["low_vis"] = (
+                LOW_VIS_ENABLED and tpl["separability"] >= LOW_VIS_SEPARABILITY
+            )
 
         mode = "DNN" if tpl["embed_present"] is not None else "classical"
         sep = "n/a" if tpl["separability"] is None else f"{tpl['separability']:.2f}"
@@ -1947,8 +2138,15 @@ atexit.register(ab_print_summary)
 
 
 def log_roi_metrics(
-    label, change_pct, sim_present, sim_empty, used_dnn, state,
-    t_absent, t_present, scene_motion,
+    label,
+    change_pct,
+    sim_present,
+    sim_empty,
+    used_dnn,
+    state,
+    t_absent,
+    t_present,
+    scene_motion,
 ):
     """Append one row per ROI per frame to photos/detection_metrics.csv.
 
@@ -1963,9 +2161,13 @@ def log_roi_metrics(
         # and create massive CSV files during long test runs. State transitions are what
         # matter: they mark the evidence for TP/FP/FN/TN classification.
         prev_state = _metrics_last.get(label)
-        test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+        test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         now_ts = time.time()
-        state_changed = (state != prev_state)
+        state_changed = state != prev_state
 
         if not state_changed:
             if not test_mode:
@@ -2016,8 +2218,17 @@ _metrics_last_write = {}
 
 
 def log_realtime_console(
-    pipeline, label, state, change_pct, sim_present, sim_empty, used_dnn, changed,
-    t_absent, t_present, elapsed_sec,
+    pipeline,
+    label,
+    state,
+    change_pct,
+    sim_present,
+    sim_empty,
+    used_dnn,
+    changed,
+    t_absent,
+    t_present,
+    elapsed_sec,
 ):
     """Outputs real-time console logging for item replacement / A/B verification tests.
 
@@ -2025,15 +2236,20 @@ def log_realtime_console(
     (default: 0.5s if SPOTIT_TEST_REPLACEMENT=1, else 1.0s) and immediately on any state or change transition.
     """
     now_ts = time.time()
-    interval = float(os.environ.get("SPOTIT_LOG_INTERVAL", "0.5" if os.environ.get("SPOTIT_TEST_REPLACEMENT") else "1.0"))
+    interval = float(
+        os.environ.get(
+            "SPOTIT_LOG_INTERVAL",
+            "0.5" if os.environ.get("SPOTIT_TEST_REPLACEMENT") else "1.0",
+        )
+    )
 
     prev_state = _last_console_state.get(label)
     prev_changed = _last_console_changed.get(label)
 
-    is_first_eval = (prev_state is None)
-    state_transition = (prev_state is not None and state != prev_state)
-    change_transition = (prev_changed is not None and changed != prev_changed)
-    time_elapsed = (now_ts - _last_console_log.get(label, 0.0) >= interval)
+    is_first_eval = prev_state is None
+    state_transition = prev_state is not None and state != prev_state
+    change_transition = prev_changed is not None and changed != prev_changed
+    time_elapsed = now_ts - _last_console_log.get(label, 0.0) >= interval
 
     if not (is_first_eval or state_transition or change_transition or time_elapsed):
         return
@@ -2049,12 +2265,16 @@ def log_realtime_console(
         tag = f" [{'CHANGE >= 8%' if changed else 'SETTLED < 8%'}]"
 
     if pipeline == "classical":
-        sim_desc = f"TemplateMatch: {sim_present:.4f} | MobileNetV2: N/A (Classical Pipeline)"
+        sim_desc = (
+            f"TemplateMatch: {sim_present:.4f} | MobileNetV2: N/A (Classical Pipeline)"
+        )
     else:
         if used_dnn:
             sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (empty: {sim_empty:.4f}) [DNN ACTIVE]"
         elif not changed:
-            test_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+            test_mode = os.environ.get(
+                "SPOTIT_TEST_REPLACEMENT", ""
+            ).strip().lower() in ("1", "true", "yes")
             if test_mode:
                 sim_desc = f"MobileNetV2 Sim: {sim_present:.4f} (empty: {sim_empty:.4f}) [TEST EVAL]"
             else:
@@ -2153,7 +2373,9 @@ def sync_remote_config():
             return []
         cfg = resp.json()
     except Exception as e:
-        _remote_warn_once(f"cannot reach {CONFIG_URL} ({e}) — running on last known config.")
+        _remote_warn_once(
+            f"cannot reach {CONFIG_URL} ({e}) — running on last known config."
+        )
         return []
 
     if not cfg.get("success"):
@@ -2222,7 +2444,9 @@ def download_remote_baseline(url):
     try:
         resp = requests.get(url, timeout=15)
         if resp.status_code != 200 or len(resp.content) < 1000:
-            print(f"[SPOT-IT][REMOTE] Baseline download failed (HTTP {resp.status_code}).")
+            print(
+                f"[SPOT-IT][REMOTE] Baseline download failed (HTTP {resp.status_code})."
+            )
             return False
 
         ref_target = (
@@ -2243,7 +2467,9 @@ def download_remote_baseline(url):
         except Exception:
             pass  # editor copy is a convenience; the ref image is what matters
 
-        print(f"[SPOT-IT][REMOTE] Baseline updated from server ({len(resp.content)} bytes).")
+        print(
+            f"[SPOT-IT][REMOTE] Baseline updated from server ({len(resp.content)} bytes)."
+        )
         return True
     except Exception as e:
         print(f"[SPOT-IT][REMOTE] Baseline download error: {e}")
@@ -2372,7 +2598,9 @@ def upload_baseline_capture(clean_frame):
     the camera, grabs the frame and posts it back.
     """
     if clean_frame is None:
-        print("[SPOT-IT][REMOTE] capture_baseline requested but no clean frame available yet.")
+        print(
+            "[SPOT-IT][REMOTE] capture_baseline requested but no clean frame available yet."
+        )
         return False
     try:
         ok, buf = cv2.imencode(".jpg", clean_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
@@ -2433,10 +2661,14 @@ def _stamp_stale_banner(output_frame):
     out = output_frame.copy()
     h, w = out.shape[:2]
     last = time.strftime("%H:%M:%S", time.localtime(time.time() - age))
-    text = (f"{'RECONNECTING TO CAMERA' if state == 'reconnecting' else 'CAMERA OFFLINE'}"
-            f" - NOT LIVE - last new frame {last} ({age:.0f}s ago)")
+    text = (
+        f"{'RECONNECTING TO CAMERA' if state == 'reconnecting' else 'CAMERA OFFLINE'}"
+        f" - NOT LIVE - last new frame {last} ({age:.0f}s ago)"
+    )
     cv2.rectangle(out, (0, h - 34), (w, h), (0, 0, 0), -1)
-    cv2.putText(out, text, (10, h - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 80, 255), 2)
+    cv2.putText(
+        out, text, (10, h - 11), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 80, 255), 2
+    )
     return out
 
 
@@ -2611,8 +2843,16 @@ def evaluate_roi_presence_classical(frame_bgr, roi):
         is_fixed = False
     else:
         fixed_keywords = [
-            "monitor", "keyboard", "mouse", "pc", "laptop", "ups",
-            "computer", "fan", "headphones", "mini_fan",
+            "monitor",
+            "keyboard",
+            "mouse",
+            "pc",
+            "laptop",
+            "ups",
+            "computer",
+            "fan",
+            "headphones",
+            "mini_fan",
         ]
         is_fixed = any(kw in label.lower() for kw in fixed_keywords)
 
@@ -2768,49 +3008,14 @@ def post_item_recovered(label):
         pass
 
 
-def get_camera_rtsp_url(room_id):
-    """
-    Query get_room_camera.php dynamically to fetch camera credentials and RTSP URL for the given room.
-    """
-    try:
-        # Build URL dynamically from API_URL to support localhost or production server domain
-        base_url = API_URL.split("/auth/")[0]
-        url = f"{base_url}/auth/get_room_camera.php?room_id={room_id}&api_key={API_KEY}"
-
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("success") and data.get("configured"):
-                rtsp_url = data.get("rtsp_url")
-                print(
-                    f"[SPOT-IT] Retrieved camera RTSP url for room '{room_id}' dynamically."
-                )
-                return rtsp_url
-            else:
-                print(
-                    f"[SPOT-IT][INFO] Room '{room_id}' has NO camera configured in database."
-                )
-                if room_id == "DESK":
-                    return RTSP_URL
-                return None
-        else:
-            print(
-                f"[SPOT-IT][WARN] Failed to contact get_room_camera.php, status: {response.status_code}"
-            )
-    except Exception as e:
-        print(f"[SPOT-IT][ERROR] Error fetching dynamic camera credentials: {e}")
-
-    if room_id == "DESK":
-        return RTSP_URL
-    return None
+# get_camera_rtsp_url() now lives earlier in the file, before the initial
+# VideoStream connect (it must run before that, not after) — see the comment
+# there for why.
 
 
 # ── INITIALIZE RUNNING STATE FOR DYNAMIC ROOM MONITORING ──────────────────
 current_running_room = ROOM_ID
-# In replay mode the "camera" is the clip already opened above. Skipping the DB
-# lookup matters: get_camera_rtsp_url() returns None for a room with no camera
-# assigned, which would drop the loop into STANDBY and score nothing.
-CURRENT_RTSP_URL = AB_SOURCE if AB_REPLAY else get_camera_rtsp_url(ROOM_ID)
+# CURRENT_RTSP_URL was already resolved above, before the initial connect.
 
 # Establish per-ROI occupancy baselines from the reference frame before the
 # detection loop starts — every presence ratio is measured against these.
@@ -2884,7 +3089,9 @@ while True:
     _prev_camera_state = _camera_state_now[0]
     _camera_state_now = current_camera_status()
     if _camera_state_now[0] != _prev_camera_state:
-        print(f"[SPOT-IT][CAMERA] state: {_prev_camera_state} -> {_camera_state_now[0]}")
+        print(
+            f"[SPOT-IT][CAMERA] state: {_prev_camera_state} -> {_camera_state_now[0]}"
+        )
     send_heartbeat(
         fps=_fps_value,
         camera_state=_camera_state_now[0],
@@ -2914,10 +3121,17 @@ while True:
                 _df = mode_data.get("display_filter") or {}
                 _display_filter["room"] = str(_df.get("room_id", "")).upper()
                 _display_filter["name"] = str(_df.get("name", "All"))
-                _display_filter["keywords"] = [str(k).lower() for k in (_df.get("keywords") or []) if str(k).strip()]
+                _display_filter["keywords"] = [
+                    str(k).lower()
+                    for k in (_df.get("keywords") or [])
+                    if str(k).strip()
+                ]
                 _lbl = _df.get("labels")
-                _display_filter["labels"] = ([str(l).lower() for l in _lbl]
-                                             if isinstance(_lbl, list) and str(_df.get("name", "All")) != "All" else None)
+                _display_filter["labels"] = (
+                    [str(l).lower() for l in _lbl]
+                    if isinstance(_lbl, list) and str(_df.get("name", "All")) != "All"
+                    else None
+                )
 
                 # Live pipeline switch. Ignored when SPOTIT_PIPELINE pinned the
                 # value at launch, mirroring how CLI_ROOM_ID overrides room_id —
@@ -2993,7 +3207,9 @@ while True:
 
                 # Dismiss active alerts (clear internal state)
                 if mode_data.get("clear_alerts", False):
-                    print("[SPOT-IT] Dismiss alerts signal received! Clearing active alerts...")
+                    print(
+                        "[SPOT-IT] Dismiss alerts signal received! Clearing active alerts..."
+                    )
                     for r in roi_list:
                         lbl = r["label"]
                         absent_time[lbl] = 0
@@ -3146,7 +3362,9 @@ while True:
         # A finished clip is a normal end, not a dropped stream — without this
         # the loop would spin forever on the last frame at EOF.
         if AB_REPLAY and cap.finished:
-            print(f"\n[SPOT-IT][A/B] Clip finished: {AB_CLIP} ({cap.seq} frames scored)")
+            print(
+                f"\n[SPOT-IT][A/B] Clip finished: {AB_CLIP} ({cap.seq} frames scored)"
+            )
             break
         time.sleep(0.1)
         continue
@@ -3213,7 +3431,9 @@ while True:
     if cal_reason != _last_cal_reason:
         _last_cal_reason = cal_reason
         if cal_ok:
-            print("[SPOT-IT][CALIB] Calibration matches the live frame — monitoring resumed.")
+            print(
+                "[SPOT-IT][CALIB] Calibration matches the live frame — monitoring resumed."
+            )
         else:
             print(f"[SPOT-IT][CALIB][HOLD] RECALIBRATION REQUIRED: {cal_reason}")
     if cal_ok and _roi_res == "legacy" and roi_list and not _legacy_warned:
@@ -3226,7 +3446,9 @@ while True:
     for _lbl in bad_rois if cal_ok else ():
         if _lbl not in _bad_roi_warned:
             _bad_roi_warned.add(_lbl)
-            print(f"[SPOT-IT][CALIB][WARN] '{_lbl}' lies outside the frame — skipped. Redraw it.")
+            print(
+                f"[SPOT-IT][CALIB][WARN] '{_lbl}' lies outside the frame — skipped. Redraw it."
+            )
 
     if not cal_ok:
         # HOLD, exactly like an unstable scene: no verdicts, no timers advance,
@@ -3239,15 +3461,36 @@ while True:
         ring_bg = None
         for roi in roi_list:
             log_roi_metrics(
-                roi["label"], 0.0, 0.0, 0.0, False, "RECALIBRATE",
-                absent_time.get(roi["label"], 0.0), present_time.get(roi["label"], 0.0), 0.0,
+                roi["label"],
+                0.0,
+                0.0,
+                0.0,
+                False,
+                "RECALIBRATE",
+                absent_time.get(roi["label"], 0.0),
+                present_time.get(roi["label"], 0.0),
+                0.0,
             )
         output = frame.copy()
         cv2.rectangle(output, (0, 0), (_live_w, 64), (0, 0, 0), -1)
-        cv2.putText(output, "RECALIBRATION REQUIRED - detection on hold", (10, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
-        cv2.putText(output, cal_reason[:110], (10, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        cv2.putText(
+            output,
+            "RECALIBRATION REQUIRED - detection on hold",
+            (10, 26),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 0, 255),
+            2,
+        )
+        cv2.putText(
+            output,
+            cal_reason[:110],
+            (10, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (255, 255, 255),
+            1,
+        )
         for roi in roi_list:
             x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
             cv2.rectangle(output, (x, y), (x + w, y + h), (255, 0, 255), 1)
@@ -3365,8 +3608,13 @@ while True:
         # keyboard can never also be reported as an "unattended item".
         for _r in roi_list:
             _rx, _ry, _rw, _rh = int(_r["x"]), int(_r["y"]), int(_r["w"]), int(_r["h"])
-            cv2.rectangle(thresh_unreg, (_rx - LEFT_ROI_MARGIN, _ry - LEFT_ROI_MARGIN),
-                          (_rx + _rw + LEFT_ROI_MARGIN, _ry + _rh + LEFT_ROI_MARGIN), 0, -1)
+            cv2.rectangle(
+                thresh_unreg,
+                (_rx - LEFT_ROI_MARGIN, _ry - LEFT_ROI_MARGIN),
+                (_rx + _rw + LEFT_ROI_MARGIN, _ry + _rh + LEFT_ROI_MARGIN),
+                0,
+                -1,
+            )
 
         contours, _ = cv2.findContours(
             thresh_unreg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -3404,16 +3652,22 @@ while True:
             # Objectness: a real object, or a flat shadow / lighting change?
             # (validate_presence_classical — Laplacian variance + edge density.)
             crop = frame[y : y + h, x : x + w]
-            is_real_obj, conf, meas = validate_presence_classical(crop, label="candidate")
+            is_real_obj, conf, meas = validate_presence_classical(
+                crop, label="candidate"
+            )
             if not is_real_obj:
                 if LEFT_DEBUG_REJECTS and now_ts - _left_reject_log_t >= 1.0:
                     _left_reject_log_t = now_ts
                     if "laplacian" in meas:
                         failed = []
                         if not meas["ok_lap"]:
-                            failed.append(f"texture {meas['laplacian']:.0f} < {LEFT_MIN_LAPLACIAN:.0f}")
+                            failed.append(
+                                f"texture {meas['laplacian']:.0f} < {LEFT_MIN_LAPLACIAN:.0f}"
+                            )
                         if not meas["ok_edge"]:
-                            failed.append(f"edges {meas['edge_density']:.3f} < {LEFT_MIN_EDGE_DENSITY:.3f}")
+                            failed.append(
+                                f"edges {meas['edge_density']:.3f} < {LEFT_MIN_EDGE_DENSITY:.3f}"
+                            )
                         print(
                             f"[SPOT-IT][LEFT][reject] {w}x{h}px blob at ({x},{y}) "
                             f"failed objectness: {', '.join(failed)}."
@@ -3433,11 +3687,15 @@ while True:
                 kept = []
                 for c in candidates:
                     cx, cy, cw, ch = c[:4]
-                    cover = max((overlap_frac(p, (cx, cy, cw, ch)) for p in people), default=0.0)
+                    cover = max(
+                        (overlap_frac(p, (cx, cy, cw, ch)) for p in people), default=0.0
+                    )
                     if cover >= LEFT_PERSON_OVERLAP:
                         if LEFT_DEBUG_REJECTS and now_ts - _left_reject_log_t >= 1.0:
                             _left_reject_log_t = now_ts
-                            print(f"[SPOT-IT][LEFT][reject] {cw}x{ch}px blob at ({cx},{cy}) is a person ({cover:.0%} covered).")
+                            print(
+                                f"[SPOT-IT][LEFT][reject] {cw}x{ch}px blob at ({cx},{cy}) is a person ({cover:.0%} covered)."
+                            )
                         continue
                     kept.append(c)
                 candidates = kept
@@ -3448,15 +3706,20 @@ while True:
         # contour list reordered. Tracks keep their id until the object has
         # been gone for LEFT_FORGET_SEC.
         pairs = sorted(
-            ((_box_iou(c[:4], t["box"]), ci, tid)
-             for ci, c in enumerate(candidates) for tid, t in _left_tracks.items()),
+            (
+                (_box_iou(c[:4], t["box"]), ci, tid)
+                for ci, c in enumerate(candidates)
+                for tid, t in _left_tracks.items()
+            ),
             reverse=True,
         )
         used_c, used_t, assigned = set(), set(), {}
         for score, ci, tid in pairs:
             if score < LEFT_TRACK_IOU or ci in used_c or tid in used_t:
                 continue
-            used_c.add(ci); used_t.add(tid); assigned[ci] = tid
+            used_c.add(ci)
+            used_t.add(tid)
+            assigned[ci] = tid
         for ci, c in enumerate(candidates):
             tid = assigned.get(ci)
             if tid is None:
@@ -3489,7 +3752,15 @@ while True:
                 box_color = (255, 255, 0)  # CYAN
                 label_text = f"CHECKING: {label} ({elapsed:.1f}s)"
             cv2.rectangle(output, (x, y), (x + w, y + h), box_color, 2)
-            cv2.putText(output, label_text, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.48, box_color, 2)
+            cv2.putText(
+                output,
+                label_text,
+                (x, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                box_color,
+                2,
+            )
 
             live_left_state[label] = {"is_missing": False, "tier": "tier2"}
 
@@ -3497,7 +3768,9 @@ while True:
             if elapsed >= STAGE1_THRESH and not active_events[label]:
                 active_events[label] = True
                 snapshot_path = save_snapshot(frame, label, "snapshot_A")
-                print(f"\n[STAGE 1 (YELLOW {STAGE1_THRESH}s): UNATTENDED ITEM CANDIDATE: {label}]")
+                print(
+                    f"\n[STAGE 1 (YELLOW {STAGE1_THRESH}s): UNATTENDED ITEM CANDIDATE: {label}]"
+                )
                 det_id = post_to_api(
                     label,
                     snapshot_path,
@@ -3505,7 +3778,9 @@ while True:
                 )
                 active_detection_ids[label] = det_id
                 try:
-                    item_occupied_crops[label] = cv2.cvtColor(crop.copy(), cv2.COLOR_BGR2GRAY)
+                    item_occupied_crops[label] = cv2.cvtColor(
+                        crop.copy(), cv2.COLOR_BGR2GRAY
+                    )
                 except Exception:
                     pass
 
@@ -3545,19 +3820,31 @@ while True:
                 continue
             gone = now_ts - _left_tracks[tid]["last_seen"]
             unreg_absence_count[label] = unreg_absence_count.get(label, 0) + 1
-            if (gone >= LEFT_TAKEN_CONFIRM_SEC and active_events.get(label, False)
-                    and not snapshot_b_triggered.get(label, False)):
+            if (
+                gone >= LEFT_TAKEN_CONFIRM_SEC
+                and active_events.get(label, False)
+                and not snapshot_b_triggered.get(label, False)
+            ):
                 snapshot_b_triggered[label] = True
                 snapshot_b_path = save_snapshot(frame, label, "snapshot_B")
                 det_id = active_detection_ids.get(label)
-                print(f"\n[SNAPSHOT B: '{label}' gone for {gone:.1f}s — TAKEN / REMOVED]")
+                print(
+                    f"\n[SNAPSHOT B: '{label}' gone for {gone:.1f}s — TAKEN / REMOVED]"
+                )
                 print(f"  Evidence Snapshot B: {snapshot_b_path}")
                 if det_id:
                     post_snapshot_b(label, det_id, snapshot_b_path)
             if gone >= LEFT_FORGET_SEC:
                 _left_tracks.pop(tid, None)
-                for d in (unreg_first_seen, active_events, stage2_triggered, snapshot_b_triggered,
-                          active_detection_ids, item_occupied_crops, unreg_absence_count):
+                for d in (
+                    unreg_first_seen,
+                    active_events,
+                    stage2_triggered,
+                    snapshot_b_triggered,
+                    active_detection_ids,
+                    item_occupied_crops,
+                    unreg_absence_count,
+                ):
                     d.pop(label, None)
 
         # In PRODUCTION both jobs must run on the same frame: watch the
@@ -3612,7 +3899,10 @@ while True:
     if ring_bg is None:
         ring_bg = ref_blur.astype(np.float32)
     ring_fg_mask = cv2.threshold(
-        cv2.absdiff(blur, cv2.convertScaleAbs(ring_bg)), THRESHOLD, 255, cv2.THRESH_BINARY
+        cv2.absdiff(blur, cv2.convertScaleAbs(ring_bg)),
+        THRESHOLD,
+        255,
+        cv2.THRESH_BINARY,
     )[1]
     if frame_is_new and tick_dt > 0:
         cv2.accumulateWeighted(blur, ring_bg, min(1.0, tick_dt / RING_BG_SEC))
@@ -3625,25 +3915,54 @@ while True:
         # entirely rather than judge a truncated or wrapped crop.
         if label in bad_rois:
             log_roi_metrics(
-                label, 0.0, 0.0, 0.0, False, "OUT_OF_FRAME",
-                absent_time.get(label, 0.0), present_time.get(label, 0.0), motion_pct,
+                label,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                "OUT_OF_FRAME",
+                absent_time.get(label, 0.0),
+                present_time.get(label, 0.0),
+                motion_pct,
             )
-            cv2.putText(output, f"OUT OF FRAME: {label}",
-                        (max(0, min(int(x), _live_w - 160)), max(15, min(int(y), _live_h - 5))),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
+            cv2.putText(
+                output,
+                f"OUT OF FRAME: {label}",
+                (max(0, min(int(x), _live_w - 160)), max(15, min(int(y), _live_h - 5))),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 0, 255),
+                1,
+            )
             continue
 
         # Fix 3B: an ROI whose "here" and "gone" templates already look alike is
         # never judged — it is reported as LOW VISIBILITY instead of a guess.
         _edge_ratio[label] = None
-        if PIPELINE_MODE != "classical" and (roi_templates.get(label) or {}).get("low_vis"):
+        if PIPELINE_MODE != "classical" and (roi_templates.get(label) or {}).get(
+            "low_vis"
+        ):
             log_roi_metrics(
-                label, 0.0, 0.0, 0.0, False, "LOW_VISIBILITY",
-                absent_time.get(label, 0.0), present_time.get(label, 0.0), motion_pct,
+                label,
+                0.0,
+                0.0,
+                0.0,
+                False,
+                "LOW_VISIBILITY",
+                absent_time.get(label, 0.0),
+                present_time.get(label, 0.0),
+                motion_pct,
             )
             cv2.rectangle(output, (x, y), (x + w, y + h), (160, 160, 160), 1)
-            cv2.putText(output, f"LOW VISIBILITY: {label}", (x, max(12, y - 6)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 160, 160), 1)
+            cv2.putText(
+                output,
+                f"LOW VISIBILITY: {label}",
+                (x, max(12, y - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (160, 160, 160),
+                1,
+            )
             continue
 
         base_tier = get_roi_tier(roi)
@@ -3717,7 +4036,9 @@ while True:
         # Scores the ROI against BOTH "item is here" and "item is gone"
         # templates. Bare wood matches the empty template, so it can no longer
         # masquerade as the item the way it did under plain template matching.
-        test_replacement_mode = os.environ.get("SPOTIT_TEST_REPLACEMENT", "").strip().lower() in ("1", "true", "yes")
+        test_replacement_mode = os.environ.get(
+            "SPOTIT_TEST_REPLACEMENT", ""
+        ).strip().lower() in ("1", "true", "yes")
 
         if not changed and not test_replacement_mode:
             # Nothing changed against the baseline — the item is where it was.
@@ -3734,7 +4055,10 @@ while True:
             if PIPELINE_MODE == "yolo":
                 # Experimental YOLO mode. The classical change gate above still
                 # runs first, so YOLO is only consulted on ROIs that changed.
-                if _yolo_calib_key != (id(ref_bgr), tuple(r["label"] for r in roi_list)):
+                if _yolo_calib_key != (
+                    id(ref_bgr),
+                    tuple(r["label"] for r in roi_list),
+                ):
                     yolo_calibrate(roi_list)
                 state, sim_present, sim_empty, used_dnn = evaluate_roi_presence_yolo(
                     frame, roi, _left_clock(), prev_state=roi_state.get(label)
@@ -3745,9 +4069,14 @@ while True:
                 )
 
         # ── PERSON GUARD (see PERSON_GUARD_ENABLED) ───────────────────────
-        _person_over[label] = bool(_yolo_person_over.get(label)) if PIPELINE_MODE == "yolo" else False
-        if (PERSON_GUARD_ENABLED and PIPELINE_MODE != "classical"
-                and state in ("ABSENT", "OCCLUDED")):
+        _person_over[label] = (
+            bool(_yolo_person_over.get(label)) if PIPELINE_MODE == "yolo" else False
+        )
+        if (
+            PERSON_GUARD_ENABLED
+            and PIPELINE_MODE != "classical"
+            and state in ("ABSENT", "OCCLUDED")
+        ):
             _people = _people_boxes(frame, _left_clock())
             if _people:
                 _cover = max(overlap_frac(p, (x, y, w, h)) for p in _people)
@@ -3757,8 +4086,10 @@ while True:
                         state = "OCCLUDED"
                         if not _ring_hold_announced.get(("person", label)):
                             _ring_hold_announced[("person", label)] = True
-                            print(f"[SPOT-IT][PERSON] '{label}' looks absent but a person covers "
-                                  f"{_cover:.0%} of it — holding as OCCLUDED.")
+                            print(
+                                f"[SPOT-IT][PERSON] '{label}' looks absent but a person covers "
+                                f"{_cover:.0%} of it — holding as OCCLUDED."
+                            )
         if not _person_over[label]:
             _ring_hold_announced[("person", label)] = False
 
@@ -3790,7 +4121,8 @@ while True:
                 # an unexplained void with nobody near it. With it off, the
                 # original rule: any motion inside the box restarts the clock.
                 view_clear = (
-                    not ring_busy if ring_guard_active
+                    not ring_busy
+                    if ring_guard_active
                     else local_motion <= OCCLUDED_STILL_MOTION
                 )
                 # Fix 3A safeguard: only time out into ABSENT once the item's
@@ -3865,7 +4197,9 @@ while True:
             motion_pct,
         )
 
-        elapsed_sec = (cap.seq * cap.frame_dt) if AB_REPLAY else (time.time() - _loop_start_time)
+        elapsed_sec = (
+            (cap.seq * cap.frame_dt) if AB_REPLAY else (time.time() - _loop_start_time)
+        )
         log_realtime_console(
             pipeline=PIPELINE_MODE,
             label=label,
@@ -4168,8 +4502,15 @@ while True:
         # only proof of which pipeline produced the verdict, so it has to sit
         # where nothing can obscure it.
         _is_classical = PIPELINE_MODE == "classical"
-        _pipe_text = ("CLASSICAL ONLY (no ML)" if _is_classical else
-                      "YOLO (EXPERIMENTAL)" if PIPELINE_MODE == "yolo" else "MOBILENETV2 GATEKEEPER")
+        _pipe_text = (
+            "CLASSICAL ONLY (no ML)"
+            if _is_classical
+            else (
+                "YOLO (EXPERIMENTAL)"
+                if PIPELINE_MODE == "yolo"
+                else "MOBILENETV2 GATEKEEPER"
+            )
+        )
         _pipe_colour = (0, 165, 255) if _is_classical else (0, 255, 128)
         (_tw, _th), _ = cv2.getTextSize(_pipe_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
         _px = max(10, TARGET_SIZE[0] - _tw - 14)
@@ -4177,8 +4518,13 @@ while True:
             output, (_px - 8, 10), (_px + _tw + 8, 20 + _th + 6), (0, 0, 0), -1
         )
         cv2.putText(
-            output, _pipe_text, (_px, 20 + _th),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.55, _pipe_colour, 2,
+            output,
+            _pipe_text,
+            (_px, 20 + _th),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            _pipe_colour,
+            2,
         )
 
     # ── WRITE REAL-TIME PHYSICAL ROI STATE FOR PHP ENDPOINTS ──────────────
@@ -4191,7 +4537,9 @@ while True:
             lbl = r["label"]
             if lbl in bad_rois:
                 continue  # unmeasured — must not tell the dashboard "present"
-            if PIPELINE_MODE != "classical" and (roi_templates.get(lbl) or {}).get("low_vis"):
+            if PIPELINE_MODE != "classical" and (roi_templates.get(lbl) or {}).get(
+                "low_vis"
+            ):
                 continue  # LOW VISIBILITY — likewise never "present" or "missing"
             live_state_map[lbl] = {
                 "is_missing": active_events.get(lbl, False)
